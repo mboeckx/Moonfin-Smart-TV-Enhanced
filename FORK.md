@@ -24,8 +24,8 @@ lines as one of the patches, nothing is pushed: the workflow opens an issue call
 **By hand**, on your own computer:
 
 ```sh
-git clone https://github.com/mboeckx/Smart-TV.git
-cd Smart-TV
+git clone https://github.com/mboeckx/Moonfin-Smart-TV-Enhanced.git
+cd Moonfin-Smart-TV-Enhanced
 git remote add upstream https://github.com/Moonfin-Client/Smart-TV.git
 
 # whenever upstream has something new
