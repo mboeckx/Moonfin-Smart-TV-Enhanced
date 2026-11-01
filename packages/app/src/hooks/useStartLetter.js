@@ -7,9 +7,8 @@ import Spotlight from '@enact/spotlight';
 
 import {filterByStartLetter} from '../utils/gridChrome';
 
-const useStartLetter = ({allItems, isLoading, gridSpotlightId, initialLetter = null}) => {
-	// Patched: a letter picked before visiting a title comes back with the screen.
-	const [startLetter, setStartLetter] = useState(initialLetter);
+const useStartLetter = ({allItems, isLoading, gridSpotlightId}) => {
+	const [startLetter, setStartLetter] = useState(null);
 
 	const items = useMemo(() => filterByStartLetter(allItems, startLetter), [allItems, startLetter]);
 
@@ -22,8 +21,7 @@ const useStartLetter = ({allItems, isLoading, gridSpotlightId, initialLetter = n
 
 	// The letter the grid was last handed focus for. The list also rebuilds for a filter or a
 	// search, and without this the effect below would answer those too and pull focus away.
-	// A restored letter already had its focus pass, so coming back does not move focus again.
-	const focusedForLetterRef = useRef(initialLetter);
+	const focusedForLetterRef = useRef(null);
 
 	// The grid rebuilds around the narrower list, so the focus waits for it to settle.
 	useEffect(() => {

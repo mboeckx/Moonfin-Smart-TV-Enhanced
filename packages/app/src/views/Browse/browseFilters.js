@@ -68,6 +68,12 @@ export const filterItemsByExcludedGenres = (items, excludedGenres) => {
 	});
 };
 
+const CONTENT_TYPE_ITEM = {movies: 'Movie', tv: 'Series'};
+
+// Whether a title fits the media bar's Movies or TV Shows setting. Both lets everything in.
+export const matchesContentType = (item, contentType) =>
+	!CONTENT_TYPE_ITEM[contentType] || item?.Type === CONTENT_TYPE_ITEM[contentType];
+
 // Picks an arbitrary but repeatable index for a name, so a genre lands on the same
 // representative item every load and the server can serve a thumbnail it has already
 // generated. Re-rolling at random asks it to decode and resize artwork it has never seen
@@ -79,13 +85,4 @@ export const stableIndex = (seed, length) => {
 		hash = (Math.imul(hash, 31) + seed.charCodeAt(i)) | 0;
 	}
 	return Math.abs(hash) % length;
-};
-
-export const parsePluginSpec = (specJson) => {
-	if (!specJson) return null;
-	try {
-		return JSON.parse(specJson);
-	} catch (e) {
-		return null;
-	}
 };

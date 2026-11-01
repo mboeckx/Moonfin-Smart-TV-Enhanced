@@ -10,6 +10,7 @@ jest.mock('../../services/storage', () => ({
 }));
 jest.mock('../../services/connectionPool', () => ({}));
 jest.mock('../../services/seerrApi', () => ({}));
+jest.mock('../../context/SettingsContext', () => ({activeSyncProfile: () => 'tv'}));
 jest.mock('../../services/jellyfinApi', () => ({
 	HOME_ROW_ITEM_FIELDS: '',
 	getServerUrl: () => 'http://server',
@@ -79,8 +80,7 @@ describe('switching users', () => {
 		await waitFor(() => expect(result.current.allRowData).toEqual(previousUserRows));
 
 		rerender(props('token-b', 'user-b'));
-		await waitFor(() => expect(result.current.isLoading).toBe(false));
-		expect(result.current.allRowData).not.toEqual(previousUserRows);
+		await waitFor(() => expect(result.current.allRowData).not.toEqual(previousUserRows));
 		expect(loadBrowseCache).toHaveBeenLastCalledWith('http://server', 'user-b');
 	});
 

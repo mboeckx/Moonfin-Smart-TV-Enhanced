@@ -1,4 +1,4 @@
-import {memo, useCallback, useMemo, useRef, useEffect} from 'react';
+import {memo, useCallback, useMemo, useRef, useEffect, useState} from 'react';
 import Spottable from '@enact/spotlight/Spottable';
 import {getImageUrl, toAbsoluteImageUrl} from '../../utils/helpers';
 import {useSettings} from '../../context/SettingsContext';
@@ -6,13 +6,17 @@ import {SeerrSeasonDot} from '../seerr/SeerrStatusBadge';
 import {showsWatchedCheck} from '../../utils/playedState';
 import SeerrIcon from '../icons/SeerrIcon';
 import {AnimeCardPill} from '../AnimeMarkerPills';
+import IncompleteBadge from '../IncompleteBadge';
+import LoopMarquee from '../LoopMarquee';
 import useItemMenuHold from '../../hooks/useItemMenuHold';
+import {isUnownedSeerrTitle, seerrThumbUrl, seerrWideArtUrl, useTmdbThumbsAvailable} from '../../utils/tmdbThumb';
+import {useMediaPreviewSlot} from './MediaPreviewContext';
 
 import css from './MediaCard.module.less';
 
 const SpottableDiv = Spottable('div');
 
-const POSTER_SIZE_MULTIPLIERS = {small: 0.8, default: 1, large: 1.2, xlarge: 1.4};
+const POSTER_SIZE_MULTIPLIERS = {small: 0.8, default: 1, large: 1.2, xlarge: 1.4, grandparents: 2};
 const BASE_SIZES = {portrait: [240, 360], landscape: [384, 216], square: [240, 240], banner: [1168, 216]};
 
 // How big a card of each shape draws, grown or shrunk by the poster size setting.
@@ -95,7 +99,7 @@ const episodeArtwork = (item, serverUrl, imageType, useSeriesArt) => {
 	return preferred || still;
 };
 
-const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'poster', onSelect, onFocusItem, showServerBadge = false, eagerLoad = false, seerrSeasonStatus, spotlightId, onSpotlightLeft, onSpotlightRight, menuOptions}) => {
+const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'poster', onSelect, onFocusItem, showServerBadge = false, eagerLoad = false, deferImage = false, seerrSeasonStatus, spotlightId, onSpotlightLeft, onSpotlightRight, menuOptions, size, current = false, homeText = false}) => {
 	const {settings} = useSettings();
 	const focusTimeoutRef = useRef(null);
 
@@ -116,6 +120,14 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 	const imageType = rowImageType || 'poster';
 	const artworkItem = (item.Type === 'Genre' && item._representative) || item;
 	const rowArtwork = requestedArtwork(artworkItem, imageType, itemServerUrl);
+	// A Seerr or outside list title has no library art, so a thumb row shows the titled
+	// thumb the plugin picks for it, or its plain backdrop, and turns landscape like a
+	// library thumb. A thumb that fails to load hands over to the backdrop.
+	const [failedThumb, setFailedThumb] = useState(null);
+	const wantsSeerrWide = imageType === 'thumb' && (cardType === 'portrait' || cardType === 'landscape') && isUnownedSeerrTitle(item);
+	useTmdbThumbsAvailable(wantsSeerrWide);
+	const seerrThumb = wantsSeerrWide ? seerrThumbUrl(item) : null;
+	const seerrWide = wantsSeerrWide ? toAbsoluteImageUrl(seerrWideArtUrl(item, failedThumb), itemServerUrl) : null;
 	const isBanner = imageType === 'banner' && cardType !== 'square' && cardType !== 'circle';
 	// An episode is the one item the series switch speaks for, so its picture is
 	// picked here instead of taking whatever wide art the row asked for. A banner
@@ -125,7 +137,7 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 		: null;
 	// The url rather than the object, so the memo below still holds between renders.
 	const episodeArtUrl = episodeArt?.url || null;
-	const wideArtwork = episodeArt ? episodeArt.wide : Boolean(rowArtwork);
+	const wideArtwork = episodeArt ? episodeArt.wide : Boolean(rowArtwork || seerrWide);
 	const isLandscape = !isBanner && (cardType === 'landscape' || (cardType === 'portrait' && wideArtwork));
 	// Artists read as circles in the music library. It rides on the square path
 	// since the art is the same 1:1 either way, only the radius differs.
@@ -133,6 +145,9 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 	const isSquare = !isBanner && (isCircle || cardType === 'square' || (cardType === 'portrait' && !isLandscape && (item.Type === 'MusicAlbum' || item.Type === 'MusicArtist' || item.Type === 'Audio')));
 
 	const imageUrl = useMemo(() => {
+		// Ahead of the external poster, which would otherwise keep the card a poster.
+		if (seerrWide) return seerrWide;
+
 		const providerIds = item.ProviderIds || {};
 		const externalPoster = item._externalPosterUrl ||
 			providerIds.SeerrPoster ||
@@ -141,7 +156,8 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 			providerIds.LidarrPoster ||
 			providerIds.ReadarrPoster;
 
-		if (externalPoster && (item._external || !item.ImageTags?.Primary)) {
+		// A title the server owns shows the library's own art.
+		if (externalPoster && ((item._external && !item._resolvedFromExternal) || !item.ImageTags?.Primary)) {
 			return toAbsoluteImageUrl(externalPoster, itemServerUrl);
 		}
 
@@ -186,14 +202,30 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 		// The card shows its lettered placeholder rather than guessing at a url the
 		// item already said it has nothing behind.
 		return null;
-	}, [isLandscape, item, itemServerUrl, rowArtwork, episodeArtUrl]);
+	}, [isLandscape, item, itemServerUrl, rowArtwork, episodeArtUrl, seerrWide]);
+
+	const handleImageError = useCallback(() => {
+		if (seerrThumb && imageUrl === seerrThumb) setFailedThumb(seerrThumb);
+	}, [imageUrl, seerrThumb]);
+
+	const {
+		phase: previewPhase,
+		frameRef: previewFrameRef,
+		onFocus: onPreviewFocus,
+		onBlur: onPreviewBlur,
+		stopForSelect: stopPreviewForSelect
+	} = useMediaPreviewSlot(spotlightId, item);
 
 	const handleClick = useCallback(() => {
+		stopPreviewForSelect();
 		onSelect?.(item);
-	}, [item, onSelect]);
+	}, [item, onSelect, stopPreviewForSelect]);
 
 	const itemAt = useCallback(() => item, [item]);
-	const menuHold = useItemMenuHold(itemAt, menuOptions);
+	const {onMouseLeave: onMenuMouseLeave, ...menuHold} = useItemMenuHold(itemAt, menuOptions);
+
+	// Only home cards track focus, for their marquee, so other cards don't render again on every move.
+	const [focused, setFocused] = useState(false);
 
 	const handleFocus = useCallback(() => {
 		if (focusTimeoutRef.current) {
@@ -202,7 +234,20 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 		focusTimeoutRef.current = setTimeout(() => {
 			onFocusItem?.(item);
 		}, 50);
-	}, [item, onFocusItem]);
+		onPreviewFocus();
+		if (homeText) setFocused(true);
+	}, [item, onFocusItem, onPreviewFocus, homeText]);
+
+	const handleBlur = useCallback(() => {
+		onPreviewBlur();
+		setFocused(false);
+	}, [onPreviewBlur]);
+
+	// The menu hold watches the pointer leaving too, so both hear it.
+	const handleMouseLeave = useCallback((e) => {
+		onMenuMouseLeave?.(e);
+		onPreviewBlur();
+	}, [onMenuMouseLeave, onPreviewBlur]);
 
 	const progress = item.UserData?.PlayedPercentage || 0;
 	const watchedBehavior = settings.watchedIndicatorBehavior || 'always';
@@ -237,16 +282,28 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 		return null;
 	}, [item.Type, item.AlbumArtist, item.AlbumArtists, item.Artists]);
 
-	const cardClass = `${css.card} ${isBanner ? css.banner : isLandscape ? css.landscape : isSquare ? css.square : css.portrait}${isCircle ? ' ' + css.circle : ''}${settings.cardFocusZoom ? '' : ' ' + css.noZoom}`;
+	// Classic home rows give a movie or series its year as the second line.
+	const yearInfo = homeText && (item.Type === 'Movie' || item.Type === 'Series') && item.ProductionYear
+		? String(item.ProductionYear)
+		: null;
+	// A home card's line that doesn't fit scrolls while the card has focus.
+	const line = (className, text) => (homeText
+		? <LoopMarquee className={className} text={text} active={focused} />
+		: <div className={className}>{text}</div>);
+
+	// The zoom comes off while the video shows so the card holds still under it.
+	const cardClass = `${css.card} ${isBanner ? css.banner : isLandscape ? css.landscape : isSquare ? css.square : css.portrait}${isCircle ? ' ' + css.circle : ''}${settings.cardFocusZoom ? '' : ' ' + css.noZoom}${previewPhase === 'playing' ? ' ' + css.previewing : ''}${current ? ' ' + css.current : ''}${homeText ? ' ' + css.homeText : ''}`;
 
 	const sizeMultiplier = POSTER_SIZE_MULTIPLIERS[settings.homeRowsPosterSize] || 1;
 	const shapeKey = isBanner ? 'banner' : isLandscape ? 'landscape' : isSquare ? 'square' : 'portrait';
-	const {width: cardWidth, height: cardHeight} = classicCardSize(shapeKey, settings.homeRowsPosterSize);
+	// A screen laying cards out to its own measure hands over the size, and the poster size setting stays out of it.
+	const {width: cardWidth, height: cardHeight} = size || classicCardSize(shapeKey, settings.homeRowsPosterSize);
 	// The genre name grows with the card so it reads on a poster and on a
 	// focused thumbnail alike, and the seerr genre cards use the same scale.
 	const genreLabelSize = Math.min(24, Math.max(14, cardWidth * (14 / 200)));
-	const sizeStyle = sizeMultiplier !== 1 ? {width: cardWidth + 'px'} : undefined;
-	const imgSizeStyle = sizeMultiplier !== 1 ? {height: cardHeight + 'px'} : undefined;
+	const sized = size || sizeMultiplier !== 1;
+	const sizeStyle = sized ? {width: cardWidth + 'px'} : undefined;
+	const imgSizeStyle = sized ? {height: cardHeight + 'px'} : undefined;
 	// Logos and studio art have to sit inside the card whole. Everything else takes
 	// the cover the stylesheet already applies, so it stays out of the inline style.
 	const imgStyle = imageType === 'logo' || item.Type === 'Studio' || item.Type === 'Network'
@@ -254,18 +311,19 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 		: imgSizeStyle;
 
 	return (
-		<SpottableDiv {...menuHold} className={cardClass} data-media-card onClick={handleClick} onFocus={handleFocus} style={sizeStyle} spotlightId={spotlightId} onSpotlightLeft={onSpotlightLeft} onSpotlightRight={onSpotlightRight}>
-			<div className={css.imageContainer}>
+		<SpottableDiv {...menuHold} className={cardClass} data-media-card onClick={handleClick} onFocus={handleFocus} onBlur={handleBlur} onMouseEnter={onPreviewFocus} onMouseLeave={handleMouseLeave} style={sizeStyle} spotlightId={spotlightId} onSpotlightLeft={onSpotlightLeft} onSpotlightRight={onSpotlightRight}>
+			<div className={previewPhase !== 'idle' ? `${css.imageContainer} ${css.previewHost}` : css.imageContainer} data-card-art>
 				{imageUrl ? (
 					<>
 						<img
 							className={css.image}
-							src={imageUrl}
-							alt={item.Name}
+							src={deferImage ? undefined : imageUrl}
+							alt={deferImage ? '' : item.Name}
 							loading={eagerLoad ? 'eager' : 'lazy'}
 							width={cardWidth}
 							height={cardHeight}
 							style={imgStyle}
+							onError={handleImageError}
 						/>
 						{(item?.Type === 'Genre' || item?.Type === 'MusicGenre') && (
 							<>
@@ -283,6 +341,13 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 					<div className={css.placeholder} style={imgSizeStyle}>
 						<div className={css.placeholderTitle}>{item.Name}</div>
 					</div>
+				)}
+
+				{previewPhase !== 'idle' && (
+					<>
+						<div ref={previewFrameRef} className={previewPhase === 'playing' ? `${css.previewFrame} ${css.previewVisible}` : css.previewFrame} />
+						<div className={css.previewRing} />
+					</>
 				)}
 
 				{showIndicators && progress > 0 && (
@@ -321,29 +386,30 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 					</div>
 				)}
 
+				<IncompleteBadge itemId={item.Id} belowFavorite={item.UserData?.IsFavorite} />
 				<AnimeCardPill item={item} serverUrl={itemServerUrl} hasProgressBar={showIndicators && progress > 0} />
 			</div>
 
 			<div className={css.info}>
 				{isBanner ? (
-					<div className={css.title}>{[displayTitle, episodeInfo || musicInfo || item.Subtitle].filter(Boolean).join('  \u2022  ')}</div>
+					line(css.title, [displayTitle, episodeInfo || musicInfo || item.Subtitle].filter(Boolean).join('  \u2022  '))
 				) : episodeInfo ? (
 					<>
-						<div className={css.seriesName}>{displayTitle}</div>
-						<div className={css.episodeInfo}>{episodeInfo}</div>
+						{line(css.seriesName, displayTitle)}
+						{line(css.episodeInfo, episodeInfo)}
 					</>
 				) : musicInfo ? (
 					<>
-						<div className={css.title}>{displayTitle}</div>
-						<div className={css.episodeInfo}>{musicInfo}</div>
+						{line(css.title, displayTitle)}
+						{line(css.episodeInfo, musicInfo)}
 					</>
-				) : item.Subtitle ? (
+				) : (yearInfo || item.Subtitle) ? (
 					<>
-						<div className={css.title}>{displayTitle}</div>
-						<div className={css.episodeInfo}>{item.Subtitle}</div>
+						{line(css.title, displayTitle)}
+						{line(css.episodeInfo, yearInfo || item.Subtitle)}
 					</>
 				) : (
-					<div className={css.title}>{displayTitle}</div>
+					line(css.title, displayTitle)
 				)}
 			</div>
 		</SpottableDiv>

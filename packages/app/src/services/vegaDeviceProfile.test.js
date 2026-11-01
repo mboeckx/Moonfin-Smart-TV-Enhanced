@@ -52,7 +52,8 @@ describe('the Vega device profile', () => {
 		const mp4 = profile.DirectPlayProfiles.find((entry) => entry.Container === 'mp4,m4v');
 		expect(mp4.VideoCodec).toBe('h264,hevc,dvh1');
 		expect(mp4.AudioCodec).not.toContain('ac3');
-		expect(profile.TranscodingProfiles[0]).toMatchObject({Protocol: 'hls', Container: 'mp4', VideoCodec: 'hevc,h264', AudioCodec: 'aac,mp2'});
+		expect(profile.DirectPlayProfiles.find((entry) => entry.Container === 'mkv').AudioCodec.split(',')).toEqual(expect.arrayContaining(['pcm_s16le', 'pcm_s24le']));
+		expect(profile.TranscodingProfiles[0]).toMatchObject({Protocol: 'hls', Container: 'mp4', VideoCodec: 'hevc,h264', AudioCodec: 'aac,mp2', SegmentLength: 2});
 		expect(profile.DirectPlayProfiles.some((entry) => entry.Container.split(',').includes('ts'))).toBe(false);
 		expect(profile.DirectPlayProfiles.find((entry) => entry.Container === 'hls').VideoCodec).toBe('h264');
 		expect(profile.CodecProfiles.find((entry) => entry.Codec === 'hevc').Conditions[1].Value).toBe('SDR|DOVIWithSDR');
@@ -66,6 +67,14 @@ describe('the Vega device profile', () => {
 		expect(getPlayMethod(source({MediaStreams: [{Type: 'Video', Codec: 'hevc', VideoRangeType: 'HDR10'}, {Type: 'Audio', Codec: 'aac', Index: 1}]}), capabilities)).toBe('Transcode');
 		expect(getPlayMethod(source({Container: 'avi'}), capabilities)).toBe('Transcode');
 		expect(getPlayMethod(source({SupportsDirectPlay: false}), capabilities)).toBe('DirectStream');
+	});
+
+	test("an audio track other than the first one has the server remux, since the WebView can't switch tracks", async () => {
+		const profile = await getJellyfinDeviceProfile();
+		expect(profile.CodecProfiles).toContainEqual({
+			Type: 'VideoAudio',
+			Conditions: [{Condition: 'Equals', Property: 'IsSecondaryAudio', Value: 'false', IsRequired: false}]
+		});
 	});
 
 	test('live TV gets an H.264 TS profile after the fMP4 one, since the server only takes TS for a channel', async () => {
@@ -99,8 +108,8 @@ describe('the Vega play method bitrate caps', () => {
 	test('follows what each stick decodes', () => {
 		expect(h264(25_000_000, 'AFTCA002')).toBe('DirectPlay');
 		expect(h264(25_000_000, 'AFTCR001')).toBe('Transcode');
-		expect(hevc(34_000_000, 'AFTCR001')).toBe('DirectPlay');
-		expect(hevc(36_000_000, 'AFTCA002')).toBe('Transcode');
+		expect(hevc(110_000_000, 'AFTCA002')).toBe('DirectPlay');
+		expect(hevc(130_000_000, 'AFTCR001')).toBe('Transcode');
 		expect(vp9(25_000_000, 'AFTCR001')).toBe('DirectPlay');
 		expect(vp9(25_000_000, 'AFTCL001')).toBe('Transcode');
 	});

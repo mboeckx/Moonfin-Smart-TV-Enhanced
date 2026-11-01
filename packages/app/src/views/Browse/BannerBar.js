@@ -2,16 +2,28 @@ import {useState, useEffect, useCallback, useRef, memo} from 'react';
 import {isMdblistEnabled} from '../../services/mdblistApi';
 import Spottable from '@enact/spotlight/Spottable';
 import Spotlight from '@enact/spotlight';
-import {getImageUrl, getBackdropId, formatDuration} from '../../utils/helpers';
+import {getImageUrl, getFeaturedBackdropUrl, formatDuration} from '../../utils/helpers';
+import {seerrThumbUrl} from '../../utils/tmdbThumb';
 import RatingsRow from '../../components/RatingsRow';
 import {KEYS} from '../../utils/keys';
 import css from './Browse.module.less';
 import {carouselIntervalMs} from '../../utils/carouselTiming';
+import {useScreensaverActive} from '../../hooks/useScreensaverActive';
 
 const PRELOAD_ADJACENT_SLIDES = 2;
 const MAX_DOTS = 7;
 
 const SpottableDiv = Spottable('div');
+
+const backdropUrl = (serverUrl, item) => getFeaturedBackdropUrl(serverUrl, item, {maxWidth: 1920, quality: 85});
+
+// A title from an outside list has no server banner, so the plugin's titled TMDB thumb stands in.
+const bannerUrl = (serverUrl, item) => {
+	if (item._external) return seerrThumbUrl(item);
+	return item.ImageTags?.Banner
+		? getImageUrl(serverUrl, item.Id, 'Banner', {maxWidth: 1280, tag: item.ImageTags.Banner})
+		: null;
+};
 
 const buildMeta = (item) => {
 	const parts = [];
@@ -35,6 +47,9 @@ const BannerBar = memo(({
 }) => {
 	const [currentIndex, setCurrentIndex] = useState(0);
 	const [featuredFocused, setFeaturedFocused] = useState(false);
+	// A banner that won't load falls back to the backdrop, with the title back over it.
+	const [failedBannerId, setFailedBannerId] = useState(null);
+	const screensaverActive = useScreensaverActive();
 
 	const preloadedImagesRef = useRef(new Set());
 	const carouselIntervalRef = useRef(null);
@@ -60,12 +75,12 @@ const BannerBar = memo(({
 			const index = (currentIndex + offset + featuredItems.length) % featuredItems.length;
 			const item = featuredItems[index];
 			if (item) {
-				const backdropId = getBackdropId(item);
-				if (backdropId) {
-					preloadImage(getImageUrl(getItemServerUrl(item), backdropId, 'Backdrop', {maxWidth: 1920, quality: 85}));
-				}
-				if (item.LogoUrl) {
-					preloadImage(item.LogoUrl);
+				const art = bannerUrl(getItemServerUrl(item), item);
+				if (art) {
+					preloadImage(art);
+				} else {
+					preloadImage(backdropUrl(getItemServerUrl(item), item));
+					if (item.LogoUrl) preloadImage(item.LogoUrl);
 				}
 			}
 		}
@@ -82,12 +97,12 @@ const BannerBar = memo(({
 			settings.autoAdvanceInterval,
 			settings.carouselSpeed
 		);
-		if (!isVisible || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0) return;
+		if (!isVisible || screensaverActive || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0) return;
 
 		carouselIntervalRef.current = setInterval(() => {
 			setCurrentIndex((prev) => (prev + 1) % featuredItems.length);
 		}, carouselSpeed);
-	}, [isVisible, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed]);
+	}, [isVisible, screensaverActive, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed]);
 
 	useEffect(() => {
 		startCarouselTimer();
@@ -152,8 +167,12 @@ const BannerBar = memo(({
 		setFeaturedFocused(false);
 	}, []);
 
+	const handleBannerError = useCallback(() => setFailedBannerId(currentFeatured?.Id), [currentFeatured]);
+
 	if (!isVisible || !currentFeatured) return null;
 
+	const serverUrl = getItemServerUrl(currentFeatured);
+	const banner = failedBannerId === currentFeatured.Id ? null : bannerUrl(serverUrl, currentFeatured);
 	const meta = buildMeta(currentFeatured);
 	const dotCount = Math.min(featuredItems.length, MAX_DOTS);
 	const dotStart = Math.max(0, Math.min(currentIndex - Math.floor(dotCount / 2), featuredItems.length - dotCount));
@@ -169,15 +188,19 @@ const BannerBar = memo(({
 				onBlur={handleBlur}
 			>
 				<div className={css.bannerBackdrop}>
-					<img
-						src={getImageUrl(getItemServerUrl(currentFeatured), getBackdropId(currentFeatured), 'Backdrop', {maxWidth: 1920, quality: 85})}
-						alt=''
-					/>
+					{banner ? (
+						<>
+							<img className={css.bannerFill} src={banner} alt='' />
+							<img className={css.bannerArt} src={banner} alt='' onError={handleBannerError} />
+						</>
+					) : (
+						<img src={backdropUrl(serverUrl, currentFeatured)} alt='' />
+					)}
 				</div>
 				<div className={css.bannerGradient} />
 
 				<div className={css.bannerContent}>
-					{currentFeatured.LogoUrl ? (
+					{banner ? null : currentFeatured.LogoUrl ? (
 						<div className={css.bannerLogo}>
 							<img src={currentFeatured.LogoUrl} alt={`${currentFeatured.Name} logo`} />
 						</div>
@@ -189,9 +212,10 @@ const BannerBar = memo(({
 
 					<RatingsRow
 						item={currentFeatured}
-						serverUrl={getItemServerUrl(currentFeatured)}
+						serverUrl={serverUrl}
 						compact
-						pluginEnabled={isMdblistEnabled(settings)}
+						surface='mediaBar'
+						pluginEnabled={isMdblistEnabled(settings, 'mediaBar')}
 					/>
 				</div>
 

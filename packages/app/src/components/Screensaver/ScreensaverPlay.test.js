@@ -1,6 +1,8 @@
+import {useRef} from 'react';
 import {render, act} from '@testing-library/react';
 
 import Screensaver from './Screensaver';
+import useInactivityTimer from '../../hooks/useInactivityTimer';
 
 // The CLI ships a second copy of React, so the components' JSX goes through the copy under test.
 jest.mock('react/jsx-dev-runtime', () => {
@@ -24,30 +26,44 @@ jest.mock('../../services/jellyfinApi', () => ({
 }));
 jest.mock('../../utils/logoAutocrop', () => ({autocropLogoUrl: async () => null}));
 
-const press = (type) => {
-	const event = new window.KeyboardEvent(type, {keyCode: 13, bubbles: true, cancelable: true});
-	Object.defineProperty(event, 'keyCode', {value: 13});
+// The screensaver as the app runs it: shown by the inactivity timer, whose wake listener hands
+// it the presses made while it is up.
+const Harness = ({hidden, ...props}) => {
+	const keyRef = useRef(null);
+	const {isInactive, dismiss} = useInactivityTimer(1, !hidden, keyRef);
+	return <Screensaver visible={isInactive} keyHandlerRef={keyRef} onDismiss={dismiss} serverUrl="http://server" {...props} />;
+};
+
+const press = (type, keyCode = 13) => {
+	const event = new window.KeyboardEvent(type, {bubbles: true, cancelable: true});
+	Object.defineProperty(event, 'keyCode', {value: keyCode});
 	const below = jest.fn();
 	document.body.addEventListener(type, below);
-	document.body.dispatchEvent(event);
+	act(() => { document.body.dispatchEvent(event); });
 	document.body.removeEventListener(type, below);
 	return {event, reachedBelow: below.mock.calls.length > 0};
 };
 
+const startSaver = async () => {
+	await act(async () => { jest.advanceTimersByTime(1000); });
+};
+
 const showBackdrop = async () => {
+	await startSaver();
 	// The first batch is asked for after two seconds and fades in half a second later.
 	await act(async () => { jest.advanceTimersByTime(2100); });
 	await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 	await act(async () => { jest.advanceTimersByTime(600); });
 };
 
+const saverUp = (container) => container.innerHTML.length > 0;
+
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => jest.useRealTimers());
 
 test('OK on a showing backdrop plays that title and keeps the press from the screen below', async () => {
 	const onPlayItem = jest.fn();
-	const onDismiss = jest.fn();
-	render(<Screensaver visible onPlayItem={onPlayItem} onDismiss={onDismiss} serverUrl="http://server" />);
+	render(<Harness onPlayItem={onPlayItem} />);
 	await showBackdrop();
 
 	const down = press('keydown');
@@ -63,70 +79,60 @@ test('OK on a showing backdrop plays that title and keeps the press from the scr
 
 test('OK before a backdrop shows only wakes the screen', async () => {
 	const onPlayItem = jest.fn();
-	const onDismiss = jest.fn();
-	render(<Screensaver visible onPlayItem={onPlayItem} onDismiss={onDismiss} serverUrl="http://server" />);
+	render(<Harness onPlayItem={onPlayItem} />);
+	await startSaver();
 
 	const down = press('keydown');
 	expect(onPlayItem).not.toHaveBeenCalled();
-	expect(onDismiss).toHaveBeenCalled();
 	expect(down.reachedBelow).toBe(false);
+	// The next press is the screen's again.
+	expect(press('keydown').reachedBelow).toBe(true);
 });
 
-test('without a play handler, as in the player, OK behaves as before', async () => {
-	const onDismiss = jest.fn();
-	render(<Screensaver visible onDismiss={onDismiss} serverUrl="http://server" />);
+test('without a play handler, as in the player, OK just wakes the screen', async () => {
+	render(<Harness />);
 	await showBackdrop();
+	expect(press('keydown').reachedBelow).toBe(false);
 	expect(press('keydown').reachedBelow).toBe(true);
 });
 
 test('a hidden screensaver leaves OK alone', () => {
 	const onPlayItem = jest.fn();
-	render(<Screensaver visible={false} onPlayItem={onPlayItem} serverUrl="http://server" />);
+	render(<Harness hidden onPlayItem={onPlayItem} />);
 	expect(press('keydown').reachedBelow).toBe(true);
 	expect(onPlayItem).not.toHaveBeenCalled();
 });
 
-const pressKey = (keyCode) => {
-	const event = new window.KeyboardEvent('keydown', {bubbles: true, cancelable: true});
-	Object.defineProperty(event, 'keyCode', {value: keyCode});
-	const below = jest.fn();
-	const otherWindowListener = jest.fn();
-	window.addEventListener('keydown', otherWindowListener, true);
-	document.body.addEventListener('keydown', below);
-	document.body.dispatchEvent(event);
-	document.body.removeEventListener('keydown', below);
-	window.removeEventListener('keydown', otherWindowListener, true);
-	return {reachedBelow: below.mock.calls.length > 0, reachedOtherWindowListeners: otherWindowListener.mock.calls.length > 0};
-};
-
 describe('coloured keys', () => {
-	test('green and yellow hand the title on screen to the app and stop there', async () => {
+	test('green and yellow hand the title on screen to the app, and the screensaver stays up', async () => {
 		const onColorKey = jest.fn(async () => null);
-		render(<Screensaver visible onPlayItem={jest.fn()} onColorKey={onColorKey} serverUrl="http://server" />);
+		const {container} = render(<Harness onPlayItem={jest.fn()} onColorKey={onColorKey} />);
 		await showBackdrop();
-		const green = pressKey(404);
+		const green = press('keydown', 404);
 		expect(onColorKey).toHaveBeenLastCalledWith('green', expect.objectContaining({Id: MOVIE.Id}));
-		// Not even the inactivity listener sees it, so the screensaver stays up.
 		expect(green.reachedBelow).toBe(false);
-		expect(green.reachedOtherWindowListeners).toBe(false);
-		pressKey(405);
+		expect(saverUp(container)).toBe(true);
+		press('keydown', 405);
 		expect(onColorKey).toHaveBeenLastCalledWith('yellow', expect.objectContaining({Id: MOVIE.Id}));
+		expect(saverUp(container)).toBe(true);
 	});
 
 	test('the message the app hands back shows over the screensaver, then goes', async () => {
-		const {container} = render(<Screensaver visible onPlayItem={jest.fn()} onColorKey={async () => 'Added to Watchlist: Some Film'} serverUrl="http://server" />);
+		const {container} = render(<Harness onPlayItem={jest.fn()} onColorKey={async () => 'Added to Watchlist: Some Film'} />);
 		await showBackdrop();
-		pressKey(404);
+		press('keydown', 404);
 		await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 		expect(container.textContent).toContain('Added to Watchlist: Some Film');
-		await act(async () => { jest.advanceTimersByTime(4000); });
+		await act(async () => { jest.advanceTimersByTime(3600); });
 		expect(container.textContent).not.toContain('Added to Watchlist');
 	});
 
-	test('before a title shows, or without a handler, the keys behave as before', async () => {
+	test('before a title shows, the keys only wake the screen', async () => {
 		const onColorKey = jest.fn();
-		render(<Screensaver visible onColorKey={onColorKey} serverUrl="http://server" />);
-		expect(pressKey(404).reachedBelow).toBe(true);
+		render(<Harness onColorKey={onColorKey} />);
+		await startSaver();
+		expect(press('keydown', 404).reachedBelow).toBe(false);
 		expect(onColorKey).not.toHaveBeenCalled();
+		expect(press('keydown', 404).reachedBelow).toBe(true);
 	});
 });

@@ -7,6 +7,7 @@ import $L from '@enact/i18n/$L';
 
 import seerrApi from '../../services/seerrApi';
 import {getMediaDownloadSummary, isMediaInFlight} from '../../utils/seerrStatus';
+import {streamingRegion} from '../../utils/seerrStreaming';
 
 const DOWNLOAD_POLL_MS = 15000;
 const WAITING_POLL_MS = 30000;
@@ -35,13 +36,20 @@ const useSeerrDetailsData = ({mediaId, mediaType, contextUser}) => {
 	// Taken as offered until it says otherwise.
 	const [is4kEnabled, setIs4kEnabled] = useState(true);
 	const [servers, setServers] = useState([]);
+	const [region, setRegion] = useState(null);
+	// The first render of a new title still holds the last one's answer, and a screen that acts
+	// on it opens the wrong title, so it stays hidden until the load below has cleared it.
+	const [loadedFor, setLoadedFor] = useState(null);
+	const stale = loadedFor?.mediaId !== mediaId || loadedFor?.mediaType !== mediaType;
+	const shownDetails = stale ? null : details;
 
 	useEffect(() => {
+		setLoadedFor({mediaId, mediaType});
+		setDetails(null);
+		setRecommendations([]);
+		setSimilar([]);
+		setError(null);
 		if (!mediaId || !mediaType) {
-			setDetails(null);
-			setRecommendations([]);
-			setSimilar([]);
-			setError(null);
 			setLoading(false);
 			return;
 		}
@@ -52,7 +60,6 @@ const useSeerrDetailsData = ({mediaId, mediaType, contextUser}) => {
 
 		const loadDetails = async () => {
 			setLoading(true);
-			setError(null);
 			try {
 				const [data, userData, serversData, publicSettings] = await Promise.all([
 					mediaType === 'movie'
@@ -99,6 +106,7 @@ const useSeerrDetailsData = ({mediaId, mediaType, contextUser}) => {
 					? publicSettings?.movie4kEnabled
 					: publicSettings?.series4kEnabled;
 				setIs4kEnabled(offers4k !== false);
+				setRegion(streamingRegion(userData, publicSettings));
 
 				const loadMultiplePages = async (fetcher) => {
 					const allResults = [];
@@ -139,20 +147,20 @@ const useSeerrDetailsData = ({mediaId, mediaType, contextUser}) => {
 		return () => { cancelled = true; };
 	}, [mediaId, mediaType, contextUser]);
 
-	const hdStatus = useMemo(() => details?.mediaInfo?.status ?? null, [details]);
-	const status4k = useMemo(() => details?.mediaInfo?.status4k ?? null, [details]);
+	const hdStatus = useMemo(() => shownDetails?.mediaInfo?.status ?? null, [shownDetails]);
+	const status4k = useMemo(() => shownDetails?.mediaInfo?.status4k ?? null, [shownDetails]);
 
 	const hdDownload = useMemo(() =>
-		getMediaDownloadSummary(details?.mediaInfo, false),
-	[details]
+		getMediaDownloadSummary(shownDetails?.mediaInfo, false),
+	[shownDetails]
 	);
 
 	const download4k = useMemo(() =>
-		getMediaDownloadSummary(details?.mediaInfo, true),
-	[details]
+		getMediaDownloadSummary(shownDetails?.mediaInfo, true),
+	[shownDetails]
 	);
 
-	const pollInterval = useMemo(() => statusPollInterval(details?.mediaInfo), [details]);
+	const pollInterval = useMemo(() => statusPollInterval(shownDetails?.mediaInfo), [shownDetails]);
 
 	// Keeps the refresh running from the request until the title lands, so the progress and
 	// the Play button show up without leaving the page. Only the details payload is swapped
@@ -177,18 +185,19 @@ const useSeerrDetailsData = ({mediaId, mediaType, contextUser}) => {
 	}, [loading, pollInterval, mediaId, mediaType]);
 
 	return {
-		details,
+		details: shownDetails,
 		setDetails,
-		loading,
+		loading: loading || stale,
 		error,
 		setError,
-		recommendations,
-		similar,
+		recommendations: stale ? [] : recommendations,
+		similar: stale ? [] : similar,
 		quota,
 		userPermissions,
 		currentUserId,
 		servers,
 		is4kEnabled,
+		streamingRegion: region,
 		hdStatus,
 		status4k,
 		hdDownload,

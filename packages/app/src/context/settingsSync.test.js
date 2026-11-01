@@ -14,7 +14,7 @@ jest.mock('../services/seerrApi', () => ({saveMoonfinProfile: jest.fn(() => Prom
 import {saveMoonfinProfile} from '../services/seerrApi';
 import {
 	SYNCABLE_KEYS, SYNC_PROFILES, __pushQueue, activeSyncProfile, defaultSettings, flushSettingsPush,
-	localToProfile, profileToLocal, resolveFromEnvelope
+	localToProfile, migrateKeyboardStyle, profileToLocal, resolveFromEnvelope, sameSyncedValue
 } from './SettingsContext';
 import {__resetHomeLayoutPassthrough, homeRowsFromProfile} from '../utils/homeLayout';
 
@@ -66,6 +66,14 @@ describe('profileToLocal', () => {
 		expect(local).toEqual({});
 	});
 
+	test("reads the other clients' card size names", () => {
+		expect(profileToLocal({posterSize: 'medium'}).homeRowsPosterSize).toBe('default');
+		expect(profileToLocal({posterSize: 'extraLarge'}).homeRowsPosterSize).toBe('xlarge');
+		expect(profileToLocal({posterSize: 'grandparents'}).homeRowsPosterSize).toBe('grandparents');
+		expect(profileToLocal({posterSize: 'xlarge'}).homeRowsPosterSize).toBe('xlarge');
+		expect(profileToLocal({posterSize: 'huge'}).homeRowsPosterSize).toBeUndefined();
+	});
+
 	test('ignores a screensaver mode this app has no way to draw', () => {
 		expect(profileToLocal({screensaverMode: 'off'}).screensaverMode).toBeUndefined();
 		expect(profileToLocal({screensaverMode: 'logo'}).screensaverMode).toBe('logo');
@@ -86,7 +94,7 @@ describe('profileToLocal', () => {
 	});
 
 	test('takes the newer seasonal effects as they are', () => {
-		for (const effect of ['christmas', 'petals', 'fireflies', 'halloween']) {
+		for (const effect of ['christmas', 'petals', 'fireflies', 'halloween', 'valentines', 'easter', 'pride', 'lunar', 'diwali']) {
 			expect(profileToLocal({seasonalSurprise: effect}).seasonalTheme).toBe(effect);
 		}
 	});
@@ -192,7 +200,17 @@ describe('localToProfile', () => {
 		const profile = localToProfile(defaultSettings);
 
 		expect(profile.classicHomeRowsPadding).toBe(30);
-		expect(profile.modernHomeRowsPadding).toBe(460);
+		expect(profile.modernHomeRowsPadding).toBe(360);
+	});
+
+	test('sends the card size under the names the other clients use', () => {
+		const sizeFor = (homeRowsPosterSize) =>
+			localToProfile({...defaultSettings, homeRowsPosterSize}, ['homeRowsPosterSize']).posterSize;
+
+		expect(sizeFor('default')).toBe('medium');
+		expect(sizeFor('xlarge')).toBe('extraLarge');
+		expect(sizeFor('grandparents')).toBe('grandparents');
+		expect(sizeFor('small')).toBe('small');
 	});
 
 	test('keeps the local only home row list out of the profile', () => {
@@ -290,6 +308,234 @@ describe('SYNCABLE_KEYS', () => {
 
 	test('includes seasonalDensity', () => {
 		expect(SYNCABLE_KEYS).toContain('seasonalDensity');
+	});
+
+	test('includes the media preview switches', () => {
+		expect(SYNCABLE_KEYS).toContain('episodePreviewEnabled');
+		expect(SYNCABLE_KEYS).toContain('mediaPreviewMode');
+		expect(SYNCABLE_KEYS).toContain('previewAudioEnabled');
+	});
+});
+
+describe('the home rows and media bar ratings settings', () => {
+	const SERVER_KEYS = {
+		homeRowsMdblistEnabled: 'homeRowsMdblistEnabled',
+		homeRowsMdblistRatingSources: 'homeRowsMdblistRatingSources',
+		homeRowsTmdbEpisodeRatingsEnabled: 'homeRowsTmdbEpisodeRatingsEnabled',
+		homeRowsShowRatingLabels: 'homeRowsMdblistShowRatingNames',
+		homeRowsShowRatingBadges: 'homeRowsMdblistShowRatingBadges',
+		mediaBarMdblistEnabled: 'mediaBarMdblistEnabled',
+		mediaBarMdblistRatingSources: 'mediaBarMdblistRatingSources',
+		mediaBarShowRatingLabels: 'mediaBarMdblistShowRatingNames',
+		mediaBarShowRatingBadges: 'mediaBarMdblistShowRatingBadges'
+	};
+
+	test('default like the plain ones, except home rows start with labels off', () => {
+		for (const local of Object.keys(SERVER_KEYS)) {
+			const plain = local.replace(/^(homeRows|mediaBar)(.)/, (all, surface, first) => first.toLowerCase());
+			const expected = local === 'homeRowsShowRatingLabels' ? false : defaultSettings[plain];
+			expect({local, value: defaultSettings[local]}).toEqual({local, value: expected});
+		}
+	});
+
+	test('travel under the shared server names', () => {
+		const local = {
+			homeRowsMdblistEnabled: false,
+			homeRowsMdblistRatingSources: ['imdb', 'myanimelist'],
+			homeRowsTmdbEpisodeRatingsEnabled: false,
+			homeRowsShowRatingLabels: true,
+			homeRowsShowRatingBadges: false,
+			mediaBarMdblistEnabled: false,
+			mediaBarMdblistRatingSources: ['metacriticuser', 'stars'],
+			mediaBarShowRatingLabels: false,
+			mediaBarShowRatingBadges: false
+		};
+		const profile = localToProfile({...defaultSettings, ...local}, Object.keys(SERVER_KEYS));
+
+		expect(profile).toEqual({
+			homeRowsMdblistEnabled: false,
+			homeRowsMdblistRatingSources: ['imdb', 'myAnimeList'],
+			homeRowsTmdbEpisodeRatingsEnabled: false,
+			homeRowsMdblistShowRatingNames: true,
+			homeRowsMdblistShowRatingBadges: false,
+			mediaBarMdblistEnabled: false,
+			mediaBarMdblistRatingSources: ['metacriticUser', 'stars'],
+			mediaBarMdblistShowRatingNames: false,
+			mediaBarMdblistShowRatingBadges: false
+		});
+		expect(profileToLocal(profile)).toEqual(local);
+	});
+
+	test('an empty source list from the server keeps the one this device has', () => {
+		expect(profileToLocal({homeRowsMdblistRatingSources: [], mediaBarMdblistRatingSources: []})).toEqual({});
+
+		const resolved = resolveFromEnvelope({tv: {}, global: {}}, {homeRowsMdblistRatingSources: [], mediaBarMdblistRatingSources: ['imdb']});
+		expect(resolved).not.toHaveProperty('homeRowsMdblistRatingSources');
+		expect(resolved.mediaBarMdblistRatingSources).toEqual(['imdb']);
+	});
+
+	test('leave the plain ratings settings alone', () => {
+		const local = profileToLocal({homeRowsMdblistShowRatingNames: true, mediaBarMdblistRatingSources: ['imdb']});
+
+		expect(local).toEqual({homeRowsShowRatingLabels: true, mediaBarMdblistRatingSources: ['imdb']});
+	});
+});
+
+describe('the backdrop toggles', () => {
+	test('take and send the home and details backdrops under the server names', () => {
+		expect(profileToLocal({homeBackdropEnabled: false, detailsBackdropEnabled: false}))
+			.toEqual({showHomeBackdrop: false, detailsBackdropEnabled: false});
+		expect(localToProfile({...defaultSettings, showHomeBackdrop: false}, ['showHomeBackdrop']))
+			.toEqual({homeBackdropEnabled: false});
+	});
+
+	test('the home backdrop style travels under its own key beside the switch', () => {
+		expect(SYNCABLE_KEYS).toContain('homeBackdropStyle');
+		expect(defaultSettings.homeBackdropStyle).toBe('fullScreen');
+		expect(localToProfile({...defaultSettings, homeBackdropStyle: 'corner'}, ['showHomeBackdrop', 'homeBackdropStyle']))
+			.toEqual({homeBackdropEnabled: true, homeBackdropStyle: 'corner'});
+		expect(profileToLocal({homeBackdropEnabled: true, homeBackdropStyle: 'corner'}))
+			.toEqual({showHomeBackdrop: true, homeBackdropStyle: 'corner'});
+	});
+});
+
+describe('the library style', () => {
+	test('defaults to classic', () => {
+		expect(defaultSettings.libraryStyle).toBe('classic');
+	});
+
+	test('takes and sends each style under its own name', () => {
+		['classic', 'modern', 'docked'].forEach((style) => {
+			expect(profileToLocal({libraryStyle: style})).toEqual({libraryStyle: style});
+			expect(localToProfile({...defaultSettings, libraryStyle: style}, ['libraryStyle'])).toEqual({libraryStyle: style});
+		});
+	});
+
+	test('keeps the style it has when the profile names one this app has no way to draw', () => {
+		expect(profileToLocal({libraryStyle: 'grid'})).toEqual({});
+	});
+});
+
+describe('the library grid settings', () => {
+	test('poster sizes sync under their own names, one for libraries and one for playlists', () => {
+		['small', 'medium', 'large', 'extraLarge'].forEach((size) => {
+			expect(profileToLocal({libraryPosterSize: size, playlistPosterSize: size})).toEqual({libraryPosterSize: size, playlistPosterSize: size});
+			expect(localToProfile({...defaultSettings, libraryPosterSize: size}, ['libraryPosterSize'])).toEqual({libraryPosterSize: size});
+		});
+	});
+
+	test('an unpicked poster size stays off the profile', () => {
+		expect(defaultSettings.libraryPosterSize).toBeNull();
+		expect(localToProfile(defaultSettings, ['libraryPosterSize', 'playlistPosterSize'])).toEqual({});
+		expect(profileToLocal({libraryPosterSize: 'grandparents'})).toEqual({});
+	});
+
+	test('titles under posters is on until turned off and syncs as it is', () => {
+		expect(defaultSettings.libraryCardTitles).toBe(true);
+		expect(profileToLocal({libraryCardTitles: false})).toEqual({libraryCardTitles: false});
+		expect(localToProfile({...defaultSettings, libraryCardTitles: false}, ['libraryCardTitles'])).toEqual({libraryCardTitles: false});
+	});
+
+	test('neither folder view nor the alphabet syncs', () => {
+		expect(SYNCABLE_KEYS).not.toContain('folderViewMode');
+		expect(SYNCABLE_KEYS).not.toContain('showAlphabeticalFilters');
+		expect(profileToLocal({enableFolderView: true})).toEqual({});
+	});
+});
+
+describe('the music library style', () => {
+	test('defaults to immersive', () => {
+		expect(defaultSettings.musicLibraryStyle).toBe('immersive');
+	});
+
+	test('takes and sends each style under its own name', () => {
+		['classic', 'quickAccess', 'immersive'].forEach((style) => {
+			expect(profileToLocal({musicLibraryStyle: style})).toEqual({musicLibraryStyle: style});
+			expect(localToProfile({...defaultSettings, musicLibraryStyle: style}, ['musicLibraryStyle'])).toEqual({musicLibraryStyle: style});
+		});
+	});
+
+	test('keeps the style it has when the profile names one this app has no way to draw', () => {
+		expect(profileToLocal({musicLibraryStyle: 'bookstore'})).toEqual({});
+	});
+});
+
+describe('the book library style', () => {
+	test('defaults to bookstore', () => {
+		expect(defaultSettings.bookLibraryStyle).toBe('bookstore');
+	});
+
+	test('takes and sends each style under its own name', () => {
+		['classic', 'readingRoom', 'bookstore'].forEach((style) => {
+			expect(profileToLocal({bookLibraryStyle: style})).toEqual({bookLibraryStyle: style});
+			expect(localToProfile({...defaultSettings, bookLibraryStyle: style}, ['bookLibraryStyle'])).toEqual({bookLibraryStyle: style});
+		});
+	});
+
+	test('keeps the style it has when the profile names one this app has no way to draw', () => {
+		expect(profileToLocal({bookLibraryStyle: 'immersive'})).toEqual({});
+	});
+});
+
+describe('the keyboard style', () => {
+	test('defaults to docked', () => {
+		expect(defaultSettings.keyboardStyle).toBe('docked');
+		expect(defaultSettings).not.toHaveProperty('preferSystemImeKeyboard');
+	});
+
+	test('takes and sends each style under its own name', () => {
+		['native', 'classic', 'glass', 'docked'].forEach((style) => {
+			expect(profileToLocal({keyboardStyle: style})).toEqual({keyboardStyle: style});
+			expect(localToProfile({...defaultSettings, keyboardStyle: style}, ['keyboardStyle'])).toEqual({keyboardStyle: style});
+		});
+	});
+
+	test('keeps the style it has when the profile names one this app has no way to draw', () => {
+		expect(profileToLocal({keyboardStyle: 'floating'})).toEqual({});
+	});
+
+	test('turns a stored Prefer System Keyboard into the native style once', () => {
+		const stored = {preferSystemImeKeyboard: true};
+		expect(migrateKeyboardStyle(stored)).toBe(true);
+		expect(stored).toEqual({keyboardStyle: 'native'});
+		expect(migrateKeyboardStyle(stored)).toBe(false);
+		expect(stored).toEqual({keyboardStyle: 'native'});
+	});
+
+	test('leaves a picked style alone and lets the switch turned off take the default', () => {
+		const picked = {preferSystemImeKeyboard: true, keyboardStyle: 'glass'};
+		expect(migrateKeyboardStyle(picked)).toBe(true);
+		expect(picked).toEqual({keyboardStyle: 'glass'});
+		const off = {preferSystemImeKeyboard: false};
+		expect(migrateKeyboardStyle(off)).toBe(true);
+		expect(off).toEqual({});
+		expect(migrateKeyboardStyle({})).toBe(false);
+	});
+});
+
+describe('the media preview switches', () => {
+	test('default to off with sound on, landing on Media Preview once turned on', () => {
+		expect(defaultSettings.episodePreviewEnabled).toBe(false);
+		expect(defaultSettings.mediaPreviewMode).toBe('media');
+		expect(defaultSettings.previewAudioEnabled).toBe(true);
+	});
+
+	test('the mode travels under its own key beside the switch', () => {
+		const keys = ['episodePreviewEnabled', 'mediaPreviewMode'];
+		expect(localToProfile({...defaultSettings, episodePreviewEnabled: true, mediaPreviewMode: 'trailer'}, keys))
+			.toEqual({episodePreviewEnabled: true, mediaPreviewMode: 'trailer'});
+		expect(profileToLocal({episodePreviewEnabled: true, mediaPreviewMode: 'trailer'}).mediaPreviewMode).toBe('trailer');
+	});
+
+	test('travel under the server keys as they are', () => {
+		const profile = localToProfile({...defaultSettings, episodePreviewEnabled: true, previewAudioEnabled: false}, ['episodePreviewEnabled', 'previewAudioEnabled']);
+
+		expect(profile).toEqual({episodePreviewEnabled: true, previewAudioEnabled: false});
+
+		const local = profileToLocal({episodePreviewEnabled: true, previewAudioEnabled: false});
+
+		expect(local.episodePreviewEnabled).toBe(true);
+		expect(local.previewAudioEnabled).toBe(false);
 	});
 });
 
@@ -431,6 +677,61 @@ describe('resolveFromEnvelope', () => {
 	});
 });
 
+describe('the per row image types', () => {
+	test('go out under the server row names with Continue Watching on its own key', () => {
+		const profile = localToProfile({
+			homeRowImageTypes: {'latest-media': 'thumb', genres: 'thumb', resume: 'banner', nextup: 'logo'}
+		}, ['homeRowImageTypes']);
+
+		expect(profile.homeRowImageTypes).toBe('latestmedia:thumb,genres:thumb,nextup:logo');
+		expect(profile.homeImageTypeContinueWatching).toBe('banner');
+	});
+
+	test('still go out when the last row is cleared', () => {
+		const profile = localToProfile({homeRowImageTypes: {}}, ['homeRowImageTypes']);
+
+		expect(profile.homeRowImageTypes).toBe('');
+		expect(profile.homeImageTypeContinueWatching).toBe('');
+	});
+
+	test('stay home when another key changed', () => {
+		const profile = localToProfile({homeRowImageTypes: {genres: 'thumb'}, showClock: true}, ['showClock']);
+
+		expect(profile).not.toHaveProperty('homeRowImageTypes');
+		expect(profile).not.toHaveProperty('homeImageTypeContinueWatching');
+	});
+
+	test("come back under this app's row ids, skipping what it doesn't know", () => {
+		const local = profileToLocal({
+			homeRowImageTypes: 'LatestMedia:Thumb,genres:thumb,resume:poster,nosuch:square,rewatch,,imdb_top_250_movies:banner',
+			homeImageTypeContinueWatching: 'Poster'
+		});
+
+		expect(local.homeRowImageTypes).toEqual({
+			'latest-media': 'thumb',
+			genres: 'thumb',
+			'imdb-top250-movies': 'banner',
+			resume: 'poster'
+		});
+	});
+
+	test("take Continue Watching alone when there's no list", () => {
+		expect(profileToLocal({homeImageTypeContinueWatching: 'thumb'}).homeRowImageTypes).toEqual({resume: 'thumb'});
+		expect(profileToLocal({homeImageTypeContinueWatching: ''})).not.toHaveProperty('homeRowImageTypes');
+	});
+
+	test('resolve the list and Continue Watching from their own layers', () => {
+		const resolved = resolveFromEnvelope(
+			{global: {homeImageTypeContinueWatching: 'banner'}, tv: {homeRowImageTypes: 'genres:thumb'}},
+			{homeRowImageTypes: 'nextup:thumb', homeImageTypeContinueWatching: 'Poster'}
+		);
+
+		expect(resolved.homeRowImageTypes).toEqual({genres: 'thumb', resume: 'banner'});
+		expect(resolveFromEnvelope({}, {homeRowImageTypes: 'genres:thumb'}).homeRowImageTypes).toEqual({genres: 'thumb'});
+		expect(resolveFromEnvelope({}, {})).not.toHaveProperty('homeRowImageTypes');
+	});
+});
+
 describe('the profile push queue', () => {
 	const creds = {current: {serverUrl: 'http://server', token: 'token'}};
 	const settingsFor = (syncProfile, changes) => ({...defaultSettings, syncProfile, ...changes});
@@ -507,4 +808,12 @@ describe('the profile push queue', () => {
 			['global', {navbarPosition: 'left'}, 'http://server', 'token']
 		]);
 	});
+});
+
+test('Home rows read back from the webOS database still match the server copy', () => {
+	const server = [{id: 'resume', name: 'Continue Watching', enabled: true, order: 0}];
+	const kept = [{_id: '1a', enabled: true, id: 'resume', name: 'Continue Watching', order: 0}];
+	expect(sameSyncedValue(server, kept)).toBe(true);
+	expect(sameSyncedValue(server, [{...kept[0], enabled: false}])).toBe(false);
+	expect(sameSyncedValue(server, [...kept, {_id: '1b', id: 'nextup', enabled: true, order: 1}])).toBe(false);
 });

@@ -6,6 +6,8 @@
 // episodes, so a series is represented by a single episode instead: the one up next if it has
 // been started, otherwise its first episode.
 
+import {fetchAllPlaylistItems} from '../views/Details/playlistItems';
+
 export const WATCHLIST_NAME = 'Watchlist';
 // Series get a list of their own, so the episodes standing in for them don't mix with films.
 export const SERIES_WATCHLIST_NAME = 'Series Watchlist';
@@ -55,8 +57,8 @@ export const addToWatchlist = async (api, item) => {
 		return {status: 'created', entry, listName};
 	}
 
-	const current = await api.getPlaylistItems(watchlist.Id, 5000);
-	const already = (current?.Items || []).some((listed) =>
+	const current = await fetchAllPlaylistItems(api, watchlist.Id);
+	const already = current.some((listed) =>
 		listed.Id === entry.Id || (item.Type === 'Series' && listed.SeriesId === item.Id));
 	if (already) return {status: 'already', entry, listName};
 

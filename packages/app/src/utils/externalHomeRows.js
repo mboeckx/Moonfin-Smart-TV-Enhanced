@@ -3,6 +3,7 @@ import seerrApi from '../services/seerrApi';
 import {fetchCustomRow, constructSourceUrl} from '../services/externalRowsApi';
 import {fetchWithTimeout} from './fetchTimeout';
 import {seasonalTitle} from './seasonalTitles';
+import {uiLocale} from './uiLocale';
 
 const HOME_ROW_LIMIT = 20;
 const VALIDATE_TIMEOUT_MS = 45000;
@@ -88,6 +89,7 @@ const normalizeExternalItem = (item, rowId, source) => {
 		OfficialRating: item.officialRating ?? null,
 		Overview: item.overview || null,
 		CommunityRating: item.rating ?? null,
+		Popularity: item.popularity ?? null,
 		Genres: Array.isArray(item.genres) ? item.genres : [],
 		RunTimeTicks: item.runTimeTicks ?? null,
 		_externalPosterUrl: item.posterUrl ? seerrApi.getImageUrl(item.posterUrl, 'w342') : null,
@@ -124,17 +126,20 @@ export const buildSeasonalRow = (payload, hiddenHolidays = []) => {
 	};
 };
 
+const shuffled = (items) => {
+	const out = [...items];
+	for (let i = out.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[out[i], out[j]] = [out[j], out[i]];
+	}
+	return out;
+};
+
 // Client side sorting for custom rows.
 const applySorting = (items, sortBy, sortOrder) => {
 	if (!sortBy || sortBy === 'none') return items;
+	if (sortBy === 'shuffle') return shuffled(items);
 	const sorted = [...items];
-	if (sortBy === 'shuffle') {
-		for (let i = sorted.length - 1; i > 0; i--) {
-			const j = Math.floor(Math.random() * (i + 1));
-			[sorted[i], sorted[j]] = [sorted[j], sorted[i]];
-		}
-		return sorted;
-	}
 	const dir = sortOrder === 'desc' ? -1 : 1;
 	sorted.sort((a, b) => {
 		let av;
@@ -153,6 +158,30 @@ const applySorting = (items, sortBy, sortOrder) => {
 	return sorted;
 };
 
+const EXTERNAL_SORT_KEYS = {
+	releaseDate: (item) => item.ProductionYear || 0,
+	rating: (item) => item.CommunityRating || 0,
+	popularity: (item) => item.Popularity || 0
+};
+
+// The order the IMDb, TMDB and Seerr rows' sort settings ask for. Ties go to the name, since a
+// release date is often only a year.
+export const sortExternalItems = (items, sortBy, sortOrder) => {
+	if (!sortBy || sortBy === 'none' || !items.length) return items;
+	if (sortBy === 'shuffle') return shuffled(items);
+	const byName = (a, b) => {
+		const x = (a.Name || '').toLowerCase();
+		const y = (b.Name || '').toLowerCase();
+		return x < y ? -1 : x > y ? 1 : 0;
+	};
+	const key = EXTERNAL_SORT_KEYS[sortBy];
+	const dir = sortOrder === 'descending' ? -1 : 1;
+	return [...items].sort((a, b) => {
+		const cmp = key ? key(a) - key(b) : byName(a, b);
+		return cmp === 0 ? byName(a, b) : cmp * dir;
+	});
+};
+
 // TMDB's movie and TV charts don't say what each result is, so the chart's path decides.
 // Trending says per result, which matters for the list that mixes both.
 const chartItemType = (path) => {
@@ -161,13 +190,16 @@ const chartItemType = (path) => {
 	return null;
 };
 
-// Fetches a preset TMDB or IMDb chart row.
+// Fetches a preset TMDB or IMDb chart row. The whole chart is sorted before the row is cut to size.
 export const fetchExternalPresetRow = async (rowId, options = {}) => {
 	const cfg = findPreset(rowId);
 	if (!cfg) return [];
 	const items = await fetchCustomRow({source: cfg.source, type: cfg.type, params: {}}, options);
 	const type = chartItemType(cfg.type);
-	return items.slice(0, HOME_ROW_LIMIT).map((it) => normalizeExternalItem(type ? {...it, type} : it, rowId, cfg.source));
+	const limit = options.limit || HOME_ROW_LIMIT;
+	const pool = options.sortBy && options.sortBy !== 'none' ? items : items.slice(0, limit);
+	const normalized = pool.map((it) => normalizeExternalItem(type ? {...it, type} : it, rowId, cfg.source));
+	return sortExternalItems(normalized, options.sortBy, options.sortOrder).slice(0, limit);
 };
 
 // Fetches a user configured custom row. `row` is the stored config
@@ -175,7 +207,7 @@ export const fetchExternalPresetRow = async (rowId, options = {}) => {
 export const fetchCustomHomeRow = async (row, options = {}) => {
 	const items = await fetchCustomRow({source: row.source, type: row.type, params: row.params}, options);
 	const sorted = applySorting(items, row.sortBy, row.sortOrder);
-	return sorted.slice(0, HOME_ROW_LIMIT).map((it) => {
+	return sorted.slice(0, options.limit || HOME_ROW_LIMIT).map((it) => {
 		const norm = normalizeExternalItem(it, row.id, row.source);
 		if (row.showUserRatings === false) norm.UserRating = null;
 		return norm;
@@ -266,8 +298,13 @@ const formatCalendarDate = (dateStr) => {
 	if (!dateStr) return '';
 	const d = new Date(dateStr);
 	if (Number.isNaN(d.getTime())) return '';
-	return d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
+	return d.toLocaleDateString(uiLocale(), {month: 'short', day: 'numeric'});
 };
+
+// Radarr gives a release as midnight UTC on its day, which is the day before anywhere west of
+// UTC, so the day is read as it's written.
+const releaseDay = (date) => new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const arrGet = async (url) => {
 	try {
@@ -301,7 +338,9 @@ const fetchRadarrItems = async (settings) => {
 		if (settings.radarrCalendarShowCinema && m.inCinemas) dates.push(m.inCinemas);
 		if (settings.radarrCalendarShowDigital && m.digitalRelease) dates.push(m.digitalRelease);
 		if (settings.radarrCalendarShowPhysical && m.physicalRelease) dates.push(m.physicalRelease);
-		const upcoming = dates.map((d) => new Date(d)).filter((d) => !Number.isNaN(d.getTime()) && d >= new Date());
+		// A release stays on the row through its own day.
+		const since = Date.now() - DAY_MS;
+		const upcoming = dates.map((d) => new Date(d)).filter((d) => !Number.isNaN(d.getTime()) && d.getTime() > since);
 		if (!upcoming.length) continue;
 		const soonest = upcoming.sort((a, b) => a - b)[0];
 		const tmdbId = m.tmdbId ? String(m.tmdbId) : null;
@@ -317,7 +356,7 @@ const fetchRadarrItems = async (settings) => {
 			releaseType = $L('Physical: ');
 		}
 
-		const dateStr = settings.radarrCalendarShowDate ? formatCalendarDate(soonest.toISOString()) : '';
+		const dateStr = settings.radarrCalendarShowDate ? formatCalendarDate(releaseDay(soonest)) : '';
 		const subtitle = dateStr ? `${releaseType}${dateStr}` : '';
 		const fanart = m.images?.find((i) => i.coverType === 'fanart');
 
@@ -429,10 +468,10 @@ export const fetchCalendarRows = async (settings, {radarrEnabled = false, sonarr
 // fetch of a large list can take the server a while, so this waits longer than a home
 // row. It doesn't force a refresh either, so a retry gets the copy the server cached
 // after an earlier attempt gave up.
-export const validateCustomRow = async (row) => {
+export const validateCustomRow = async (row, options = {}) => {
 	const items = await fetchCustomRow(
 		{source: row.source, type: row.type, params: row.params},
-		{timeoutMs: VALIDATE_TIMEOUT_MS}
+		{timeoutMs: VALIDATE_TIMEOUT_MS, ...options}
 	);
 	if (items.length > 0) return {ok: true};
 	return {error: $L('That list returned no items. Check the URL: {url}').replace('{url}', constructSourceUrl(row.source, row.type, row.params))};

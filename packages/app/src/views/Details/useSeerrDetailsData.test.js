@@ -61,8 +61,8 @@ afterEach(() => jest.useRealTimers());
 
 describe('the refresh interval', () => {
 	test('a download refreshes every 15s, anything else on its way every 30s', () => {
-		expect(statusPollInterval({status: MEDIA_STATUS.PROCESSING, downloadStatus: [{size: 100, sizeLeft: 40}]})).toBe(15000);
-		expect(statusPollInterval({status: MEDIA_STATUS.UNKNOWN, status4k: MEDIA_STATUS.PROCESSING, downloadStatus4k: [{size: 100, sizeLeft: 40}]})).toBe(15000);
+		expect(statusPollInterval({status: MEDIA_STATUS.PROCESSING, downloadStatus: [{downloadId: 'dl', size: 100, sizeLeft: 40}]})).toBe(15000);
+		expect(statusPollInterval({status: MEDIA_STATUS.UNKNOWN, status4k: MEDIA_STATUS.PROCESSING, downloadStatus4k: [{downloadId: 'dl', size: 100, sizeLeft: 40}]})).toBe(15000);
 		expect(statusPollInterval({status: MEDIA_STATUS.PENDING})).toBe(30000);
 		expect(statusPollInterval({status: MEDIA_STATUS.AVAILABLE})).toBe(null);
 		expect(statusPollInterval(undefined)).toBe(null);
@@ -78,7 +78,7 @@ describe('the open Seerr details page', () => {
 		act(() => result.current.setDetails(movie()));
 		expect(result.current.hdDownload).toBe(null);
 
-		mediaInfo = {status: MEDIA_STATUS.PROCESSING, downloadStatus: [{size: 100, sizeLeft: 40}]};
+		mediaInfo = {status: MEDIA_STATUS.PROCESSING, downloadStatus: [{downloadId: 'dl', size: 100, sizeLeft: 40}]};
 		await elapse(30000);
 		expect(result.current.hdDownload.fraction).toBe(0.6);
 
@@ -98,7 +98,7 @@ describe('the open Seerr details page', () => {
 	});
 
 	test('a download refreshes on the 15s beat', async () => {
-		mediaInfo = {status: MEDIA_STATUS.PROCESSING, downloadStatus: [{size: 100, sizeLeft: 40}]};
+		mediaInfo = {status: MEDIA_STATUS.PROCESSING, downloadStatus: [{downloadId: 'dl', size: 100, sizeLeft: 40}]};
 		await open();
 		await elapse(14999);
 		expect(refreshes()).toBe(0);
@@ -124,6 +124,18 @@ describe('the open Seerr details page', () => {
 		expect(refreshes()).toBe(0);
 	});
 
+	test('picks the streaming region the way Seerr does', async () => {
+		seerrApi.getPublicSettings.mockResolvedValue({streamingRegion: 'GB'});
+		expect((await open()).result.current.streamingRegion).toBe('GB');
+
+		seerrApi.getUser.mockResolvedValue({id: 1, settings: {streamingRegion: 'CA'}});
+		expect((await open()).result.current.streamingRegion).toBe('CA');
+
+		seerrApi.getUser.mockRejectedValue(new Error('offline'));
+		seerrApi.getPublicSettings.mockResolvedValue({streamingRegion: ''});
+		expect((await open()).result.current.streamingRegion).toBe('US');
+	});
+
 	test('a refresh that lands after the page closes starts nothing', async () => {
 		mediaInfo = {status: MEDIA_STATUS.PROCESSING};
 		const {unmount} = await open();
@@ -131,9 +143,32 @@ describe('the open Seerr details page', () => {
 		seerrApi.getMovie.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
 		await elapse(30000);
 		unmount();
-		finish({...movie(), mediaInfo: {status: MEDIA_STATUS.PROCESSING, downloadStatus: [{size: 100, sizeLeft: 40}]}});
+		finish({...movie(), mediaInfo: {status: MEDIA_STATUS.PROCESSING, downloadStatus: [{downloadId: 'dl', size: 100, sizeLeft: 40}]}});
 		const refreshesAtClose = refreshes();
 		await elapse(2 * 60000);
 		expect(refreshes()).toBe(refreshesAtClose);
+	});
+});
+
+describe('moving to another title', () => {
+	test('never shows the last title\'s answer on the new one', async () => {
+		seerrApi.getMovieRecommendations.mockImplementation(async (id, page) => ({results: page === 1 ? [{id: 1, title: 'Iron Man'}] : []}));
+		const seen = [];
+		const {rerender} = renderHook((props) => {
+			const data = useSeerrDetailsData(props);
+			if (props.mediaId === 603) seen.push({id: data.details?.id, loading: data.loading, recommendations: data.recommendations.length});
+			return data;
+		}, {initialProps: {mediaId: 299534, mediaType: 'movie', contextUser: null}});
+		await elapse(0);
+
+		let finish;
+		seerrApi.getMovie.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+		rerender({mediaId: 603, mediaType: 'movie', contextUser: null});
+		expect(seen.length).toBeGreaterThan(0);
+		expect(seen.every((render) => render.id === undefined && render.loading && render.recommendations === 0)).toBe(true);
+
+		await act(async () => finish({id: 603, title: 'The Matrix', mediaInfo}));
+		await elapse(0);
+		expect(seen[seen.length - 1]).toEqual({id: 603, loading: false, recommendations: 1});
 	});
 });

@@ -1,6 +1,8 @@
 import {useState, useEffect, useCallback, useRef} from 'react';
 
-const useInactivityTimer = (timeoutSeconds = 90, enabled = true) => {
+// Patched: keyInterceptRef can hold a handler that gets the presses made while the screensaver is
+// up before they wake it; when it returns true the press was used and goes no further.
+const useInactivityTimer = (timeoutSeconds = 90, enabled = true, keyInterceptRef = null) => {
 	const [isInactive, setIsInactive] = useState(false);
 	const inactiveRef = useRef(false);
 	inactiveRef.current = isInactive;
@@ -27,6 +29,22 @@ const useInactivityTimer = (timeoutSeconds = 90, enabled = true) => {
 		dismiss();
 		return true;
 	}, [dismiss]);
+
+	// Added once, ahead of the window listeners the screens add later, so the key that wakes the screensaver goes no further.
+	useEffect(() => {
+		const handleWakeKey = (e) => {
+			if (inactiveRef.current && keyInterceptRef?.current?.(e)) {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				return;
+			}
+			if (!wake()) return;
+			e.preventDefault();
+			e.stopImmediatePropagation();
+		};
+		window.addEventListener('keydown', handleWakeKey, true);
+		return () => window.removeEventListener('keydown', handleWakeKey, true);
+	}, [wake, keyInterceptRef]);
 
 	useEffect(() => {
 		if (!enabled) {

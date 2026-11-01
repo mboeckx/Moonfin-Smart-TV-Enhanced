@@ -1,140 +1,36 @@
-import {useCallback, useEffect, useMemo, useState} from 'react';
+import {useCallback, useMemo} from 'react';
 import $L from '@enact/i18n/$L';
-import Scroller from '@enact/sandstone/Scroller';
-import * as playback from '../../services/playback';
 import {getImageUrl} from '../../utils/helpers';
-import {autocropLogoUrl} from '../../utils/logoAutocrop';
 import {getServerUrl} from '../../services/jellyfinApi';
 import TrickplayPreview from '../../components/TrickplayPreview';
 import {isTrickplayOn} from '../../utils/trickplayLayout';
 import SubtitleOffsetOverlay from './SubtitleOffsetOverlay';
 import SubtitleSettingsOverlay from './SubtitleSettingsOverlay';
-import {formatBitrate, getAudioChannels, getAudioCodec, getHdrType, getVideoCodec} from '../../utils/mediaStreamFacts';
+import SecondarySubtitleSettingsOverlay from './SecondarySubtitleSettingsOverlay';
+import SubtitleFetchIndicator, {useSubtitleFetchShown} from './SubtitleFetchIndicator';
 import {getPlatform} from '../../platform';
 import {ModalContainer} from '../../utils/spotlightContainers';
 import {numberedTrackName, sortSubtitleStreams, subtitleTrackDetail, audioTrackDetail} from '../../utils/trackLabels';
 import TrackOptionRow, {TrackDivider} from '../../components/TrackOptionRow';
 import EpisodeBrowser from './EpisodeBrowser';
-import {
-	SpottableButton, SpottableDiv,
-	formatTime, getQualityPresets,
-	IconPlay, IconPause, IconRewind, IconForward, IconSubtitle, IconSubtitleOff, IconAudio,
-	IconChapters, IconEpisodes, IconPrevious, IconNext, IconQuality, IconInfo, IconCast, IconZoom,
-	IconShuffle, IconRepeat, IconRepeatOne, IconSleep, IconGuide, IconChannels
-} from './PlayerConstants';
+import PlaybackInfoModal from './PlaybackInfoModal';
+import {SpottableButton, SpottableDiv, formatTime, getQualityPresets} from './PlayerConstants';
+import {useOsdLogo} from './playerOsd';
+import LiveRecordingDialog, {LiveRecordingToast} from './LiveRecordingDialog';
+import {recordPromptChannel} from '../../utils/recordAiring';
 import {formatClockTime} from '../../utils/clock';
+import {AT_LIVE_SECONDS} from './liveWindow';
 import {episodeLine} from '../../utils/liveTvGuide';
 import {chapterMarkerPositions} from '../../utils/chapterMarkers';
 import {keepFocusInView} from '../../utils/focusScroll';
 import {SLEEP_TIMER_MINUTES} from './useSleepTimer';
-import {arrange, OSD_BUTTONS, OSD_ORDER_KEY, OSD_HIDDEN_KEY} from '../../utils/buttonLayout';
 import {formatPlaybackTimeSlot, formatPlaybackTrailingTime} from '../../utils/playbackTimeLabels';
 import { useSettings } from '../../context/SettingsContext';
 
-export const usePlayerButtons = ({
-	isPaused, audioStreams, subtitleStreams, chapters,
-	nextEpisode, isAudioMode, isLiveTV, hasNextTrack, hasPrevTrack,
-	shuffleMode, repeatMode, selectedQuality,
-	selectedSubtitleIndex, canDownloadRemoteSubtitles, hasCastMembers, zoomModeLabel, zoomModeKey,
-	sleepMinutes, canBrowseEpisodes = false
-}) => {
-	const {settings} = useSettings();
-	const topButtons = useMemo(() => {
-		if (isAudioMode) {
-			return [
-				{id: 'shuffle', icon: <IconShuffle />, label: $L('Shuffle'), action: 'shuffle', active: shuffleMode},
-				{id: 'previous', icon: <IconPrevious />, label: $L('Previous'), action: 'prevTrack', disabled: !hasPrevTrack && !shuffleMode},
-				{id: 'playPause', icon: isPaused ? <IconPlay /> : <IconPause />, label: isPaused ? $L('Play') : $L('Pause'), action: 'playPause'},
-				{id: 'next', icon: <IconNext />, label: $L('Next'), action: 'nextTrack', disabled: !hasNextTrack && repeatMode === 'off' && !shuffleMode},
-				{id: 'repeat', icon: repeatMode === 'one' ? <IconRepeatOne /> : <IconRepeat />, label: $L('Repeat'), action: 'repeat', active: repeatMode !== 'off'}
-			];
-		}
-		const buttons = [];
-		if (!isLiveTV) {
-			buttons.push(
-				{id: 'previous', icon: <IconPrevious />, label: $L('Previous'), action: 'prevTrack'},
-				{id: 'rewind', icon: <IconRewind />, label: $L('Seek back'), action: 'rewind'},
-				{id: 'playPause', icon: isPaused ? <IconPlay /> : <IconPause />, label: isPaused ? $L('Play') : $L('Pause'), action: 'playPause'},
-				{id: 'forward', icon: <IconForward />, label: $L('Seek forward'), action: 'forward'}
-			);
-			if (hasNextTrack) {
-				buttons.push(
-					{id: 'nextTrack', icon: <IconNext />, label: $L('Next'), action: 'nextTrack'}
-				);
-			} else if (nextEpisode) {
-				buttons.push(
-					{id: 'next', icon: <IconNext />, label: $L('Next Episode'), action: 'next'}
-				);
-			}
-		} else {
-			buttons.push(
-				{id: 'playPause', icon: isPaused ? <IconPlay /> : <IconPause />, label: isPaused ? $L('Play') : $L('Pause'), action: 'playPause'}
-			);
-		}
-		return buttons;
-	}, [isPaused, isAudioMode, isLiveTV, nextEpisode, hasNextTrack, hasPrevTrack, shuffleMode, repeatMode]);
+import audioCss from './audio/AudioMode.module.less';
 
-	const osdOrder = settings[OSD_ORDER_KEY];
-	const osdHidden = settings[OSD_HIDDEN_KEY];
-
-	const bottomButtons = useMemo(() => {
-		if (isAudioMode) {
-			return [];
-		}
-		// Declaration order is where a button the user never placed ends up, so keep it stable.
-		// The live row's order comes from moonfin-core's live player.
-		if (isLiveTV) {
-			return arrange([
-				{id: 'channels', icon: <IconChannels />, label: $L('Channels'), action: 'channels'},
-				{id: 'guide', icon: <IconGuide />, label: $L('Guide'), action: 'guide'},
-				...(audioStreams.length > 1 ? [{id: 'audio', icon: <IconAudio />, label: $L('Audio'), action: 'audio'}] : []),
-				...((subtitleStreams.length > 0 || canDownloadRemoteSubtitles) ? [{id: 'subtitles', icon: (selectedSubtitleIndex >= 0 ? <IconSubtitle /> : <IconSubtitleOff />), label: $L('Subtitles'), action: 'subtitle'}] : []),
-				{id: 'quality', icon: <IconQuality />, label: $L('Playback Quality'), action: 'quality'},
-				{id: 'zoom', icon: <IconZoom />, label: $L('Zoom').concat(` (${zoomModeLabel})`), action: 'zoom', active: zoomModeKey !== 'fit'},
-				{id: 'sleep', icon: <IconSleep />, label: $L('Sleep timer'), action: 'sleep', active: sleepMinutes != null},
-				{id: 'info', icon: <IconInfo />, label: $L('Playback Information'), action: 'info'}
-			], {order: osdOrder, hidden: osdHidden});
-		}
-		return arrange([
-			...(chapters.length > 0 ? [{id: 'chapters', icon: <IconChapters />, label: $L('Chapters'), action: 'chapter'}] : []),
-			// Only an episode has a season to browse, so a movie never gets this button.
-			...(canBrowseEpisodes ? [{id: 'episodes', icon: <IconEpisodes />, label: $L('Episodes'), action: 'episodes'}] : []),
-			...((subtitleStreams.length > 0 || canDownloadRemoteSubtitles) ? [{id: 'subtitles', icon: (selectedSubtitleIndex >= 0 ? <IconSubtitle /> : <IconSubtitleOff />), label: $L('Subtitles'), action: 'subtitle'}] : []),
-			...(audioStreams.length > 1 ? [{id: 'audio', icon: <IconAudio />, label: $L('Audio'), action: 'audio'}] : []),
-			// Core calls this castAndCrew and keeps cast for Chromecast, so hiding one there
-			// must not take the other away here.
-			{id: 'castAndCrew', icon: <IconCast />, label: $L('Cast & Crew'), action: 'cast', disabled: !hasCastMembers},
-			{id: 'quality', icon: <IconQuality />, label: $L('Playback Quality'), action: 'quality', active: selectedQuality != null},
-			{id: 'zoom', icon: <IconZoom />, label: $L('Zoom').concat(` (${zoomModeLabel})`), action: 'zoom', active: zoomModeKey !== 'fit'},
-			{id: 'sleep', icon: <IconSleep />, label: $L('Sleep timer'), action: 'sleep', active: sleepMinutes != null},
-			{id: 'info', icon: <IconInfo />, label: $L('Playback Information'), action: 'info'}
-		], {order: osdOrder, hidden: osdHidden, catalogue: OSD_BUTTONS});
-	}, [audioStreams.length, chapters.length, canBrowseEpisodes, subtitleStreams.length, isAudioMode, isLiveTV, selectedQuality, selectedSubtitleIndex, canDownloadRemoteSubtitles, hasCastMembers, zoomModeLabel, zoomModeKey, sleepMinutes, osdOrder, osdHidden]);
-
-	return {topButtons, bottomButtons};
-};
-
-// Mirrors the height clamp .mediaLogo sets in css (10vh, floor 70px, ceiling
-// 160px) so the two stay in lockstep - this is what a logo renders at before
-// any width-driven shrinking kicks in.
-const LOGO_HEIGHT_VH = 0.10;
-const LOGO_MIN_HEIGHT_PX = 70;
-const LOGO_MAX_HEIGHT_PX = 160;
-// A squarish logo comfortably clears this at the height above; a wide
-// wordmark would not, which is exactly the case this trims down for.
-const LOGO_MAX_WIDTH_VW = 0.34;
-
-// A logo rendered at the normal height, straight off its aspect ratio - undefined
-// until the autocrop pass resolves one, since a raw un-autocropped image still
-// needs to render at something in the meantime.
-const logoHeightPxFor = (aspectRatio, viewportWidth, viewportHeight) => {
-	const normalHeight = Math.min(LOGO_MAX_HEIGHT_PX, Math.max(LOGO_MIN_HEIGHT_PX, viewportHeight * LOGO_HEIGHT_VH));
-	if (!aspectRatio) return normalHeight;
-
-	const maxWidth = viewportWidth * LOGO_MAX_WIDTH_VW;
-	const widthAtNormalHeight = normalHeight * aspectRatio;
-	return widthAtNormalHeight > maxWidth ? maxWidth / aspectRatio : normalHeight;
-};
+// The row shows the offset the strip it opens is set to.
+const offsetLabel = (offset) => (offset ? `${offset > 0 ? '+' : ''}${offset.toFixed(1)}s` : $L('None'));
 
 const PlayerControls = ({
 	css,
@@ -142,6 +38,7 @@ const PlayerControls = ({
 	isHdrContent = false,
 	activeModal,
 	isAudioMode,	isLiveTV,	focusRow,
+	liveWindow,
 	title,
 	subtitle,
 	logoUrl,
@@ -149,6 +46,7 @@ const PlayerControls = ({
 	topButtons,
 	bottomButtons,
 	displayTime,
+	seekStepSeconds,
 	duration,
 	progressPercent,
 	bufferedPercent,
@@ -191,67 +89,45 @@ const PlayerControls = ({
 	castMembers,
 	isLoadingCastMembers,
 	handleSubtitleOffsetChange,
+	secondarySubtitleIndex,
+	secondarySubtitleStreams,
+	secondarySubtitleOffset,
+	secondarySubtitleTrackEvents,
+	handleChooseSubtitleSlot,
+	handleSelectSecondarySubtitle,
+	handleOpenSecondarySubtitleOffset,
+	handleOpenSecondarySubtitleSettings,
+	handleSecondarySubtitleOffsetChange,
+	subtitleFetching,
 	closeModal,
 	stopPropagation,
-	renderInfoPlaybackRows,
-	renderInfoVideoExtra
+	transcodeForced,
+	videoRef,
+	liveRecording
 }) => {
 	const { settings } = useSettings();
 	const isTizenPlatform = getPlatform() === 'tizen';
-	const [logoLoadFailed, setLogoLoadFailed] = useState(false);
-	const [croppedLogoUrl, setCroppedLogoUrl] = useState(null);
-	const [logoAspectRatio, setLogoAspectRatio] = useState(null);
-
-	// A tag that resolved but whose image 404s (stale cache, server hiccup) should
-	// still fall back to text instead of leaving a broken image in the corner.
-	// Logos vary a lot in how much transparent padding is baked into the source
-	// image, so the raw url renders first and is swapped for a trimmed version
-	// once the autocrop pass resolves - keeps every logo reading the same size.
-	useEffect(() => {
-		setLogoLoadFailed(false);
-		setCroppedLogoUrl(null);
-		setLogoAspectRatio(null);
-		if (!logoUrl) return undefined;
-		let cancelled = false;
-		autocropLogoUrl(logoUrl).then((result) => {
-			if (cancelled) return;
-			setCroppedLogoUrl(result?.url || null);
-			setLogoAspectRatio(result?.aspectRatio || null);
-		});
-		return () => { cancelled = true; };
-	}, [logoUrl]);
-
-	const displayLogoUrl = croppedLogoUrl || logoUrl;
-
-	// A wordmark-style logo (wide aspect ratio) renders far too big at the height a
-	// squarish one is comfortable at, since nothing before this scaled height down
-	// as width grew - see logoHeightPxFor.
-	const [viewportSize, setViewportSize] = useState(() => ({width: window.innerWidth, height: window.innerHeight}));
-	useEffect(() => {
-		const handleResize = () => setViewportSize({width: window.innerWidth, height: window.innerHeight});
-		window.addEventListener('resize', handleResize);
-		return () => window.removeEventListener('resize', handleResize);
-	}, []);
-	const logoHeightPx = useMemo(
-		() => logoHeightPxFor(logoAspectRatio, viewportSize.width, viewportSize.height),
-		[logoAspectRatio, viewportSize]
-	);
-
-	const handleLogoError = useCallback(() => {
-		setLogoLoadFailed(true);
-	}, []);
+	const {displayLogoUrl, logoLoadFailed, logoHeightPx, handleLogoError} = useOsdLogo(logoUrl);
 
 	// The list only stands in for itself once the work is done and there is
 	// nothing to report instead.
 	const remoteSubtitleBusy = isSearchingRemoteSubtitles || isDownloadingRemoteSubtitle;
 	const showRemoteSubtitleResults = !remoteSubtitleBusy && !remoteSubtitleError;
+	const showSubtitleFetch = useSubtitleFetchShown(subtitleFetching) && !isAudioMode;
+	const controlsShown = controlsVisible && !activeModal;
+
+	const subtitleSlotLabel = (index) => {
+		const stream = subtitleStreams.find((s) => s.index === index);
+		if (!stream) return $L('None');
+		return stream.displayTitle || stream.language || $L('Subtitle');
+	};
 
 	// Every button carries its own tooltip and the stylesheet reveals the focused one,
 	// so moving along the row doesn't re-render anything.
 	const renderControlButton = (btn, row, defaultSpotlightId) => (
 		<div key={btn.id} className={css.controlBtnWrapper}>
 			<SpottableButton
-				className={`${css.controlBtn} ${isLiveTV ? css.liveBtn : ''} ${btn.disabled ? css.controlBtnDisabled : ''} ${btn.active ? css.controlBtnActive : ''}`}
+				className={`${css.controlBtn} ${isLiveTV ? css.liveBtn : ''} ${btn.disabled ? css.controlBtnDisabled : ''} ${btn.active ? css.controlBtnActive : ''} ${btn.selected ? audioCss.toggleOn : ''}`}
 				data-action={btn.action}
 				onClick={btn.disabled ? undefined : handleControlButtonClick}
 				aria-label={btn.label}
@@ -318,7 +194,7 @@ const PlayerControls = ({
 
 	return (
 		<>
-			<div className={`${css.playerControls} ${controlsVisible && !activeModal ? css.visible : ''} ${isAudioMode ? css.audioControls : ''}`}>
+			<div className={`${css.playerControls} ${controlsShown ? css.visible : ''} ${isAudioMode ? css.audioControls : ''}`}>
 				{!isAudioMode && (
 				<div className={css.controlsTop}>
 					{isLiveTV ? (
@@ -355,30 +231,58 @@ const PlayerControls = ({
 				</div>
 				)}
 
-				<div className={css.controlsBottom}>
+				<div className={css.controlsBottom} data-player-controls-bottom>
+					{showSubtitleFetch && controlsShown && <SubtitleFetchIndicator />}
 					{isLiveTV && (() => {
-						// The live timeline is the current program's span, not a seek bar.
-						// Without guide data it falls back to a clock and a LIVE tag.
+						// With a rewind window the bar runs from its start to the live point, the left
+						// label is the time of day being watched and the right one how far behind live
+						// it is. Otherwise it's the current program's span, or a clock and a LIVE tag
+						// without guide data.
 						const now = Date.now();
-						const start = liveProgram ? new Date(liveProgram.StartDate) : null;
-						const end = liveProgram ? new Date(liveProgram.EndDate) : null;
-						const progress = start && end
-							? Math.max(0, Math.min(1, (now - start.getTime()) / (end.getTime() - start.getTime())))
-							: 0;
 						const programEpisodeLine = episodeLine(liveProgram);
+						let progress = 0;
+						let startLabel;
+						let endLabel;
+						if (liveWindow) {
+							const behind = Math.max(0, liveWindow.edge - displayTime);
+							progress = Math.max(0, Math.min(1, (displayTime - liveWindow.start) / (liveWindow.edge - liveWindow.start)));
+							startLabel = formatClockTime(new Date(now - behind * 1000), settings.clockDisplay);
+							endLabel = behind <= AT_LIVE_SECONDS ? $L('LIVE') : `-${formatTime(behind)}`;
+						} else {
+							const start = liveProgram ? new Date(liveProgram.StartDate) : null;
+							const end = liveProgram ? new Date(liveProgram.EndDate) : null;
+							if (start && end) {
+								progress = Math.max(0, Math.min(1, (now - start.getTime()) / (end.getTime() - start.getTime())));
+							}
+							startLabel = formatClockTime(start || new Date(), settings.clockDisplay);
+							endLabel = end ? formatClockTime(end, settings.clockDisplay) : $L('LIVE');
+						}
 						return (
 							<div className={css.liveTimeline}>
 								{programEpisodeLine && (
 									<div className={css.liveEpisodeTitle}>{programEpisodeLine}</div>
 								)}
-								<div className={css.liveProgressTrack}>
-									{liveProgram && (
-										<div className={css.liveProgressFill} style={{width: `${progress * 100}%`}} />
-									)}
-								</div>
+								{liveWindow ? (
+									<SpottableDiv
+										className={css.progressBar}
+										onKeyDown={handleProgressKeyDown}
+										onBlur={handleProgressBlur}
+										spotlightDisabled={focusRow !== 'progress'}
+										spotlightId="progress-bar"
+									>
+										<div className={css.progressFill} style={{transform: `scaleX(${progress})`, WebkitTransform: `scaleX(${progress})`}} />
+										<div className={css.seekIndicator} style={{left: `${progress * 100}%`}} />
+									</SpottableDiv>
+								) : (
+									<div className={css.liveProgressTrack}>
+										{liveProgram && (
+											<div className={css.liveProgressFill} style={{width: `${progress * 100}%`}} />
+										)}
+									</div>
+								)}
 								<div className={css.liveTimeLabels}>
-									<span>{formatClockTime(start || new Date(), settings.clockDisplay)}</span>
-									<span>{end ? formatClockTime(end, settings.clockDisplay) : $L('LIVE')}</span>
+									<span>{startLabel}</span>
+									<span>{endLabel}</span>
 								</div>
 							</div>
 						);
@@ -410,7 +314,7 @@ const PlayerControls = ({
 									mediaSourceId={mediaSourceId}
 									positionTicks={displayTime * 10000000}
 									durationTicks={durationMs * 10000}
-									stepSeconds={settings.seekStep}
+									stepSeconds={seekStepSeconds}
 									mode={settings.trickPlayMode}
 									scalePercent={settings.trickPlayPreviewScale}
 									verticalPercent={settings.trickPlayVerticalPosition}
@@ -426,7 +330,7 @@ const PlayerControls = ({
 					)}
 
 					{!isAudioMode && (topButtons.length > 0 || bottomButtons.length > 0) && (
-						<div className={css.videoControlsRow}>
+						<div className={css.videoControlsRow} data-player-controls-row>
 							{topButtons.length > 0 && (
 								<div className={css.transportButtons}>
 									{topButtons.map((btn) => renderControlButton(btn, 'bottom', btn.id === 'playPause' ? 'play-pause-btn' : undefined))}
@@ -441,9 +345,17 @@ const PlayerControls = ({
 						</div>
 					)}
 
-					{isAudioMode && topButtons.length > 0 && (
-						<div className={css.audioTransportButtons}>
-							{topButtons.map((btn) => renderControlButton(btn, 'bottom', btn.id === 'playPause' ? 'play-pause-btn' : undefined))}
+					{isAudioMode && (
+						<div className={audioCss.dock}>
+							<div className={audioCss.dockSide}>
+								{bottomButtons.filter((btn) => btn.side === 'start').map((btn) => renderControlButton(btn, 'bottom'))}
+							</div>
+							<div className={audioCss.dockCenter}>
+								{topButtons.map((btn) => renderControlButton(btn, 'bottom', btn.id === 'playPause' ? 'play-pause-btn' : undefined))}
+							</div>
+							<div className={`${audioCss.dockSide} ${audioCss.dockEnd}`}>
+								{bottomButtons.filter((btn) => btn.side !== 'start').map((btn) => renderControlButton(btn, 'bottom'))}
+							</div>
 						</div>
 					)}
 				</div>
@@ -483,7 +395,7 @@ const PlayerControls = ({
 								onClick={handleSelectSubtitle}
 								onKeyDown={handleSubtitleKeyDown}
 							/>
-							{sortSubtitleStreams(subtitleStreams).map((stream, i) => (
+							{sortSubtitleStreams(subtitleStreams, settings?.preferExternalSubtitles === true).map((stream, i) => (
 								<TrackOptionRow
 									key={stream.index}
 									label={numberedTrackName(i + 1, stream.displayTitle, $L('Subtitle'))}
@@ -495,16 +407,73 @@ const PlayerControls = ({
 								/>
 							))}
 							<TrackDivider />
-							<TrackOptionRow label={$L('Offset')} spotlightId="btn-subtitle-offset" onClick={handleOpenSubtitleOffset} />
+							<TrackOptionRow label={$L('Offset')} detail={offsetLabel(subtitleOffset)} spotlightId="btn-subtitle-offset" onClick={handleOpenSubtitleOffset} />
 							<TrackOptionRow label={$L('Appearance')} spotlightId="btn-subtitle-appearance" onClick={handleOpenSubtitleSettings} />
 							{canDownloadRemoteSubtitles && (
 								<TrackOptionRow
 									label={$L('Download subtitles...')}
-									detail={$L('Search using the OpenSubtitles plugin')}
+									detail={$L('Search using OpenSubtitles')}
 									spotlightId="btn-subtitle-download"
 									onClick={handleOpenRemoteSubtitleSearch}
 								/>
 							)}
+							<TrackDivider />
+							<TrackOptionRow label={$L('Cancel')} dimmed onClick={closeModal} />
+						</div>
+					</ModalContainer>
+				</div>
+			)}
+
+			{showSubtitleFetch && !controlsShown && <SubtitleFetchIndicator standalone />}
+
+			{activeModal === 'subtitleSlot' && (
+				<div className={css.trackModal} onClick={closeModal}>
+					<ModalContainer className={css.modalContent} onClick={stopPropagation} data-modal="subtitleSlot" spotlightId="subtitleSlot-modal">
+						<h2 className={css.modalTitle}>{$L('Subtitles')}</h2>
+						<div className={css.trackList}>
+							<TrackOptionRow
+								label={$L('Primary')}
+								detail={subtitleSlotLabel(selectedSubtitleIndex)}
+								data-slot="primary"
+								onClick={handleChooseSubtitleSlot}
+							/>
+							<TrackOptionRow
+								label={$L('Secondary')}
+								detail={subtitleSlotLabel(secondarySubtitleIndex)}
+								data-slot="secondary"
+								onClick={handleChooseSubtitleSlot}
+							/>
+							<TrackDivider />
+							<TrackOptionRow label={$L('Cancel')} dimmed onClick={closeModal} />
+						</div>
+					</ModalContainer>
+				</div>
+			)}
+
+			{activeModal === 'secondarySubtitle' && (
+				<div className={css.trackModal} onClick={closeModal}>
+					<ModalContainer className={css.modalContent} onClick={stopPropagation} data-modal="secondarySubtitle" spotlightId="secondarySubtitle-modal">
+						<h2 className={css.modalTitle}>{$L('Secondary Subtitle Track')}</h2>
+						<div className={css.trackList}>
+							<TrackOptionRow
+								label={$L('None')}
+								selected={secondarySubtitleIndex == null}
+								data-index={-1}
+								onClick={handleSelectSecondarySubtitle}
+							/>
+							{secondarySubtitleStreams.map((stream, i) => (
+								<TrackOptionRow
+									key={stream.index}
+									label={numberedTrackName(i + 1, stream.displayTitle, $L('Subtitle'))}
+									detail={subtitleTrackDetail({name: stream.displayTitle, codec: stream.codec, language: stream.language, isExternal: stream.isExternal, deliveryMethod: stream.deliveryMethod, isForced: stream.isForced, isHearingImpaired: stream.isHearingImpaired})}
+									selected={stream.index === secondarySubtitleIndex}
+									data-index={stream.index}
+									onClick={handleSelectSecondarySubtitle}
+								/>
+							))}
+							<TrackDivider />
+							<TrackOptionRow label={$L('Offset')} detail={offsetLabel(secondarySubtitleOffset)} spotlightId="btn-secondary-subtitle-offset" onClick={handleOpenSecondarySubtitleOffset} />
+							<TrackOptionRow label={$L('Appearance')} spotlightId="btn-secondary-subtitle-appearance" onClick={handleOpenSecondarySubtitleSettings} />
 							<TrackDivider />
 							<TrackOptionRow label={$L('Cancel')} dimmed onClick={closeModal} />
 						</div>
@@ -561,6 +530,18 @@ const PlayerControls = ({
 					</ModalContainer>
 				</div>
 			)}
+
+			{activeModal === 'record' && liveRecording?.available && (
+				<LiveRecordingDialog
+					css={css}
+					recording={liveRecording}
+					clockDisplay={settings.clockDisplay}
+					channel={recordPromptChannel(item?.ChannelNumber, item?.Name)}
+					onClose={closeModal}
+					stopPropagation={stopPropagation}
+				/>
+			)}
+			<LiveRecordingToast toast={liveRecording?.toast} onDone={liveRecording?.clearToast} />
 
 			{activeModal === 'sleep' && (
 				<div className={css.trackModal} onClick={closeModal}>
@@ -707,156 +688,21 @@ const PlayerControls = ({
 				</div>
 			)}
 
-			{activeModal === 'info' && (() => {
-				const session = playback.getCurrentSession();
-				const mediaSource = session?.mediaSource;
-				const truehdCodecProbe = session?.capabilities?.truehdCodecSupported;
-				const truehdCodecProbeStatus = truehdCodecProbe === true
-					? $L('Supported')
-					: truehdCodecProbe === false
-						? $L('Not Supported')
-						: $L('Unknown');
-				const videoStream = mediaSource?.MediaStreams?.find(s => s.Type === 'Video');
-				const audioStream = mediaSource?.MediaStreams?.find(s => s.Index === selectedAudioIndex) ||
-					mediaSource?.MediaStreams?.find(s => s.Type === 'Audio');
-				const subtitleStream = selectedSubtitleIndex >= 0
-					? mediaSource?.MediaStreams?.find(s => s.Index === selectedSubtitleIndex)
-					: null;
-
-				return (
-					<div className={css.trackModal} onClick={closeModal}>
-						<div className={`${css.modalContent} ${css.videoInfoModal}`} onClick={stopPropagation}>
-							<h2 className={css.modalTitle}>{$L('Playback Information')}</h2>
-							<Scroller
-								className={css.videoInfoContent}
-								direction="vertical"
-								horizontalScrollbar="hidden"
-								verticalScrollbar="hidden"
-							>
-								<SpottableDiv className={css.infoSection} spotlightId="info-playback">
-									<h3 className={css.infoHeader}>{$L('Playback')}</h3>
-									<div className={`${css.infoRow} ${css.infoHighlight}`}>
-										<span className={css.infoLabel}>{$L('Play Method')}</span>
-										<span className={css.infoValue}>{playMethod || $L('Unknown')}</span>
-									</div>
-									{renderInfoPlaybackRows && renderInfoPlaybackRows({css, mediaSource, playMethod})}
-									<div className={css.infoRow}>
-										<span className={css.infoLabel}>{$L('Container')}</span>
-										<span className={css.infoValue}>
-											{(mediaSource?.Container || $L('Unknown')).toUpperCase()}
-										</span>
-									</div>
-									<div className={css.infoRow}>
-										<span className={css.infoLabel}>{$L('Bitrate')}</span>
-										<span className={css.infoValue}>
-											{formatBitrate(mediaSource?.Bitrate)}
-										</span>
-									</div>
-									{isTizenPlatform && (
-										<div className={css.infoRow}>
-											<span className={css.infoLabel}>{$L('Experimental TrueHD')}</span>
-											<span className={css.infoValue}>
-												{settings.experimentalTruehd ? $L('Enabled') : $L('Disabled')}
-											</span>
-										</div>
-									)}
-									{isTizenPlatform && (
-										<div className={css.infoRow}>
-											<span className={css.infoLabel}>{$L('TrueHD Codec Probe')}</span>
-											<span className={css.infoValue}>{truehdCodecProbeStatus}</span>
-										</div>
-									)}
-								</SpottableDiv>
-
-								{videoStream && (
-									<SpottableDiv className={css.infoSection} spotlightId="info-video">
-										<h3 className={css.infoHeader}>{$L('Video')}</h3>
-										<div className={css.infoRow}>
-											<span className={css.infoLabel}>{$L('Resolution')}</span>
-											<span className={css.infoValue}>
-												{videoStream.Width}×{videoStream.Height}
-												{videoStream.RealFrameRate && ` @ ${Math.round(videoStream.RealFrameRate)}fps`}
-											</span>
-										</div>
-										<div className={css.infoRow}>
-											<span className={css.infoLabel}>{$L('HDR')}</span>
-											<span className={css.infoValue}>{getHdrType(videoStream, session?.capabilities?.dolbyVision !== false)}</span>
-										</div>
-										<div className={css.infoRow}>
-											<span className={css.infoLabel}>{$L('Codec')}</span>
-											<span className={css.infoValue}>{getVideoCodec(videoStream)}</span>
-										</div>
-										{renderInfoVideoExtra && renderInfoVideoExtra({css, videoStream})}
-										{videoStream.BitRate && (
-											<div className={css.infoRow}>
-												<span className={css.infoLabel}>{$L('Video Bitrate')}</span>
-												<span className={css.infoValue}>{formatBitrate(videoStream.BitRate)}</span>
-											</div>
-										)}
-									</SpottableDiv>
-								)}
-
-								{audioStream && (
-									<SpottableDiv className={css.infoSection} spotlightId="info-audio">
-										<h3 className={css.infoHeader}>{$L('Audio')}</h3>
-										<div className={css.infoRow}>
-											<span className={css.infoLabel}>{$L('Track')}</span>
-											<span className={css.infoValue}>
-												{audioStream.DisplayTitle || audioStream.Language || $L('Unknown')}
-											</span>
-										</div>
-										<div className={css.infoRow}>
-											<span className={css.infoLabel}>{$L('Codec')}</span>
-											<span className={css.infoValue}>{getAudioCodec(audioStream)}</span>
-										</div>
-										<div className={css.infoRow}>
-											<span className={css.infoLabel}>{$L('Channels')}</span>
-											<span className={css.infoValue}>{getAudioChannels(audioStream)}</span>
-										</div>
-										{audioStream.BitRate && (
-											<div className={css.infoRow}>
-												<span className={css.infoLabel}>{$L('Audio Bitrate')}</span>
-												<span className={css.infoValue}>{formatBitrate(audioStream.BitRate)}</span>
-											</div>
-										)}
-										{audioStream.SampleRate && (
-											<div className={css.infoRow}>
-												<span className={css.infoLabel}>{$L('Sample Rate')}</span>
-												<span className={css.infoValue}>{(audioStream.SampleRate / 1000).toFixed(1)} kHz</span>
-											</div>
-										)}
-									</SpottableDiv>
-								)}
-
-								{subtitleStream && (
-									<SpottableDiv className={css.infoSection} spotlightId="info-subtitles">
-										<h3 className={css.infoHeader}>{$L('Subtitles')}</h3>
-										<div className={css.infoRow}>
-											<span className={css.infoLabel}>{$L('Track')}</span>
-											<span className={css.infoValue}>
-												{subtitleStream.DisplayTitle || subtitleStream.Language || $L('Unknown')}
-											</span>
-										</div>
-										<div className={css.infoRow}>
-											<span className={css.infoLabel}>{$L('Format')}</span>
-											<span className={css.infoValue}>
-												{(subtitleStream.Codec || $L('Unknown')).toUpperCase()}
-											</span>
-										</div>
-										<div className={css.infoRow}>
-											<span className={css.infoLabel}>{$L('Type')}</span>
-											<span className={css.infoValue}>
-												{subtitleStream.IsExternal ? $L('External') : $L('Embedded')}
-											</span>
-										</div>
-									</SpottableDiv>
-								)}
-							</Scroller>
-							<p className={css.modalFooter}>{$L('Press BACK to close')}</p>
-						</div>
-					</div>
-				);
-			})()}
+			{activeModal === 'info' && (
+				<PlaybackInfoModal
+					playMethod={playMethod}
+					selectedAudioIndex={selectedAudioIndex}
+					selectedSubtitleIndex={selectedSubtitleIndex}
+					maxBitrate={selectedQuality || settings.maxBitrate}
+					transcodeForced={transcodeForced}
+					isLiveTV={isLiveTV}
+					item={item}
+					liveProgram={liveProgram}
+					isTizen={isTizenPlatform}
+					videoRef={videoRef}
+					onClose={closeModal}
+				/>
+			)}
 
 			{activeModal === 'subtitleOffset' && (
 				<SubtitleOffsetOverlay
@@ -866,6 +712,24 @@ const PlayerControls = ({
 					subtitleTrackEvents={subtitleTrackEvents}
 					onClose={closeModal}
 					onOffsetChange={handleSubtitleOffsetChange}
+				/>
+			)}
+
+			{activeModal === 'secondarySubtitleOffset' && (
+				<SubtitleOffsetOverlay
+					visible
+					currentOffset={secondarySubtitleOffset}
+					currentTime={currentTime}
+					subtitleTrackEvents={secondarySubtitleTrackEvents}
+					onClose={closeModal}
+					onOffsetChange={handleSecondarySubtitleOffsetChange}
+				/>
+			)}
+
+			{activeModal === 'secondarySubtitleSettings' && (
+				<SecondarySubtitleSettingsOverlay
+					onClose={closeModal}
+					isHdr={isHdrContent}
 				/>
 			)}
 

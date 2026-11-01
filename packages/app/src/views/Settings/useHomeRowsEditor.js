@@ -1,19 +1,50 @@
 import {useCallback, useRef, useState} from 'react';
 
 import {DEFAULT_HOME_ROWS} from '../../context/SettingsContext';
+import {createApiForServer} from '../../services/jellyfinApi';
 import {SEERR_CONFIG_TO_SECTION} from '../../utils/seerrHomeRows';
-import {
-	COLLECTIONS_SECTION_SOURCE,
-	GENRES_SECTION_SOURCE,
-	INITIAL_PLUGIN_SECTION_RENDER_COUNT,
-	buildCollectionPluginSections,
-	buildGenrePluginSections,
-	builtInSectionToPluginSection,
-	isHomeRowVisibleByGates,
-	mergeDiscoveredPluginSections
-} from './homeSectionsModel';
-import {apiSortBy, getGenresIncludeTypes, resolveSortOrder} from '../../utils/homeRowSorting';
+import {getGenresIncludeTypes} from '../../utils/homeRowSorting';
+import {makePickedRow, makeSeerrSliderRow, serverKey} from '../../utils/pickedRows';
+import {loadDiscoverSliders, reconcileSliderRows} from '../../utils/seerrSliders';
+import {isHomeRowVisibleByGates, mergeFoundRows} from './homeSectionsModel';
 import {editedListKey} from './settingsRows';
+
+const PICKABLE_LIMIT = 500;
+
+const withOrder = (rows) => rows.map((row, order) => ({...row, order}));
+
+// One sign in per server other than this one
+const otherServers = (servers, serverUrl) => {
+	const seen = new Set([serverKey(serverUrl)]);
+	return (servers || []).filter((server) => {
+		const key = serverKey(server.url);
+		if (seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
+};
+
+// Everything that can have a row of its own: the collections, genres and playlists of the lists
+// switched on, and the collections of the other signed in servers while multi-server libraries is on
+const findPickableRows = async ({api, serverUrl, servers, settings}) => {
+	const lists = [];
+	const add = (source, url, request) => lists.push(request.then(
+		(result) => (result?.Items || []).map((item) => makePickedRow({source, serverUrl: url, itemId: String(item.Id), name: item.Name}, false, 0)),
+		() => []
+	));
+	if (settings.displayCollectionsRows) {
+		add('collections', serverUrl, api.getCollections(PICKABLE_LIMIT));
+		if (settings.unifiedLibraryMode) {
+			otherServers(servers, serverUrl).forEach((server) => {
+				const serverApi = createApiForServer(server.url, server.accessToken, server.userId, server.serverType || 'jellyfin');
+				add('collections', server.url, serverApi.getCollections(PICKABLE_LIMIT));
+			});
+		}
+	}
+	if (settings.displayGenresRows) add('genres', serverUrl, api.getGenres(undefined, getGenresIncludeTypes(settings.genresRowItemFilter)));
+	if (settings.displayPlaylistsRows) add('playlists', serverUrl, api.getPlaylists());
+	return [].concat(...await Promise.all(lists));
+};
 
 // Swaps the order two entries hold, as new objects so the stored rows aren't changed under the
 // screen before it writes them back
@@ -24,45 +55,32 @@ const swapOrder = (list, index, target) => {
 	return next.sort((a, b) => a.order - b.order);
 };
 
+// Switching a row on puts it after the last enabled one, so it joins the bottom of the Enabled
+// list. Switching one off leaves it where it is among the disabled rows.
+const toggleRowIn = (list, id) => {
+	const row = list.find((entry) => entry.id === id);
+	if (!row) return list;
+	if (row.enabled) return list.map((entry) => (entry.id === id ? {...entry, enabled: false} : entry));
+	const rest = list.filter((entry) => entry.id !== id);
+	const after = rest.reduce((last, entry, index) => (entry.enabled ? index + 1 : last), 0);
+	return [...rest.slice(0, after), {...row, enabled: true}, ...rest.slice(after)]
+		.map((entry, index) => ({...entry, order: index}));
+};
+
 // The home screen row order, edited against a scratch copy and written back once the screen
 // closes, and only if it ended up different. The IMDb rows are stored twice, as a row and as
 // their own setting, so both are updated.
-const useHomeRowsEditor = ({api, settings, updateSetting, updateSettings, pushView}) => {
+const useHomeRowsEditor = ({api, serverUrl, servers, settings, updateSetting, updateSettings, pushView}) => {
 	const [tempHomeRows, setTempHomeRows] = useState([]);
-	const [tempPluginSections, setTempPluginSections] = useState([]);
-	const [pluginSectionRenderLimit, setPluginSectionRenderLimit] = useState(INITIAL_PLUGIN_SECTION_RENDER_COUNT);
-	const openedRef = useRef({rows: '', sections: ''});
-
-	const refreshBuiltInCollectionGenreSections = useCallback(async () => {
-		const collectionsSortBy = apiSortBy(settings.collectionsRowSortBy || 'SortName');
-		const collectionsSortOrder = resolveSortOrder(collectionsSortBy, settings.collectionsRowSortOrder);
-		const genresSortBy = settings.genresRowSortBy || 'SortName';
-		const genresSortOrder = resolveSortOrder(genresSortBy, settings.genresRowSortOrder);
-		const genresIncludeTypes = getGenresIncludeTypes(settings.genresRowItemFilter);
-
-		const [collectionsResult, genresResult] = await Promise.all([
-			settings.displayCollectionsRows
-				? api.getCollections(500, collectionsSortBy, collectionsSortOrder).catch(() => null)
-				: Promise.resolve(null),
-			settings.displayGenresRows
-				? api.getGenres(undefined, genresIncludeTypes, genresSortBy, genresSortOrder).catch(() => null)
-				: Promise.resolve(null)
-		]);
-
-		return {
-			collections: buildCollectionPluginSections(collectionsResult?.Items || [], collectionsSortBy, collectionsSortOrder),
-			genres: buildGenrePluginSections(genresResult?.Items || [], genresIncludeTypes, genresSortBy, genresSortOrder)
-		};
-	}, [
-		api,
-		settings.collectionsRowSortBy,
-		settings.collectionsRowSortOrder,
-		settings.displayCollectionsRows,
-		settings.displayGenresRows,
-		settings.genresRowItemFilter,
-		settings.genresRowSortBy,
-		settings.genresRowSortOrder
-	]);
+	const [loading, setLoading] = useState(false);
+	// Turns false once the server answers with no Live TV channels, which hides the Live TV rows.
+	// A failed check keeps the last answer.
+	const [serverHasLiveTv, setServerHasLiveTv] = useState(true);
+	const openedRef = useRef('');
+	// The rows found in the lists, and the ones among them the layout didn't hold. Those aren't
+	// saved unless they're switched on, so a server with hundreds of collections doesn't fill the
+	// layout with rows that are off.
+	const foundRef = useRef({rows: [], added: new Set()});
 
 	const toggleHomeRowEnabled = useCallback((sectionId) => {
 		const current = Array.isArray(settings.homeRows) ? settings.homeRows : [];
@@ -74,47 +92,53 @@ const useHomeRowsEditor = ({api, settings, updateSetting, updateSettings, pushVi
 		toggleHomeRowEnabled(SEERR_CONFIG_TO_SECTION[rowId] || rowId);
 	}, [toggleHomeRowEnabled]);
 
+	// A slider put on Home for the first time joins the end. One taken off keeps its entry, so a
+	// layout synced from a device that still has it doesn't bring it back on.
+	const toggleSeerrSlider = useCallback((slider) => {
+		const current = Array.isArray(settings.homeRows) ? settings.homeRows : [];
+		const entry = makeSeerrSliderRow({serverUrl, sliderId: slider.id, sliderType: slider.type, name: slider.title}, true, current.length);
+		const existing = current.find((row) => row.id === entry.id);
+		updateSetting('homeRows', existing
+			? current.map((row) => (row.id === entry.id ? {...row, enabled: !row.enabled} : row))
+			: [...current, entry]);
+	}, [serverUrl, settings.homeRows, updateSetting]);
+
 	const openHomeRows = useCallback(() => {
 		const rows = [...(settings.homeRows || DEFAULT_HOME_ROWS)].sort((a, b) => a.order - b.order);
-		openedRef.current = {rows: editedListKey(rows), sections: null};
+		openedRef.current = editedListKey(rows);
+		foundRef.current = {rows: [], added: new Set()};
 		setTempHomeRows(rows);
-		setPluginSectionRenderLimit(INITIAL_PLUGIN_SECTION_RENDER_COUNT);
+		setLoading(true);
 		pushView({ view: 'homeRows', returnFocusTo: 'setting-homeRows' });
 
-		refreshBuiltInCollectionGenreSections()
-			.then((builtInSections) => {
-				setTempPluginSections((prev) => {
-					let merged = [...prev].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-					if ((builtInSections.collections || []).length > 0) {
-						merged = mergeDiscoveredPluginSections(
-							merged,
-							builtInSections.collections,
-							COLLECTIONS_SECTION_SOURCE,
-							builtInSectionToPluginSection
-						);
-					}
-					if ((builtInSections.genres || []).length > 0) {
-						merged = mergeDiscoveredPluginSections(
-							merged,
-							builtInSections.genres,
-							GENRES_SECTION_SOURCE,
-							builtInSectionToPluginSection
-						);
-					}
-					// The discovered rows join the list as it opened, so they alone are no change
-					if (openedRef.current.sections === null) openedRef.current.sections = editedListKey(merged);
-					return merged;
-				});
-			})
+		api.getLiveTvChannels(0, 1)
+			.then((result) => setServerHasLiveTv((result?.Items || []).length > 0))
 			.catch(() => {});
-	}, [settings.homeRows, pushView, refreshBuiltInCollectionGenreSections]);
+
+		// A failed slider read leaves the slider rows alone, rather than reading as Seerr having none
+		// and dropping them all.
+		Promise.all([
+			findPickableRows({api, serverUrl, servers, settings}).catch(() => []),
+			settings.useMoonfinPlugin ? loadDiscoverSliders({force: true}).catch(() => null) : null
+		])
+			.then(([found, sliders]) => {
+				const reconciled = sliders ? reconcileSliderRows(rows, sliders, serverUrl) : {rows, changed: false};
+				const merged = mergeFoundRows(reconciled.rows, found);
+				// A pick or slider the server dropped or renamed is saved right away, whatever happens to the rest
+				if (merged.changed || reconciled.changed) updateSetting('homeRows', withOrder(merged.rows));
+				openedRef.current = editedListKey(merged.rows);
+				foundRef.current = {rows: found, added: new Set(merged.added.map((row) => row.id))};
+				setTempHomeRows(withOrder([...merged.rows, ...merged.added]));
+				setLoading(false);
+			});
+	}, [api, serverUrl, servers, settings, pushView, updateSetting]);
 
 	const commitHomeRows = useCallback(() => {
-		const rowsChanged = editedListKey(tempHomeRows) !== openedRef.current.rows;
-		const sectionsChanged = openedRef.current.sections !== null && editedListKey(tempPluginSections) !== openedRef.current.sections;
-		if (!rowsChanged && !sectionsChanged) return;
-		openedRef.current = {rows: editedListKey(tempHomeRows), sections: editedListKey(tempPluginSections)};
-		const updates = {homeRows: tempHomeRows, pluginSections: tempPluginSections};
+		const {added} = foundRef.current;
+		const rows = withOrder(tempHomeRows.filter((row) => row.enabled || !added.has(row.id)));
+		if (editedListKey(rows) === openedRef.current) return;
+		openedRef.current = editedListKey(rows);
+		const updates = {homeRows: rows};
 		const imdbMap = {
 			'imdb-top250-movies': 'imdbTop250MoviesEnabled',
 			'imdb-top250-tv': 'imdbTop250TvShowsEnabled',
@@ -123,28 +147,31 @@ const useHomeRowsEditor = ({api, settings, updateSetting, updateSettings, pushVi
 			'imdb-lowest-rated': 'imdbLowestRatedMoviesEnabled',
 			'imdb-top-english': 'imdbTopEnglishMoviesEnabled'
 		};
-		tempHomeRows.forEach((row) => {
+		rows.forEach((row) => {
 			const settingKey = imdbMap[row.id];
 			if (settingKey) {
 				updates[settingKey] = row.enabled;
 			}
 		});
 		updateSettings(updates);
-	}, [tempHomeRows, tempPluginSections, updateSettings]);
+	}, [tempHomeRows, updateSettings]);
 
+	// A reset keeps no picks, so everything found comes back as rows to switch on
 	const resetHomeRows = useCallback(() => {
-		setTempHomeRows([...DEFAULT_HOME_ROWS]);
+		const found = foundRef.current.rows;
+		foundRef.current = {rows: found, added: new Set(found.map((row) => row.id))};
+		setTempHomeRows(withOrder([...DEFAULT_HOME_ROWS, ...found]));
 	}, []);
 
 	const toggleHomeRow = useCallback((rowId) => {
-		setTempHomeRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, enabled: !row.enabled } : row)));
+		setTempHomeRows((prev) => toggleRowIn(prev, rowId));
 	}, []);
 
-	// Reordering steps over the rows the gates are hiding, so a press moves the row past
-	// the next one the viewer can actually see.
+	// Only enabled rows move, and a press steps over the disabled rows and the ones the gates
+	// are hiding, so the row passes the next one the viewer sees in the Enabled list.
 	const moveHomeRow = useCallback((rowId, direction) => {
 		setTempHomeRows((prev) => {
-			const visibleRows = prev.filter((row) => isHomeRowVisibleByGates(row.id, settings));
+			const visibleRows = prev.filter((row) => row.enabled && isHomeRowVisibleByGates(row, settings, serverHasLiveTv, serverUrl));
 			const visibleIndex = visibleRows.findIndex((row) => row.id === rowId);
 			const neighbourIndex = visibleIndex + direction;
 			if (visibleIndex < 0 || neighbourIndex < 0 || neighbourIndex >= visibleRows.length) return prev;
@@ -154,44 +181,20 @@ const useHomeRowsEditor = ({api, settings, updateSetting, updateSettings, pushVi
 			if (index < 0 || targetIndex < 0) return prev;
 			return swapOrder(prev, index, targetIndex);
 		});
-	}, [settings]);
-
-	// A section touched before the discovered ones came back still counts against the list it had
-	const noteSectionsOpened = (prev) => {
-		if (openedRef.current.sections === null) openedRef.current.sections = editedListKey(prev);
-	};
-
-	const togglePluginSection = useCallback((sectionId) => {
-		setTempPluginSections((prev) => {
-			noteSectionsOpened(prev);
-			return prev.map((section) => (section.id === sectionId ? {...section, enabled: !section.enabled} : section));
-		});
-	}, []);
-
-	const movePluginSection = useCallback((sectionId, direction) => {
-		setTempPluginSections((prev) => {
-			noteSectionsOpened(prev);
-			const index = prev.findIndex((section) => section.id === sectionId);
-			const target = index + direction;
-			if (index < 0 || target < 0 || target >= prev.length) return prev;
-			return swapOrder(prev, index, target);
-		});
-	}, []);
+	}, [settings, serverHasLiveTv, serverUrl]);
 
 	return {
 		tempHomeRows,
-		tempPluginSections,
-		pluginSectionRenderLimit,
-		setPluginSectionRenderLimit,
+		loading,
+		serverHasLiveTv,
 		toggleHomeRowEnabled,
 		toggleSeerrHomeRow,
+		toggleSeerrSlider,
 		openHomeRows,
 		commitHomeRows,
 		resetHomeRows,
 		toggleHomeRow,
-		moveHomeRow,
-		togglePluginSection,
-		movePluginSection
+		moveHomeRow
 	};
 };
 

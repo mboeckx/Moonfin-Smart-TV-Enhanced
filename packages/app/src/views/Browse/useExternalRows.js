@@ -6,6 +6,7 @@ import {fetchSeasonalRow} from '../../services/externalRowsApi';
 import {resolveItemsByProviderIds} from '../../services/jellyfinApi';
 import {seasonalCountryParam} from '../../utils/seasonalRow';
 import {resolveDeviceCountry} from '../../utils/deviceCountry';
+import {settleSections} from './browseCache';
 
 // Home rows built from TMDB and IMDb charts, lists the viewer pasted a URL for, and the
 // Radarr and Sonarr calendars. Items arrive as provider ids, so every row is resolved against
@@ -40,7 +41,7 @@ const useExternalRows = ({settings, homeRows, kidsMode}) => {
 		let cancelled = false;
 		const presetConfigs = getExternalHomeRowConfigs();
 		const mergedCalendars = radarrEnabled && sonarrEnabled && settings.mergeRadarrSonarrCalendars;
-		setPending([
+		const pendingRows = [
 			...enabledPresets
 				.map((id) => presetConfigs.find((c) => c.id === id))
 				.filter(Boolean)
@@ -50,19 +51,25 @@ const useExternalRows = ({settings, homeRows, kidsMode}) => {
 			...(mergedCalendars ? [{id: 'radarr_calendar', title: $L('Upcoming Releases'), isCalendarMerged: true}] : []),
 			...(radarrEnabled && !mergedCalendars ? [{id: 'radarr_calendar', title: $L('Upcoming Movies')}] : []),
 			...(sonarrEnabled && !mergedCalendars ? [{id: 'sonarr_calendar', title: $L('Upcoming Episodes')}] : [])
-		]);
+		];
+		setPending(pendingRows);
 
 		(async () => {
 			try {
 				const presetData = await Promise.all(enabledPresets.map(async (id) => {
 					const cfg = presetConfigs.find((c) => c.id === id);
 					if (!cfg) return null;
-					const items = await fetchExternalPresetRow(id);
+					const imdb = id.startsWith('imdb-');
+					const items = await fetchExternalPresetRow(id, {
+						language: settings.uiLanguage,
+						sortBy: imdb ? settings.imdbRowsSortBy : settings.tmdbRowsSortBy,
+						sortOrder: imdb ? settings.imdbRowsSortOrder : settings.tmdbRowsSortOrder
+					});
 					return {id, title: cfg.title, items: items || []};
 				}));
 
 				const customData = await Promise.all(customRows.map(async (row) => {
-					const items = await fetchCustomHomeRow(row);
+					const items = await fetchCustomHomeRow(row, {language: settings.uiLanguage});
 					return {id: `external-${row.id}`, title: row.name || row.title || $L('Custom'), items: items || [], isCustomRow: true};
 				}));
 
@@ -130,7 +137,9 @@ const useExternalRows = ({settings, homeRows, kidsMode}) => {
 				}
 
 				if (!cancelled) {
-					setExternalRows([...presetRows, ...builtCustomRows, seasonalRow, ...resolvedCalendarRows].filter(Boolean));
+					const built = [...presetRows, ...builtCustomRows, seasonalRow, ...resolvedCalendarRows].filter(Boolean);
+					settleSections(pendingRows.map((row) => row.id), built);
+					setExternalRows(built);
 				}
 			} catch (err) {
 				console.warn('[Browse] Failed to fetch and resolve external rows:', err);
@@ -142,10 +151,12 @@ const useExternalRows = ({settings, homeRows, kidsMode}) => {
 			cancelled = true;
 		};
 	}, [settings.useMoonfinPlugin, homeRows, kidsMode, settings.homeRows, settings.customHomeRows,
+		settings.uiLanguage,
 		settings.seasonalRowEnabled, settings.seasonalRowCountry, settings.seasonalRowHiddenHolidays,
 		settings.mergeRadarrSonarrCalendars,
 		settings.radarrCalendarShowCinema, settings.radarrCalendarShowDigital, settings.radarrCalendarShowPhysical,
-		settings.radarrCalendarShowDate, settings.sonarrCalendarShowDate, settings.sonarrCalendarShowEpisodeInfo]);
+		settings.radarrCalendarShowDate, settings.sonarrCalendarShowDate, settings.sonarrCalendarShowEpisodeInfo,
+		settings.imdbRowsSortBy, settings.imdbRowsSortOrder, settings.tmdbRowsSortBy, settings.tmdbRowsSortOrder]);
 
 	return {rows: externalRows, pending};
 };

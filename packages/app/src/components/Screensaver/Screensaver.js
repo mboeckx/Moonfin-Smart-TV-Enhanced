@@ -12,7 +12,8 @@ import css from './Screensaver.module.less';
 const BOUNCE_MARGIN = 20;
 const BACKDROP_INTERVAL = 30000;
 const BACKDROP_BATCH_SIZE = 60;
-const RUNNER_BASE_SIZE = 96;
+export const RUNNER_BASE_SIZE = 96;
+export const CLOCK_FONT_SIZE = 32;
 // Patched: only the Tizen key table names the colour keys, and 404 and 405 are what Samsung and
 // LG remotes send for green and yellow, so those stand in elsewhere.
 const GREEN_KEY = KEYS.GREEN || 404;
@@ -26,7 +27,7 @@ const ITEM_FIELDS = 'ImageTags,BackdropImageTags,ParentBackdropItemId,ParentBack
 
 const RATING_MAP = {0: 'G', 7: 'PG', 13: 'PG-13', 17: 'R', 18: 'NC-17'};
 
-const COMPONENT_SIZE = {
+export const COMPONENT_SIZE = {
 	moonfinLogo: {width: 320, height: 140},
 	clock: {width: 200, height: 56},
 	runner: {width: 120, height: 120}
@@ -168,6 +169,7 @@ const Screensaver = ({
 	onDismiss,
 	onPlayItem,
 	onColorKey,
+	keyHandlerRef,
 	shuffleLibrary = true,
 	serverUrl
 }) => {
@@ -367,45 +369,44 @@ const Screensaver = ({
 	visibleRef.current = visible;
 	const swallowEnterUpRef = useRef(false);
 
-	// Registered once on mount, which puts it ahead of the inactivity listener the app adds
-	// after its children mount, so the screensaver is still on screen when this reads it.
+	// Patched: the app's inactivity listener hands the presses made while the screensaver is up
+	// to this first (keyHandlerRef), and anything that returns true goes no further, so the
+	// screen underneath never sees it and the screensaver only closes if the action closes it.
 	useEffect(() => {
+		if (!keyHandlerRef) return undefined;
 		const isEnter = (e) => (e.keyCode || e.which) === KEYS.ENTER;
-		const handleKeyDown = (e) => {
-			// Patched: yellow and green act on the title on screen. The press stops here, before
-			// the inactivity listener sees it, so the screensaver stays up unless the action
-			// itself closes it.
+		const handler = (e) => {
+			if (!visibleRef.current) return false;
 			const code = e.keyCode || e.which;
-			if (visibleRef.current && onColorKeyRef.current && shownItemRef.current && (code === GREEN_KEY || code === YELLOW_KEY)) {
-				e.preventDefault();
-				e.stopImmediatePropagation();
+			// Yellow and green act on the title on screen.
+			if (onColorKeyRef.current && shownItemRef.current && (code === GREEN_KEY || code === YELLOW_KEY)) {
 				const color = code === GREEN_KEY ? 'green' : 'yellow';
 				Promise.resolve(onColorKeyRef.current(color, shownItemRef.current))
 					.then((message) => { if (message && visibleRef.current) showNotice(message); })
 					.catch(() => {});
-				return;
+				return true;
 			}
-			if (!visibleRef.current || !onPlayItemRef.current || !isEnter(e)) return;
-			e.preventDefault();
-			e.stopPropagation();
+			if (!onPlayItemRef.current || !isEnter(e)) return false;
 			swallowEnterUpRef.current = true;
 			const item = shownItemRef.current;
 			if (item) onPlayItemRef.current(item);
 			else if (onDismissRef.current) onDismissRef.current();
+			return true;
 		};
+		keyHandlerRef.current = handler;
+		// The release of that OK press is held back too, so it doesn't click whatever had focus.
 		const handleKeyUp = (e) => {
 			if (!swallowEnterUpRef.current || !isEnter(e)) return;
 			swallowEnterUpRef.current = false;
 			e.preventDefault();
 			e.stopPropagation();
 		};
-		window.addEventListener('keydown', handleKeyDown, true);
 		window.addEventListener('keyup', handleKeyUp, true);
 		return () => {
-			window.removeEventListener('keydown', handleKeyDown, true);
+			if (keyHandlerRef.current === handler) keyHandlerRef.current = null;
 			window.removeEventListener('keyup', handleKeyUp, true);
 		};
-	}, [showNotice]);
+	}, [keyHandlerRef, showNotice]);
 
 	const handleInteraction = useCallback((e) => {
 		e.preventDefault();
@@ -429,7 +430,7 @@ const Screensaver = ({
 		}
 		if (component === 'clock') {
 			return (
-				<div className={css.componentClock} style={{fontSize: Math.round(32 * scale) + 'px', opacity: clockAlpha}}>
+				<div className={css.componentClock} style={{fontSize: Math.round(CLOCK_FONT_SIZE * scale) + 'px', opacity: clockAlpha}}>
 					{clockText}
 				</div>
 			);
@@ -450,7 +451,6 @@ const Screensaver = ({
 		<div
 			className={css.overlay + ' ' + (showOverlay ? css.overlayVisible : '')}
 			onClick={handleInteraction}
-			onKeyDown={handleInteraction}
 		>
 			{showLibrary && (
 				<div className={css.backdropContainer}>

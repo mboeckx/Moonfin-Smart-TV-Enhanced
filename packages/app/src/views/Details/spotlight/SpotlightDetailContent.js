@@ -1,9 +1,11 @@
 import {useState, useMemo, useCallback, useEffect, useRef} from 'react';
+import $L from '@enact/i18n/$L';
 import Spotlight from '@enact/spotlight';
 import SpotlightContainerDecorator from '@enact/spotlight/SpotlightContainerDecorator';
 import {isMdblistEnabled} from '../../../services/mdblistApi';
 
 import RatingsRow from '../../../components/RatingsRow';
+import {IncompleteDetailLine} from '../../../components/IncompleteBadge';
 import {SeerrStatusBadge, SeerrDownloadBars} from '../../../components/seerr/SeerrStatusBadge';
 import {seerrChipCount} from '../../../components/seerr/SeerrSections';
 import {DETAIL_ICON_PATHS} from '../detailIcons';
@@ -16,22 +18,35 @@ import ModernActionButtons from '../ModernActionButtons';
 import {KEYS} from '../../../utils/keys';
 import {spotlightCardsFor, spotlightCardFor} from './spotlightCards';
 import {studioCardsFor, studioLogoIndex} from '../studioLogos';
-import {loadSeerrPersonCredits} from '../seerrPersonCredits';
+import {loadSeerrPersonCredits, seerrPersonCards} from '../seerrPersonCredits';
 import {spotlightMetaPieces} from './spotlightMeta';
 import {spotlightCardFallbackUrl} from './spotlightImages';
 import {fetchUpcomingEpisode, formatUpcomingEpisode} from '../../../utils/upcomingEpisode';
+import {keepFocusInView} from '../../../utils/focusScroll';
 import {summaryCardHeight, summaryCardWidth, heroWidth} from './summaryCardLayout';
 import SpotlightSummaryCard from './SpotlightSummaryCard';
 import SpotlightSectionModal from './SpotlightSectionModal';
+import {scrimStyle} from '../../../utils/scrimImage';
 
+import useCollectionSort from '../useCollectionSort';
+import {sortLabel} from '../nouveau/nouveauCollectionSort';
+import NouveauSortDialog from '../nouveau/sections/NouveauSortDialog';
 import css from './SpotlightDetailContent.module.less';
 
 const BandContainer = SpotlightContainerDecorator({enterTo: 'last-focused'}, 'div');
 
 const cardSpotlightId = (id) => `spotlight-card-${id}`;
 
+// Same stops as .scrim in the stylesheet.
+const SCRIM = [
+	{to: 'right', rgb: '11, 13, 16', stops: [[0, 1], [0.35, 0.9], [0.6, 0.45], [0.85, 0]]},
+	{to: 'top', rgb: '11, 13, 16', stops: [[0, 1], [0.45, 0.8], [0.8, 0]]},
+	{at: [0.5, 0.5], rgb: '11, 13, 16', stops: [[0.7, 0], [1, 0.32]]}
+];
+
 // Shared so an item with no credits does not hand the memo a new array each render.
 const EMPTY_LIST = [];
+const NO_SEERR_CREDITS = {cast: [], crew: []};
 
 const SpotlightDetailContent = (props) => {
 	const {
@@ -39,10 +54,11 @@ const SpotlightDetailContent = (props) => {
 		isPerson, isEpisode, isSeries, isSeason, backdropUrl, posterUrl, logoUrl, onLogoError,
 		year, officialRating, seasonCount, genres = [], tagline, techBadges = [], techSize,
 		overviewBackRef, episodes = [], seriesEpisodes = [], birthDate, birthPlace,
-		effectiveApi, serverToken, seasons = [], similar = [], similarSource, extras = [], cast = [], crew = [],
+		effectiveApi, serverToken, seasons = [], similar = [], similarSource, reviews = [], onSelectReview, extras = [], cast = [], crew = [],
 		nextUp = [], collectionItems = [], missingCollectionItems = [], parentCollections = [],
 		albumTracks = [], artistAlbums = [], playlistItems = [], personMovies = [], personSeries = [],
-		filmography, loadMoreCollectionItems, collectionMenu,
+		filmography, loadMoreCollectionItems, collectionMenu, collectionOrder,
+		mediaSource, hasMultipleVersions, selectedAudioIndex, selectedSubtitleIndex,
 		onSelectItem, onSelectPerson, onSelectStudio, onSelectSeerrCard,
 		handleChapterSelect, handleExtraSelect, playTrack, playlistMenu,
 		onReorderPlaylistItem, onRemovePlaylistItem, canManagePlaylist, spotlightBackRef
@@ -51,7 +67,7 @@ const SpotlightDetailContent = (props) => {
 	const {isEnabled: seerrEnabled} = useSeerr();
 	const [openCardId, setOpenCardId] = useState(null);
 	const [tmdbCompanies, setTmdbCompanies] = useState(null);
-	const [seerrCredits, setSeerrCredits] = useState({appearances: [], crewCredits: []});
+	const [seerrCredits, setSeerrCredits] = useState(NO_SEERR_CREDITS);
 	const [viewport, setViewport] = useState(() => ({
 		width: typeof window === 'undefined' ? 1920 : window.innerWidth,
 		height: typeof window === 'undefined' ? 1080 : window.innerHeight
@@ -97,7 +113,7 @@ const SpotlightDetailContent = (props) => {
 	useEffect(() => {
 		let cancelled = false;
 		const tmdbId = item.ProviderIds?.Tmdb;
-		setSeerrCredits({appearances: [], crewCredits: []});
+		setSeerrCredits(NO_SEERR_CREDITS);
 		if (!isPerson || !tmdbId || !seerrEnabled) return undefined;
 		loadSeerrPersonCredits(tmdbId)
 			.then((credits) => {
@@ -117,6 +133,20 @@ const SpotlightDetailContent = (props) => {
 	// A person's filmography is rebuilt on every render, so the list itself is what the memo
 	// below watches rather than the object holding it.
 	const otherCredits = filmography?.guestAppearances || EMPTY_LIST;
+	const {seerrAppearances, seerrCrewCredits} = useMemo(() => ({
+		seerrAppearances: seerrPersonCards(seerrCredits.cast, false, settings),
+		seerrCrewCredits: seerrPersonCards(seerrCredits.crew, true, settings)
+	}), [seerrCredits, settings]);
+	// A collection's play order sorts the same way it does in Modern and Nouveau.
+	const isBoxSet = item.Type === 'BoxSet';
+	const collectionSort = useCollectionSort(collectionOrder);
+	const {openSort: openCollectionSort, sortOption: collectionSortOption} = collectionSort;
+	const collectionLoading = Boolean(collectionOrder?.loading);
+	const playlistSort = useMemo(() => (isBoxSet ? {
+		label: sortLabel(collectionSortOption),
+		open: openCollectionSort,
+		loading: collectionLoading
+	} : null), [isBoxSet, collectionSortOption, openCollectionSort, collectionLoading]);
 
 	const cardFallbackImageUrl = useMemo(
 		() => spotlightCardFallbackUrl(effectiveServerUrl, item, backdropUrl),
@@ -124,29 +154,31 @@ const SpotlightDetailContent = (props) => {
 	);
 
 	const cardState = useMemo(() => ({
-		item, serverUrl: effectiveServerUrl, settings, showsSection, seerrOnly,
-		seasons, episodes, seriesEpisodes, similar, similarSource, extras, cast, crew, nextUp,
+		item, serverUrl: effectiveServerUrl, settings, showsSection, seerrOnly, mediaSource,
+		seasons, episodes, seriesEpisodes, similar, similarSource, reviews, extras, cast, crew, nextUp,
 		collectionItems, missingCollectionItems, parentCollections,
-		albumTracks, artistAlbums, playlistItems,
+		albumTracks, artistAlbums, playlistItems, playlistSort,
 		personMovies, personSeries, filmography: otherCredits,
-		seerrAppearances: seerrCredits.appearances, seerrCrewCredits: seerrCredits.crewCredits,
+		seerrAppearances, seerrCrewCredits,
 		studioCards, canManagePlaylist,
 		seerr: {
+			details: seerr.details,
 			recommendations: seerr.recommendationCards || [],
 			similar: seerr.similarCards || [],
 			chipCount: seerr.pieces.chips ? seerrChipCount(seerr.details) : 0,
 			factCount: seerr.pieces.facts ? buildMediaFacts(seerr.details, seerr.mediaType).length : 0,
+			streamingCount: seerr.pieces.streaming ? seerr.streamingProviders.length : 0,
 			collection: seerr.collection,
 			seasonMarkers: settings.showSeerrAvailabilityBadges !== false ? seerr.seasonMarkers : null
 		},
 		fallbackImageUrl: cardFallbackImageUrl
 	}), [
-		item, effectiveServerUrl, settings, showsSection, seerrOnly, seasons, episodes, seriesEpisodes, similar, similarSource,
+		item, effectiveServerUrl, settings, showsSection, seerrOnly, mediaSource, seasons, episodes, seriesEpisodes, similar, similarSource, reviews,
 		extras, cast, crew, nextUp, collectionItems, missingCollectionItems, parentCollections,
-		albumTracks, artistAlbums, playlistItems, personMovies, personSeries, otherCredits,
-		seerrCredits, studioCards, canManagePlaylist, cardFallbackImageUrl,
+		albumTracks, artistAlbums, playlistItems, playlistSort, personMovies, personSeries, otherCredits,
+		seerrAppearances, seerrCrewCredits, studioCards, canManagePlaylist, cardFallbackImageUrl,
 		seerr.recommendationCards, seerr.similarCards, seerr.details, seerr.mediaType, seerr.collection, seerr.seasonMarkers,
-		seerr.pieces.chips, seerr.pieces.facts
+		seerr.pieces.chips, seerr.pieces.facts, seerr.pieces.streaming, seerr.streamingProviders
 	]);
 
 	const cardActions = useMemo(() => ({
@@ -154,6 +186,7 @@ const SpotlightDetailContent = (props) => {
 		openSeerrItem: onSelectSeerrCard,
 		openPerson: onSelectPerson,
 		openStudio: onSelectStudio,
+		openReview: onSelectReview,
 		playFromChapter: handleChapterSelect,
 		playExtra: handleExtraSelect,
 		playTrack,
@@ -161,11 +194,16 @@ const SpotlightDetailContent = (props) => {
 		reorderTrack: onReorderPlaylistItem,
 		removeTrack: onRemovePlaylistItem,
 		loadMoreCollectionItems,
-		collectionMenu
+		collectionMenu,
+		effectiveApi,
+		settings,
+		selectedAudioIndex,
+		selectedSubtitleIndex
 	}), [
-		onSelectItem, onSelectSeerrCard, onSelectPerson, onSelectStudio, handleChapterSelect,
+		onSelectItem, onSelectSeerrCard, onSelectPerson, onSelectStudio, onSelectReview, handleChapterSelect,
 		handleExtraSelect, playTrack, playlistMenu, onReorderPlaylistItem, onRemovePlaylistItem,
-		loadMoreCollectionItems, collectionMenu
+		loadMoreCollectionItems, collectionMenu,
+		effectiveApi, settings, selectedAudioIndex, selectedSubtitleIndex
 	]);
 
 	const cards = useMemo(() => spotlightCardsFor(cardState), [cardState]);
@@ -213,9 +251,9 @@ const SpotlightDetailContent = (props) => {
 		[item, year, officialRating, seasonCount, episodes.length, genres, upcomingEpisodeText, seerr.statusPills, settings]
 	);
 
-	const bandWidth = heroWidth(viewport.width);
+	const heroColumnWidth = heroWidth(viewport.width);
 	const cardHeight = summaryCardHeight(viewport.height);
-	const cardWidth = summaryCardWidth(bandWidth, cards.length, cardHeight);
+	const cardWidth = summaryCardWidth(cardHeight);
 
 	const handleOpenCard = useCallback((card) => setOpenCardId(card.id), []);
 
@@ -238,6 +276,10 @@ const SpotlightDetailContent = (props) => {
 		if (!spotlightBackRef) return undefined;
 		spotlightBackRef.current = () => {
 			if (menuBackRef.current?.()) return true;
+			if (collectionSort.sortOpen) {
+				collectionSort.closeSort();
+				return true;
+			}
 			if (!openCardId) return false;
 			handleCloseModal();
 			return true;
@@ -249,7 +291,7 @@ const SpotlightDetailContent = (props) => {
 
 	const handleBandKeyDown = useCallback((ev) => {
 		if (ev.keyCode !== KEYS.UP) return;
-		if (Spotlight.focus('details-primary-btn')) {
+		if (Spotlight.focus('details-primary-btn') || Spotlight.focus('details-action-buttons')) {
 			ev.preventDefault();
 			ev.stopPropagation();
 		}
@@ -258,23 +300,56 @@ const SpotlightDetailContent = (props) => {
 	const hasTech = Boolean(techSize) || techBadges.length > 0;
 	const hideMediaDescription = hidesMediaDescription(item, settings) || (isPerson && !showsSection('biography'));
 
+	const renderVersionBadge = () => {
+		if (!hasMultipleVersions || !mediaSource || !showsSection('versionBadge')) return null;
+		const versionName = mediaSource.Name || $L('Default');
+		return (
+			<span className={css.versionBadge}>
+				{`[ ${versionName} ]`}
+			</span>
+		);
+	};
+
 	const heroTitle = () => {
 		if (isEpisode) {
 			return (
 				<>
 					<div className={css.seriesSlot}>
-						{logoUrl
-							? <img className={`${css.logo} ${css.logoEpisode}`} src={logoUrl} alt={item.SeriesName} onError={onLogoError} />
-							: item.SeriesName && <div className={css.seriesLabel}>{item.SeriesName}</div>}
+						{logoUrl ? (
+							<div className={css.logoRow}>
+								<img className={`${css.logo} ${css.logoEpisode}`} src={logoUrl} alt={item.SeriesName} onError={onLogoError} />
+								{renderVersionBadge()}
+							</div>
+						) : (
+							item.SeriesName && (
+								<div className={css.seriesLabelRow}>
+									<div className={css.seriesLabel}>{item.SeriesName}</div>
+									{renderVersionBadge()}
+								</div>
+							)
+						)}
 					</div>
-					<h1 className={css.title}>{item.Name}</h1>
+					<h1 className={css.title}>
+						{item.Name}
+						{!logoUrl && !item.SeriesName && renderVersionBadge()}
+					</h1>
 				</>
 			);
 		}
 		if (logoUrl && !isPerson) {
-			return <img className={css.logo} src={logoUrl} alt={item.Name} onError={onLogoError} />;
+			return (
+				<div className={css.logoRow}>
+					<img className={css.logo} src={logoUrl} alt={item.Name} onError={onLogoError} />
+					{renderVersionBadge()}
+				</div>
+			);
 		}
-		return <h1 className={css.title}>{item.Name}</h1>;
+		return (
+			<h1 className={css.title}>
+				{item.Name}
+				{renderVersionBadge()}
+			</h1>
+		);
 	};
 
 	const personBorn = () => {
@@ -288,13 +363,24 @@ const SpotlightDetailContent = (props) => {
 		<>
 			<div className={`${css.backdrop} ${isPerson ? css.backdropPerson : ''}`} style={backdropStyle}>
 				{backdropUrl && <img className={css.backdropImage} src={backdropUrl} alt="" />}
+				<div className={css.scrim} style={scrimStyle(SCRIM, backdropStyle['--gradient-scale'])} />
 			</div>
-			<div className={`${css.page} ${settings.navbarPosition === 'left' ? css.sidebarOffset : ''}`}>
-				<div className={css.hero} style={{width: `${bandWidth}px`}}>
-					{isPerson && posterUrl && <img className={css.personAvatar} src={posterUrl} alt="" />}
-					{tagline && !isPerson && <div className={css.tagline}>{tagline}</div>}
-					{heroTitle()}
-					{isPerson && personBorn()}
+			<div className={`${css.page} ${settings.navbarPosition === 'left' ? css.sidebarOffset : css.topbarOffset}`} onFocus={keepFocusInView}>
+				<div className={css.hero} style={{width: `${heroColumnWidth}px`}}>
+					{isPerson ? (
+						<div className={css.personHeader}>
+							{posterUrl && <img className={css.personAvatar} src={posterUrl} alt="" />}
+							<div className={css.personInfo}>
+								<h1 className={css.title}>{item.Name}</h1>
+								{personBorn()}
+							</div>
+						</div>
+					) : (
+						<>
+							{tagline && <div className={css.tagline}>{tagline}</div>}
+							{heroTitle()}
+						</>
+					)}
 					{metaPieces.length > 0 && (
 						<div className={css.metaRow}>
 							{metaPieces.map((piece, i) => {
@@ -325,6 +411,7 @@ const SpotlightDetailContent = (props) => {
 							})}
 						</div>
 					)}
+					{!isPerson && <IncompleteDetailLine itemId={item.Id} clockDisplay={settings.clockDisplay} />}
 					{hasTech && !isPerson && (
 						<div className={css.techRow}>
 							{techSize && <span className={css.techSize}>{techSize}</span>}
@@ -335,42 +422,50 @@ const SpotlightDetailContent = (props) => {
 					{!hideMediaDescription && item.Overview && (
 						<ExpandableOverview text={item.Overview} itemId={item.Id} className={css.descriptionSlot} backRef={overviewBackRef} />
 					)}
-					{!isPerson && (
-						<ModernActionButtons
-							{...props}
-							hasTech={hasTech}
-							maxVisibleButtons={5}
-							overflowAsMenu
-							downTarget={cards.length ? cardSpotlightId(cards[0].id) : null}
-							menuBackRef={menuBackRef}
-						/>
-					)}
+					<ModernActionButtons
+						{...props}
+						hasTech={hasTech}
+						maxVisibleButtons={5}
+						overflowAsMenu
+						downTarget={cards.length ? cardSpotlightId(cards[0].id) : null}
+						menuBackRef={menuBackRef}
+					/>
 					<SeerrDownloadBars seerr={seerr} />
 				</div>
 				{cards.length > 0 && (
-					<BandContainer className={css.cardBand} style={{width: `${bandWidth}px`}} onKeyDown={handleBandKeyDown}>
-						{cards.map((card) => (
-							<SpotlightSummaryCard
-								key={card.id}
-								card={card}
-								width={cardWidth}
-								height={cardHeight}
-								spotlightId={cardSpotlightId(card.id)}
-								onOpen={handleOpenCard}
-							/>
-						))}
-					</BandContainer>
+					<div className={css.cardBandWrapper} onFocus={keepFocusInView}>
+						<BandContainer className={css.cardBand} onKeyDown={handleBandKeyDown}>
+							{cards.map((card) => (
+								<SpotlightSummaryCard
+									key={card.id}
+									card={card}
+									width={cardWidth}
+									height={cardHeight}
+									spotlightId={cardSpotlightId(card.id)}
+									onOpen={handleOpenCard}
+								/>
+							))}
+						</BandContainer>
+					</div>
 				)}
 			</div>
 			<SpotlightSectionModal
 				card={openCard}
 				serverUrl={effectiveServerUrl}
 				actions={cardActions}
-				seerr={{details: seerr.details, mediaType: seerr.mediaType, collection: seerr.collection, nav: seerrNav}}
+				seerr={{details: seerr.details, mediaType: seerr.mediaType, collection: seerr.collection, streaming: seerr.streamingProviders, nav: seerrNav}}
 				// Paging appends to the playlist list, which is the one that arrives a page at a
 				// time. The Movies and Shows grid is fetched whole, so it has nothing to ask for.
 				onNearEnd={openCardId === 'playlist_order' ? cardActions.loadMoreCollectionItems : null}
 			/>
+			{collectionSort.sortOpen && (
+				<NouveauSortDialog
+					options={collectionSort.sortOptions}
+					active={collectionSort.sortOption}
+					onSelect={collectionSort.chooseSort}
+					onClose={collectionSort.closeSort}
+				/>
+			)}
 		</>
 	);
 };

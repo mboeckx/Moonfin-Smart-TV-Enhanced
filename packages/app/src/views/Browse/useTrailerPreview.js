@@ -1,11 +1,18 @@
 import {useState, useEffect, useCallback, useRef} from 'react';
 import {buildQueryString} from '../../utils/urlCompat';
+import {isPlexServer, withPlexToken} from '../../utils/plexUrls';
 import {stopPlaybackForTrailer} from '../../utils/trailerPlayback';
-import {createApiForServer, getApiKey, getServerUrl as getDefaultServerUrl} from '../../services/jellyfinApi';
+import {claimSharedVideo, isMusicPlaying, ownsSharedVideo, releaseSharedVideo} from '../../utils/sharedVideoOwner';
+import {coverVideoInBox} from '../../utils/videoCover';
+import {volumeLevel} from '../../utils/volumeLevel';
+import {createApiForServer, getApiKey, getServerType, getServerUrl as getDefaultServerUrl} from '../../services/jellyfinApi';
 import serverLogger from '../../services/serverLogger';
+import {afterHomeReady} from '../../utils/homeReady';
 import css from './Browse.module.less';
 
 const TRAILER_REVEAL_MS = 3000;
+// The element keeps the trailer's own shape and overhangs the container, which crops
+// it instead of squashing it into a frame that isnt 16:9.
 const TRAILER_ZOOM = 1.15;
 // the preview plays into a plain HTML5 video element which cant decode a server
 // transcode on Tizen, so direct play the original trailer file instead
@@ -13,31 +20,16 @@ const LOCAL_TRAILER_STREAM_PARAMS = {
 	Static: 'true'
 };
 
-// The shared video element fills its box, and TVs draw video on a plane that ignores
-// object-fit and transforms anyway. So the element keeps the trailer's own shape and
-// overhangs the container, which crops it instead of squashing it into a frame that
-// isnt 16:9.
-const coverContainer = (video) => {
-	const box = video.parentNode;
-	if (!box || !video.videoWidth || !video.videoHeight) return;
-	const scale = Math.max(box.clientWidth / video.videoWidth, box.clientHeight / video.videoHeight) * TRAILER_ZOOM;
-	const width = Math.round(video.videoWidth * scale);
-	const height = Math.round(video.videoHeight * scale);
-	video.style.width = `${width}px`;
-	video.style.height = `${height}px`;
-	video.style.left = `${Math.round((box.clientWidth - width) / 2)}px`;
-	video.style.top = `${Math.round((box.clientHeight - height) / 2)}px`;
-};
-
 // Shared trailer preview engine for the home banners. Resolves a local or
 // youtube trailer for the current item, plays a muted preview into a container
 // the caller renders, and reveals it after a short delay.
-export default function useTrailerPreview({currentItem, isVisible, enabled, preferMuted, showCaptions = false, captionLanguage = '', api, getItemServerUrl, onEnded}) {
+export default function useTrailerPreview({currentItem, isVisible, enabled, preferMuted, volume, showCaptions = false, captionLanguage = '', api, getItemServerUrl, onEnded, hidesChrome = false}) {
 	const [trailerActive, setTrailerActive] = useState(false);
 	// Set from the playing event, a few seconds before trailerActive reveals the video, so the
 	// banners can hold their carousel while the trailer is already audible.
 	const [trailerHolding, setTrailerHolding] = useState(false);
 	const [screensaverActive, setScreensaverActive] = useState(false);
+	const [homeReady, setHomeReady] = useState(false);
 
 	// Mirrored so a new handler each render cant restart the trailer, since
 	// startTrailerPreview sits in the main effect's dependencies.
@@ -105,7 +97,9 @@ export default function useTrailerPreview({currentItem, isVisible, enabled, pref
 		}
 		setTrailerActive(false);
 		setTrailerHolding(false);
-		const video = trailerVideoRef.current;
+		// The element is only touched while this is its owner, so the cleanups that run
+		// on an item change or a hide can't clear a card preview that took it over.
+		const video = ownsSharedVideo('trailer') ? trailerVideoRef.current : null;
 		if (video) {
 			try { video.pause(); } catch (e) { /* ignore */ }
 			try {
@@ -120,9 +114,10 @@ export default function useTrailerPreview({currentItem, isVisible, enabled, pref
 			video.onerror = null;
 			video.onloadedmetadata = null;
 			video.onresize = null;
+			releaseStream();
 		}
 		removeCaptionTrack(video);
-		releaseStream();
+		releaseSharedVideo('trailer');
 		trailerStateRef.current = 'idle';
 		trailerVideoIdRef.current = null;
 		sponsorSegmentsRef.current = [];
@@ -132,7 +127,10 @@ export default function useTrailerPreview({currentItem, isVisible, enabled, pref
 		if (!item?.Id) return [];
 
 		const initialTrailers = Array.isArray(item.RemoteTrailers) ? item.RemoteTrailers : [];
-		if (initialTrailers.length > 0) return initialTrailers;
+		// A slide from an outside list isn't on the server, so what it came with is all there is.
+		if (initialTrailers.length > 0 || item._external) return initialTrailers;
+		const youtube = await import('../../services/youtubeTrailer');
+		if (youtube.searchesForTrailer(item, getServerType())) return youtube.searchedTrailers(item);
 
 		try {
 			const serverApi = item._serverUrl && item._serverAccessToken
@@ -147,7 +145,7 @@ export default function useTrailerPreview({currentItem, isVisible, enabled, pref
 	}, [api]);
 
 	const getLocalTrailerStreamUrlForItem = useCallback(async (item) => {
-		if (!item?.Id) return null;
+		if (!item?.Id || item._external) return null;
 
 		try {
 			const serverApi = item._serverUrl && item._serverAccessToken
@@ -157,18 +155,23 @@ export default function useTrailerPreview({currentItem, isVisible, enabled, pref
 
 			const trailers = await serverApi.getLocalTrailers(item.Id);
 			const trailerItems = Array.isArray(trailers?.Items) ? trailers.Items : Array.isArray(trailers) ? trailers : [];
-			const trailerId = trailerItems.find((t) => t?.Id)?.Id;
-			if (!trailerId) return null;
+			const trailer = trailerItems.find((t) => t?.Id);
+			if (!trailer) return null;
 
 			const resolvedServerUrl = item._serverUrl || getItemServerUrl(item) || getDefaultServerUrl();
 			if (!resolvedServerUrl) return null;
 
 			const resolvedToken = item._serverAccessToken || getApiKey();
+			// A Plex trailer plays straight from its own file.
+			if (isPlexServer(resolvedServerUrl)) {
+				const part = trailer.MediaSources?.[0]?.DirectStreamUrl;
+				return part ? withPlexToken(`${resolvedServerUrl}${part}`, resolvedToken) : null;
+			}
 			const params = {
 				...LOCAL_TRAILER_STREAM_PARAMS,
 				...(resolvedToken ? {ApiKey: resolvedToken} : {})
 			};
-			return `${resolvedServerUrl}/Videos/${encodeURIComponent(trailerId)}/stream?${buildQueryString(params)}`;
+			return `${resolvedServerUrl}/Videos/${encodeURIComponent(trailer.Id)}/stream?${buildQueryString(params)}`;
 		} catch {
 			return null;
 		}
@@ -193,19 +196,21 @@ export default function useTrailerPreview({currentItem, isVisible, enabled, pref
 			video = getSharedVideoElement();
 			trailerVideoRef.current = video;
 		}
+		// A card preview still holding the element is stopped before it's touched.
+		claimSharedVideo('trailer', stopTrailer);
 		video.className = css.trailerVideo;
 		video.playsInline = true;
 		video.controls = false;
 
 		video.muted = preferMuted;
-		video.volume = preferMuted ? 0 : 1;
+		video.volume = preferMuted ? 0 : volumeLevel(volume);
 		video.autoplay = true;
 		video.classList.remove(css.trailerVisible);
 
 		if (!container.contains(video)) {
 			container.appendChild(video);
 		}
-		video.onloadedmetadata = () => coverContainer(video);
+		video.onloadedmetadata = () => coverVideoInBox(video, container, TRAILER_ZOOM);
 		video.onresize = video.onloadedmetadata;
 
 		const clearSkipInterval = () => {
@@ -234,6 +239,7 @@ export default function useTrailerPreview({currentItem, isVisible, enabled, pref
 					streamUrl: stream ? stream.url : null,
 					captionsUrl: stream ? stream.captionsUrl : null,
 					audioLanguage: stream ? stream.audioLanguage : '',
+					videoOnly: stream ? stream.videoOnly : null,
 					segments: results[0],
 					startTime: getTrailerStartTime(results[0])
 				};
@@ -267,7 +273,7 @@ export default function useTrailerPreview({currentItem, isVisible, enabled, pref
 			if (attempts[index].id && !attempts[index].muxedOnly && nativeManifestSkipped()) {
 				attempts[index].muxedOnly = true;
 			}
-			const {client, streamUrl, captionsUrl, audioLanguage, segments, startTime} = await resolveStream(attempts[index]);
+			const {client, streamUrl, captionsUrl, audioLanguage, videoOnly, segments, startTime} = await resolveStream(attempts[index]);
 			if (isStale()) return;
 			if (!streamUrl) {
 				tryAttempt(index + 1);
@@ -276,7 +282,7 @@ export default function useTrailerPreview({currentItem, isVisible, enabled, pref
 			const isManifest = isManifestUrl(streamUrl);
 			const nativeManifest = playsManifestNatively(streamUrl);
 			let kind = 'local trailer';
-			if (attempts[index].id) kind = isManifest ? `YouTube manifest on ${nativeManifest ? "the TV's player" : 'hls.js'}` : 'YouTube 360p file';
+			if (attempts[index].id) kind = isManifest ? `YouTube ${videoOnly ? 'picture only ' : ''}manifest on ${nativeManifest ? "the TV's player" : 'hls.js'}` : 'YouTube 360p file';
 			serverLogger.playback(`Trailer preview: ${kind}${client ? ` from ${client}` : ''}`);
 			sponsorSegmentsRef.current = segments;
 			// A manifest the TV cant play gives way to YouTube's small muxed file.
@@ -385,7 +391,7 @@ export default function useTrailerPreview({currentItem, isVisible, enabled, pref
 			releaseStream();
 			const Hls = needsHlsJs(streamUrl) ? (await import('hls.js')).default : null;
 			if (isStale()) return;
-			releaseStreamRef.current = attachTrailerStream(video, streamUrl, {Hls, audioLanguage, startTime: resumeAt > 0 ? resumeAt : startTime, onError: () => fail('failed to play')});
+			releaseStreamRef.current = attachTrailerStream(video, streamUrl, {Hls, audioLanguage, videoOnly, startTime: resumeAt > 0 ? resumeAt : startTime, onError: () => fail('failed to play')});
 			const playPromise = video.play();
 			if (playPromise) {
 				playPromise.catch(() => {
@@ -408,10 +414,20 @@ export default function useTrailerPreview({currentItem, isVisible, enabled, pref
 		};
 
 		tryAttempt(0);
-	}, [stopTrailer, stopWatch, preferMuted, showCaptions, captionLanguage, removeCaptionTrack, releaseStream]);
+	}, [stopTrailer, stopWatch, preferMuted, volume, showCaptions, captionLanguage, removeCaptionTrack, releaseStream]);
 
 	useEffect(() => {
-		if (!enabled || !isVisible || !currentItem || screensaverActive) {
+		let live = true;
+		afterHomeReady().then(() => {
+			if (live) setHomeReady(true);
+		});
+		return () => {
+			live = false;
+		};
+	}, []);
+
+	useEffect(() => {
+		if (!enabled || !homeReady || !isVisible || !currentItem || screensaverActive || isMusicPlaying()) {
 			stopTrailer();
 			return;
 		}
@@ -467,7 +483,7 @@ export default function useTrailerPreview({currentItem, isVisible, enabled, pref
 			cancelled = true;
 			stopTrailer();
 		};
-	}, [currentItem, isVisible, screensaverActive, enabled, getLocalTrailerStreamUrlForItem, getRemoteTrailersForItem, startTrailerPreview, stopTrailer]);
+	}, [currentItem, isVisible, screensaverActive, enabled, homeReady, getLocalTrailerStreamUrlForItem, getRemoteTrailersForItem, startTrailerPreview, stopTrailer]);
 
 	useEffect(() => {
 		const handleScreensaver = (e) => setScreensaverActive(!!e.detail?.active);
@@ -477,13 +493,15 @@ export default function useTrailerPreview({currentItem, isVisible, enabled, pref
 
 	// A playing trailer is the screen doing something, but it takes no key
 	// presses, so the inactivity timer would sit there counting down and cut it
-	// off. Announce it so the screensaver holds off until it ends.
+	// off. Announce it so the screensaver holds off until it ends. A full screen bar
+	// also clears the navigation and the peeking row away while it has focus.
+	const chromeHidden = trailerActive && hidesChrome;
 	useEffect(() => {
-		window.dispatchEvent(new CustomEvent('moonfin:trailerPreview', {detail: {active: trailerActive}}));
+		window.dispatchEvent(new CustomEvent('moonfin:trailerPreview', {detail: {active: trailerActive, hidesChrome: chromeHidden}}));
 		return () => {
 			window.dispatchEvent(new CustomEvent('moonfin:trailerPreview', {detail: {active: false}}));
 		};
-	}, [trailerActive]);
+	}, [trailerActive, chromeHidden]);
 
 	useEffect(() => {
 		const handleVisibility = () => {

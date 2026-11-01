@@ -1,12 +1,13 @@
 import {resolveSeriesAudio} from './initialAudio';
 import {resolveInitialSubtitle} from './initialSubtitle';
 
-const mockPrefs = {override: {}, itemSubtitle: undefined, seriesSubtitle: undefined, seriesAudio: undefined};
+const mockPrefs = {override: {}, itemSubtitle: undefined, seriesSubtitle: undefined, seriesAudio: undefined, itemAudio: undefined};
 jest.mock('../../services/subtitlePrefs', () => ({
 	getSeriesTrackOverride: async () => mockPrefs.override,
 	getItemSubtitlePref: async () => mockPrefs.itemSubtitle,
 	getSeriesSubtitlePref: async () => mockPrefs.seriesSubtitle,
-	getSeriesAudioPref: async () => mockPrefs.seriesAudio
+	getSeriesAudioPref: async () => mockPrefs.seriesAudio,
+	getItemAudioPref: async () => mockPrefs.itemAudio
 }));
 
 const episode = {Id: 'e1', SeriesId: 's1'};
@@ -19,6 +20,13 @@ beforeEach(() => {
 	mockPrefs.itemSubtitle = undefined;
 	mockPrefs.seriesSubtitle = undefined;
 	mockPrefs.seriesAudio = {language: 'eng', title: '', relativeIndex: 0};
+	mockPrefs.itemAudio = undefined;
+});
+
+test('the series audio override also beats the track picked on this episode', async () => {
+	mockPrefs.itemAudio = 1;
+	mockPrefs.override = {audio: 'nld'};
+	expect((await resolveSeriesAudio(episode, audioStreams)).index).toBe(2);
 });
 
 test('the series audio override beats the remembered track', async () => {

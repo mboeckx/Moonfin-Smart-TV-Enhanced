@@ -46,7 +46,8 @@
 	filter: saturate(1.25) contrast(1.08);
 }
 
-.card:focus .image {
+.card:focus .image,
+.card:focus .placeholder {
 	border-color: var(--theme-focus-border-color, #ffffff);
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
 	border-width: 4px;
@@ -123,8 +124,6 @@
 .extendedSection {
 	margin-top: 8px;
 	width: var(--modern-card-expanded-width);
-	max-width: calc(100vw - 180px);
-	max-width: min(var(--modern-card-expanded-width), calc(100vw - 180px));
 	min-height: 150px;
 	position: relative;
 	z-index: 14;
@@ -270,14 +269,7 @@
 	font-size: 17px;
 }
 
-.platformTizen .extendedSection {
-	max-width: calc(100vw - 220px);
-	max-width: min(var(--modern-card-expanded-width), calc(100vw - 220px));
-}
-
 .platformLegacy .extendedSection {
-	max-width: calc(100vw - 260px);
-	max-width: min(var(--modern-card-expanded-width), calc(100vw - 260px));
 	min-height: 140px;
 }
 
@@ -311,4 +303,26 @@
 	text-transform: uppercase;
 	pointer-events: none;
 	word-break: break-word;
+}
+
+.previewFrame {
+	.media-preview-frame();
+}
+
+.previewVisible {
+	opacity: 1;
+}
+
+.previewRing {
+	.media-preview-ring();
+}
+
+// The container's own corners come off on the Fire TV too, for the same reason as the frame's
+:global(.vega) .imageContainer.previewHost {
+	border-radius: 0;
+}
+
+.platformWebos .previewFrame,
+.platformWebos .previewRing {
+	border-radius: calc(var(--theme-card-radius, 20px) + 2px);
 }

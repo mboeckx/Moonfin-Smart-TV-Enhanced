@@ -1,11 +1,12 @@
 import {useState, useEffect, useCallback, useRef, memo} from 'react';
 import Spottable from '@enact/spotlight/Spottable';
 import Spotlight from '@enact/spotlight';
-import {getImageUrl, getBackdropId} from '../../utils/helpers';
+import {getImageUrl, getFeaturedBackdropUrl} from '../../utils/helpers';
 import {KEYS} from '../../utils/keys';
 import useTrailerPreview from './useTrailerPreview';
 import css from './Browse.module.less';
 import {carouselIntervalMs} from '../../utils/carouselTiming';
+import {useScreensaverActive} from '../../hooks/useScreensaverActive';
 
 const BACKDROP_OPTS = {maxWidth: 1600, quality: 85};
 const LOGO_OPTS = {maxWidth: 680, quality: 90};
@@ -31,6 +32,7 @@ const AyaBanner = memo(({
 }) => {
 	const [activeIndex, setActiveIndex] = useState(0);
 	const [featuredFocused, setFeaturedFocused] = useState(false);
+	const screensaverActive = useScreensaverActive();
 	const [baseSlide, setBaseSlide] = useState(null);
 	const [incomingSlide, setIncomingSlide] = useState(null);
 	const [failedLogos, setFailedLogos] = useState({});
@@ -41,12 +43,10 @@ const AyaBanner = memo(({
 	const safeIndex = Math.min(activeIndex, Math.max(0, featuredItems.length - 1));
 	const currentFeatured = featuredItems[safeIndex];
 
-	const backdropUrlOf = useCallback((item) => {
-		const backdropId = getBackdropId(item);
-		return backdropId ? getImageUrl(getItemServerUrl(item), backdropId, 'Backdrop', BACKDROP_OPTS) : null;
-	}, [getItemServerUrl]);
+	const backdropUrlOf = useCallback((item) => getFeaturedBackdropUrl(getItemServerUrl(item), item, BACKDROP_OPTS), [getItemServerUrl]);
 
 	const logoUrlOf = useCallback((item) => {
+		if (item?._external) return item.LogoUrl || null;
 		if (!item?.ImageTags?.Logo) return null;
 		return getImageUrl(getItemServerUrl(item), item.Id, 'Logo', LOGO_OPTS);
 	}, [getItemServerUrl]);
@@ -57,9 +57,10 @@ const AyaBanner = memo(({
 
 	const {trailerContainerRef, trailerHolding} = useTrailerPreview({
 		currentItem: currentFeatured,
-		isVisible: isVisible && browseVisible,
+		isVisible: isVisible && browseVisible && featuredFocused,
 		enabled: settingsLoaded && settings.featuredTrailerPreview,
 		preferMuted: settings.featuredTrailerMuted,
+		volume: settings.trailerVolume,
 		showCaptions: settings.mediaBarTrailerCaptions,
 		captionLanguage: settings.uiLanguage,
 		api,
@@ -127,11 +128,11 @@ const AyaBanner = memo(({
 			settings.autoAdvanceInterval,
 			settings.carouselSpeed
 		);
-		if (!isVisible || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0 || trailerHolding) return;
+		if (!isVisible || screensaverActive || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0 || trailerHolding) return;
 		carouselIntervalRef.current = setInterval(() => {
 			setActiveIndex((prev) => (prev + 1) % featuredItems.length);
 		}, carouselSpeed);
-	}, [isVisible, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed, trailerHolding]);
+	}, [isVisible, screensaverActive, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed, trailerHolding]);
 
 	useEffect(() => {
 		startCarouselTimer();

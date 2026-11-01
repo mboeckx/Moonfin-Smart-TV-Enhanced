@@ -51,38 +51,38 @@ Tests: `cd packages/app && npx enact test`.
 ## What the patches change
 
 **Library lists**
-- Movie and series libraries load every page up front, so letters past D and the end of the list no
-  longer stay empty or show up seconds later.
-- Lighter list requests (one image per type, only the fields the grid and filters need) with tagged,
-  cacheable image URLs.
-- Filters, sort and the selected letter survive a visit to a details page; they reset only when you
-  back out to the home screen. Coming back focuses the title you opened.
-- A list you opened before shows immediately while a fresh copy loads behind it. The swap waits until
-  the remote has been quiet, and keeps focus on the same title (or the next one still there if it was
-  deleted).
-- Titles you visited are re-checked on return, so a changed poster shows straight away.
-- Pressing Up from the grid lands on the currently selected letter.
-- Collections open as a list of their titles, not a page of studio buttons.
+- Movie and show libraries load every page in the background, so scrolling never waits on the
+  next page and a letter jump or search sees the whole library.
+- Lighter list requests (one image per type, only the fields the grid and filters need, the total
+  count only on the first page) with tagged, cacheable image URLs.
+- A list you opened before shows immediately while a fresh copy loads behind it. The swap waits
+  until the remote has been still, and keeps focus on the same title (or the next one still there
+  if it was deleted), on the same row of the screen.
+- Coming back from a title also brings back what was typed in the library search, and a changed
+  poster shows straight away.
+- Filters stay while you go into a title and back, and clear when you back out to the home screen.
+  (Upstream remembers them for good.)
 
 **Screensaver**
-- Picks from the whole library at random (*Shuffle Whole Library*, on by default; turn off for the old
-  behaviour), avoids repeating the last 150 titles, and picks a random backdrop among all the ones a
-  title has.
+- Picks from the whole library at random (*Shuffle Whole Library*, on by default; turn off for the
+  old behaviour), avoids repeating the last 150 titles, and picks a random backdrop among all the
+  ones a title has.
 - *OK Button* setting: wake, play, or open the details page of the title shown.
 - Yellow opens Change Artwork for the title shown; green adds it to the watchlist.
 
 **Watchlists**
-- Green on the screensaver adds a movie to a `Watchlist` playlist, and a series (its next-up or first
-  episode) to `Series Watchlist`. Both are created on first use.
+- Green on the screensaver adds a movie to a `Watchlist` playlist, and a series (its next-up or
+  first episode) to `Series Watchlist`. Both are created on first use.
 
 **Playlists**
-- The playlist page has View (list or posters), Sort, Order and Delete, remembered per playlist, in
-  every layout.
+- Every layout opens a playlist on the playlist page, which adds a poster view (episodes show as
+  their series) and a Delete button to upstream's sort and filter bar. The view and sort are
+  remembered per playlist. DEL removes an entry in any sort order.
 
 **Series audio and subtitles**
-- On a series page, Audio and Subtitles set a language for the whole series (subtitles can be *None*).
-  Languages in the first episode are listed first. Playback uses that choice before the general
-  preferences.
+- On a series page, Audio and Subtitles set a language for the whole series (subtitles can be
+  *None*). Languages in the first episode are listed first. Playback uses that choice before
+  anything remembered from earlier playback.
 
 **Other fixes**
 - Change Artwork shows each backdrop rather than the first one repeated.

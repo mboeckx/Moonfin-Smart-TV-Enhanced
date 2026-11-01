@@ -38,8 +38,18 @@ const hasProgress = (item) => {
 };
 
 // `playlist` is set when the menu opened on a row of a playlist: `canManage` adds the entries
-// that change the playlist, and `first` and `last` say which way the row can still move.
-export const itemMenuActions = (item, {isAdmin = false, isJellyfin = true, canManageCollections = false, inCollection = false, playlist = null} = {}) => {
+// that change the playlist, `canRemove` is false where a row can move but not leave, like a
+// collection's play order, `canMove` is false while the rows show some other order, and
+// `first` and `last` say which way the row can still move.
+export const itemMenuActions = (item, {
+	isAdmin = false,
+	isJellyfin = true,
+	canManageCollections = false,
+	inCollection = false,
+	playlist = null,
+	isContinueWatchingOrNextUp = false,
+	playImmediately = false
+} = {}) => {
 	if (!item) return [];
 	const type = item.Type;
 	const userData = item.UserData || {};
@@ -48,11 +58,17 @@ export const itemMenuActions = (item, {isAdmin = false, isJellyfin = true, canMa
 	const actions = [];
 
 	if (MEDIA_TYPES.indexOf(type) !== -1) {
-		actions.push({id: 'play', icon: DETAIL_ICON_PATHS.play, label: hasProgress(item) ? $L('Resume') : $L('Play')});
-		// A press on a playlist row plays from there, so opening the item moves in here. A song
-		// has no page of its own to open.
-		if (playlist && type !== 'Audio') {
-			actions.push({id: 'viewDetails', icon: MENU_ICON_PATHS.info, label: $L('View Details')});
+		if (isContinueWatchingOrNextUp && playImmediately) {
+			if (type !== 'Audio') {
+				actions.push({id: 'viewDetails', icon: MENU_ICON_PATHS.info, label: $L('Go to Details')});
+			}
+		} else {
+			actions.push({id: 'play', icon: DETAIL_ICON_PATHS.play, label: hasProgress(item) ? $L('Resume') : $L('Play')});
+			// A press on a playlist row plays from there, so opening the item moves in here. A song
+			// has no page of its own to open.
+			if (playlist && type !== 'Audio') {
+				actions.push({id: 'viewDetails', icon: MENU_ICON_PATHS.info, label: $L('View Details')});
+			}
 		}
 		actions.push({
 			id: 'watched',
@@ -80,9 +96,12 @@ export const itemMenuActions = (item, {isAdmin = false, isJellyfin = true, canMa
 		}
 		actions.push({id: 'addToPlaylist', icon: DETAIL_ICON_PATHS.playlist, label: $L('Add to Playlist')});
 		if (playlist?.canManage) {
-			actions.push({id: 'removeFromPlaylist', icon: MENU_ICON_PATHS.playlistRemove, label: $L('Delete from Playlist')});
-			if (!playlist.first) actions.push({id: 'moveUp', icon: MENU_ICON_PATHS.arrowUpward, label: $L('Move Up')});
-			if (!playlist.last) actions.push({id: 'moveDown', icon: MENU_ICON_PATHS.arrowDownward, label: $L('Move Down')});
+			if (playlist.canRemove !== false) {
+				actions.push({id: 'removeFromPlaylist', icon: MENU_ICON_PATHS.playlistRemove, label: $L('Delete from Playlist')});
+			}
+			const canMove = playlist.canMove !== false;
+			if (canMove && !playlist.first) actions.push({id: 'moveUp', icon: MENU_ICON_PATHS.arrowUpward, label: $L('Move Up')});
+			if (canMove && !playlist.last) actions.push({id: 'moveDown', icon: MENU_ICON_PATHS.arrowDownward, label: $L('Move Down')});
 		}
 		if (isJellyfin && isAdmin) {
 			actions.push({id: 'refreshMetadata', icon: MENU_ICON_PATHS.refresh, label: $L('Refresh Metadata')});
@@ -102,4 +121,12 @@ export const itemMenuActions = (item, {isAdmin = false, isJellyfin = true, canMa
 	}
 
 	return actions;
+};
+
+// Emby and Plex take an item off resume and keep its progress. Jellyfin can only clear the play state, and
+// the audiobook Continue row ignores Emby's flag, so audio is always cleared.
+export const hideFromResume = (api, item, serverType) => {
+	const audio = item.Type === 'Audio' || item.Type === 'AudioBook' || item.MediaType === 'Audio';
+	if ((serverType === 'emby' || serverType === 'plex') && !audio) return api.hideFromResume(item.Id).catch(() => {});
+	return api.setWatched(item.Id, false).catch(() => {});
 };

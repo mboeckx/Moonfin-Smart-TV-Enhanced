@@ -6,9 +6,14 @@ import {genreGlowRgb} from './galleryGlow';
 import {KEYS} from '../../utils/keys';
 import css from './Browse.module.less';
 import {carouselIntervalMs} from '../../utils/carouselTiming';
+import {useScreensaverActive} from '../../hooks/useScreensaverActive';
 
 const SPINES_PER_SIDE = 7;
 const POSTER_OPTS = {maxWidth: 500, quality: 85};
+
+const posterUrlOf = (serverUrl, item) => (item._external
+	? item._externalPosterUrl
+	: getImageUrl(serverUrl, item.Id, 'Primary', POSTER_OPTS));
 
 const SpottableDiv = Spottable('div');
 
@@ -40,6 +45,7 @@ const Spine = ({item, index, onSelect}) => {
 
 const BookshelfBar = memo(({
 	isVisible,
+	rowPeek = 0,
 	featuredItems,
 	settings,
 	getItemServerUrl,
@@ -49,6 +55,7 @@ const BookshelfBar = memo(({
 }) => {
 	const [currentIndex, setCurrentIndex] = useState(0);
 	const [featuredFocused, setFeaturedFocused] = useState(false);
+	const screensaverActive = useScreensaverActive();
 
 	const preloadedImagesRef = useRef(new Set());
 	const carouselIntervalRef = useRef(null);
@@ -74,7 +81,7 @@ const BookshelfBar = memo(({
 		for (let offset = -1; offset <= 1; offset++) {
 			const item = featuredItems[safeIndex + offset];
 			if (item) {
-				preloadImage(getImageUrl(getItemServerUrl(item), item.Id, 'Primary', POSTER_OPTS));
+				preloadImage(posterUrlOf(getItemServerUrl(item), item));
 			}
 		}
 	}, [safeIndex, featuredItems, currentFeatured, getItemServerUrl]);
@@ -90,12 +97,12 @@ const BookshelfBar = memo(({
 			settings.autoAdvanceInterval,
 			settings.carouselSpeed
 		);
-		if (!isVisible || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0) return;
+		if (!isVisible || screensaverActive || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0) return;
 
 		carouselIntervalRef.current = setInterval(() => {
 			setCurrentIndex((prev) => (prev + 1) % featuredItems.length);
 		}, carouselSpeed);
-	}, [isVisible, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed]);
+	}, [isVisible, screensaverActive, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed]);
 
 	useEffect(() => {
 		startCarouselTimer();
@@ -169,7 +176,9 @@ const BookshelfBar = memo(({
 	const leftStart = Math.max(0, safeIndex - SPINES_PER_SIDE);
 	const leftItems = featuredItems.slice(leftStart, safeIndex);
 	const rightItems = featuredItems.slice(safeIndex + 1, safeIndex + 1 + SPINES_PER_SIDE);
-	const posterUrl = getImageUrl(getItemServerUrl(currentFeatured), currentFeatured.Id, 'Primary', POSTER_OPTS);
+	const posterUrl = posterUrlOf(getItemServerUrl(currentFeatured), currentFeatured);
+	// The shelf is sized in vh, so it shrinks as a whole to the height the peek leaves it.
+	const shelfScale = rowPeek ? `scale(${(1080 - rowPeek) / 1080})` : null;
 
 	return (
 		<div className={css.bookshelfBanner}>
@@ -181,7 +190,7 @@ const BookshelfBar = memo(({
 				onFocus={handleFocus}
 				onBlur={handleBlur}
 			>
-				<div className={css.bookshelfRow}>
+				<div className={css.bookshelfRow} style={shelfScale ? {transform: shelfScale, WebkitTransform: shelfScale} : undefined}>
 					<div className={`${css.bookshelfSide} ${css.bookshelfSideLeft}`}>
 						{leftItems.map((item, i) => (
 							<Spine key={item.Id || (leftStart + i)} item={item} index={leftStart + i} onSelect={select} />

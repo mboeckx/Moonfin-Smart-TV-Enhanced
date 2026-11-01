@@ -31,6 +31,7 @@ export const DETAIL_SECTIONS = [
 	{id: 'logo', label: 'Logo', subtitle: 'Shows the title as text when off', group: 'header', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU, MINIMALIST]},
 	{id: 'tagline', label: 'Tagline', group: 'header', styles: [CLASSIC, MODERN, SPOTLIGHT]},
 	{id: 'poster', label: 'Poster', group: 'header', styles: [CLASSIC]},
+	{id: 'versionBadge', label: 'Version badge', group: 'header', styles: [SPOTLIGHT]},
 	{id: 'upNext', label: 'Next Up', group: 'header', styles: [CLASSIC, MODERN]},
 	{id: 'cast', label: 'Cast', subtitle: 'Also on collection pages', group: 'sections', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU]},
 	{id: 'crew', label: 'Directors & writers', group: 'sections', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU]},
@@ -39,10 +40,12 @@ export const DETAIL_SECTIONS = [
 	{id: 'extras', label: 'Extras', group: 'sections', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU]},
 	{id: 'collections', label: 'Collections', group: 'sections', styles: [CLASSIC, MODERN, SPOTLIGHT]},
 	{id: 'moreLikeThis', label: 'More Like This', subtitle: 'Also similar albums and artists', group: 'sections', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU]},
+	{id: 'reviews', label: 'Reviews', group: 'sections', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU]},
 	{id: 'moreEpisodes', label: 'More episodes', subtitle: 'On episode pages', group: 'sections', styles: [CLASSIC, MODERN, SPOTLIGHT]},
-	{id: 'mediaInfo', label: 'Media info', subtitle: 'File, streams and Direct Play check', group: 'sections', styles: [MODERN, NOUVEAU]},
+	{id: 'mediaInfo', label: 'Media info', subtitle: 'File, streams and Direct Play check', group: 'sections', styles: [MODERN, SPOTLIGHT, NOUVEAU]},
 	{id: 'seerrGenresTags', label: 'Genres & tags', group: 'seerr', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU]},
 	{id: 'seerrStats', label: 'Stats', group: 'seerr', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU]},
+	{id: 'seerrStreaming', label: 'Streaming services', group: 'seerr', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU]},
 	{id: 'seerrRecommendations', label: 'Recommendations', group: 'seerr', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU]},
 	{id: 'seerrSimilar', label: 'Similar titles', group: 'seerr', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU]},
 	{id: 'seerrCollection', label: 'Collection banner', group: 'seerr', styles: [CLASSIC, MODERN]},
@@ -52,7 +55,7 @@ export const DETAIL_SECTIONS = [
 	{id: 'birthplace', label: 'Birthplace', group: 'person', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU]},
 	{id: 'guestAppearances', label: 'Guest appearances', group: 'person', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU]},
 	{id: 'musicVideos', label: 'Music videos', group: 'person', styles: [CLASSIC, MODERN, SPOTLIGHT, NOUVEAU]},
-	{id: 'playlistOrder', label: 'Playlist order', group: 'collection', styles: [SPOTLIGHT, NOUVEAU]}
+	{id: 'playlistOrder', label: 'Playlist order', group: 'collection', styles: [MODERN, SPOTLIGHT, NOUVEAU]}
 ];
 
 // Whether picking `style` can put a section on screen. Minimalist only draws video pages and

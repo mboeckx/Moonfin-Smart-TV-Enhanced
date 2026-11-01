@@ -4,8 +4,10 @@ import Spottable from '@enact/spotlight/Spottable';
 import SpotlightContainerDecorator from '@enact/spotlight/SpotlightContainerDecorator';
 
 import {buildDirectPlayReasonItems} from '../../utils/directPlayReasons';
-import {fileName, fileSizeLine, videoLines} from './nouveau/nouveauFooterFields';
+import {bookFileName, bookFormatLine, fileName, fileSizeLine, videoLines} from './nouveau/nouveauFooterFields';
 import useDetailPlaybackInfo from './useDetailPlaybackInfo';
+import {uiLocale} from '../../utils/uiLocale';
+import {parseServerDate} from '../../utils/serverDate';
 
 import css from './ModernFileInformation.module.less';
 
@@ -18,9 +20,9 @@ const COLLAPSED_TRACKS = 2;
 // Shown in local time, since the server sends UTC and an evening west of UTC would read as the
 // next day.
 const addedOn = (dateCreated) => {
-	const date = dateCreated ? new Date(dateCreated) : null;
-	if (!date || isNaN(date.getTime())) return null;
-	return date.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
+	const date = parseServerDate(dateCreated);
+	if (!date) return null;
+	return date.toLocaleDateString(uiLocale(), {year: 'numeric', month: 'short', day: 'numeric'});
 };
 
 // The rows are spottable though there's nothing to activate on most of them, since focus is how
@@ -132,9 +134,10 @@ const DirectPlaySection = ({api, item, mediaSource, activeAudio, activeSubtitle,
 
 // What the file behind the title is: its name, size and when it was added, the tracks inside it,
 // and whether it plays as it is. A file that can't direct play says why, with a hint about the
-// setting that would change it.
-const ModernFileInformation = ({item, mediaSource, effectiveApi, selectedAudioIndex, selectedSubtitleIndex, settings}) => {
-	const streams = mediaSource.MediaStreams || [];
+// setting that would change it. A book has no media source, so it shows its file's name, format and
+// date added.
+const ModernFileInformation = ({item, mediaSource, effectiveApi, selectedAudioIndex, selectedSubtitleIndex, settings, firstSpotlightId, showTitle = true}) => {
+	const streams = mediaSource?.MediaStreams || [];
 	const video = streams.find((stream) => stream.Type === 'Video');
 	const audio = streams.filter((stream) => stream.Type === 'Audio');
 	const subtitles = streams.filter((stream) => stream.Type === 'Subtitle');
@@ -143,15 +146,16 @@ const ModernFileInformation = ({item, mediaSource, effectiveApi, selectedAudioIn
 	const activeAudio = audio[selectedAudioIndex]?.Index;
 	const activeSubtitle = selectedSubtitleIndex >= 0 ? subtitles[selectedSubtitleIndex]?.Index : undefined;
 
-	const name = fileName(mediaSource);
-	const sizeLine = fileSizeLine(mediaSource);
-	const added = addedOn(item.DateCreated);
+	const book = item?.Type === 'Book' && !mediaSource;
+	const name = book ? bookFileName(item) : fileName(mediaSource);
+	const sizeLine = book ? bookFormatLine(item) : fileSizeLine(mediaSource);
+	const added = addedOn(item?.DateCreated);
 	const videoDetails = videoLines(video);
 
 	return (
 		<Container className={css.fileInfo}>
-			<h3 className={css.title}>{$L('File Information')}</h3>
-			<SpottableDiv className={css.fileCard}>
+			{showTitle && <h3 className={css.title}>{$L('File Information')}</h3>}
+			<SpottableDiv className={css.fileCard} spotlightId={firstSpotlightId}>
 				{name && <div className={css.fileName}>{name}</div>}
 				{sizeLine && <div className={css.fileMeta}>{sizeLine}</div>}
 				{added && <div className={css.fileMeta}>{$L('Date Added: {date}').replace('{date}', added)}</div>}
@@ -170,14 +174,16 @@ const ModernFileInformation = ({item, mediaSource, effectiveApi, selectedAudioIn
 				includeForced
 				showAllLabel={$L('Show All ({count}) Subtitle Tracks')}
 			/>
-			<DirectPlaySection
-				api={effectiveApi}
-				item={item}
-				mediaSource={mediaSource}
-				activeAudio={activeAudio}
-				activeSubtitle={activeSubtitle}
-				settings={settings}
-			/>
+			{!book && (
+				<DirectPlaySection
+					api={effectiveApi}
+					item={item}
+					mediaSource={mediaSource}
+					activeAudio={activeAudio}
+					activeSubtitle={activeSubtitle}
+					settings={settings}
+				/>
+			)}
 		</Container>
 	);
 };

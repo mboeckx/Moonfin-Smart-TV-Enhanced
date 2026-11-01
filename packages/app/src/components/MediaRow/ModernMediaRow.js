@@ -33,28 +33,36 @@ const ModernMediaRow = ({
 	registerRowRef,
 	loading,
 	titleWidth,
-	cardType
+	cardType,
+	spotlightId: rowSpotlightId,
+	onLoadMore,
+	menuOptions,
+	deferImages = false,
+	ratingsSurface,
+	hideOverview = false
 }) => {
 	const {settings} = useSettings();
 	const scrollerRef = useRef(null);
-	const scrollerRectRef = useRef(null);
+	const scrollerLayoutRef = useRef(null);
 	const scrollTimeoutRef = useRef(null);
 	const rowElementRef = useRef(null);
 	const [focusedItemId, setFocusedItemId] = useState(null);
+	const [details, setDetails] = useState(null);
 	const platform = useRef(getPlatform()).current;
 
 	const keyPrefix = rowId || title || rowIndex || '';
+	const itemCount = items?.length || 0;
 
 	useEffect(() => {
 		const el = document.querySelector(`[data-row-index="${rowIndex}"]`) || rowElementRef.current;
 		registerRowRef?.(rowIndex, el);
 		return () => registerRowRef?.(rowIndex, null);
-	}, [rowIndex, registerRowRef]);
+	}, [rowIndex, registerRowRef, loading]);
 
 	useEffect(() => {
-		scrollerRectRef.current = null;
+		scrollerLayoutRef.current = null;
 		const invalidate = () => {
-			scrollerRectRef.current = null;
+			scrollerLayoutRef.current = null;
 		};
 		window.addEventListener('resize', invalidate);
 		return () => window.removeEventListener('resize', invalidate);
@@ -83,32 +91,57 @@ const ModernMediaRow = ({
 	const handleFocus = useCallback((e) => {
 		onFocus?.(rowIndex);
 
+		const card = e.target.closest('.spottable');
+		// A row that pages asks for more once focus is among its last few cards.
+		if (onLoadMore && card && card.parentNode) {
+			const index = Array.prototype.indexOf.call(card.parentNode.children, card);
+			if (index >= 0 && index >= itemCount - 3) onLoadMore(rowId);
+		}
+
 		// A hovered card already sits under the cursor, so nudging the lane
 		// would only slide it away from the pointer.
-		if (Spotlight.getPointerMode()) return;
+		if (Spotlight.getPointerMode()) {
+			setDetails(null);
+			return;
+		}
 
-		const card = e.target.closest('.spottable');
 		const scroller = scrollerRef.current;
 		if (card && scroller) {
 			if (scrollTimeoutRef.current) {
 				window.cancelAnimationFrame(scrollTimeoutRef.current);
 			}
+			// The focused card parks at the leading edge, so the ratings and overview
+			// under it get the rest of the row. The last cards can't scroll that far
+			// and keep what's left.
 			scrollTimeoutRef.current = window.requestAnimationFrame(() => {
-				const cardRect = card.getBoundingClientRect();
-				if (!scrollerRectRef.current) {
-					scrollerRectRef.current = scroller.getBoundingClientRect();
+				const cards = Array.prototype.filter.call(card.parentNode.children, (el) => el.classList.contains('spottable'));
+				if (!scrollerLayoutRef.current) {
+					const style = window.getComputedStyle(scroller);
+					scrollerLayoutRef.current = {
+						width: scroller.clientWidth,
+						paddingLeft: parseFloat(style.paddingLeft) || 0,
+						paddingRight: parseFloat(style.paddingRight) || 0
+					};
 				}
-				const scrollerRect = scrollerRectRef.current;
-				const leftPadding = 80;
-				const rightPadding = 120;
-				if (cardRect.left < scrollerRect.left + leftPadding) {
-					scroller.scrollLeft -= (scrollerRect.left + leftPadding - cardRect.left);
-				} else if (cardRect.right > scrollerRect.right - rightPadding) {
-					scroller.scrollLeft += (cardRect.right - (scrollerRect.right - rightPadding));
+				const layout = scrollerLayoutRef.current;
+				if (layout.gap === undefined && cards.length > 1) {
+					layout.gap = parseFloat(window.getComputedStyle(cards[1]).marginLeft) || 0;
 				}
+				// Widths come from the cards' styles rather than their boxes, since the
+				// card that just lost focus is still shrinking back.
+				let cardStart = 0;
+				for (let i = 0; i < cards.length && cards[i] !== card; i++) {
+					cardStart += parseFloat(cards[i].style.width) + layout.gap;
+				}
+				scroller.scrollLeft = cardStart;
+				const cardLeft = layout.paddingLeft + cardStart - scroller.scrollLeft;
+				setDetails({
+					spotlightId: card.getAttribute('data-spotlight-id'),
+					width: layout.width - layout.paddingRight - cardLeft
+				});
 			});
 		}
-	}, [onFocus, rowIndex]);
+	}, [onFocus, rowIndex, onLoadMore, itemCount, rowId]);
 
 	const handleBlur = useCallback((e) => {
 		const nextTarget = e.relatedTarget;
@@ -184,11 +217,13 @@ const ModernMediaRow = ({
 
 	if (!items || items.length === 0) return null;
 
+	const focusedIndex = focusedItemId ? items.findIndex((item) => item.Id === focusedItemId) : -1;
+
 	return (
 		<RowContainer
 			ref={rowElementRef}
 			className={rowClassName}
-			spotlightId={`row-${rowIndex}`}
+			spotlightId={rowSpotlightId || `row-${rowIndex}`}
 			data-row-index={rowIndex}
 			onKeyDown={handleKeyDown}
 			onBlur={handleBlur}
@@ -200,6 +235,7 @@ const ModernMediaRow = ({
 				<div className={css.items}>
 					{items.map((item, index) => {
 						const spotlightId = `media-${keyPrefix}-${item.Id}`;
+						const besideFocus = focusedIndex >= 0 && Math.abs(index - focusedIndex) === 1;
 						const isFirst = index === 0;
 						const isLast = index === items.length - 1;
 						return (
@@ -212,11 +248,17 @@ const ModernMediaRow = ({
 								onFocused={handleFocusedChange}
 								showServerBadge={showServerBadge}
 								eagerLoad={rowIndex === 0}
+								deferImage={deferImages}
 								spotlightId={spotlightId}
 								onSpotlightLeft={isFirst ? handleWrapLeft : null}
 								onSpotlightRight={isLast ? handleWrapRight : null}
 								isFocused={focusedItemId === item.Id}
+								detailsWidth={details?.spotlightId === spotlightId ? details.width : undefined}
 								isLibraryRow={rowId === 'library-tiles'}
+								warmFocusArt={besideFocus}
+								menuOptions={menuOptions}
+								ratingsSurface={ratingsSurface}
+								hideOverview={hideOverview}
 							/>
 						);
 					})}
@@ -235,7 +277,12 @@ const areRowPropsEqual = (prev, next) => {
 	if (prev.subtitle !== next.subtitle) return false;
 	if (prev.rowSpacing !== next.rowSpacing) return false;
 	if (prev.className !== next.className) return false;
+	if (prev.spotlightId !== next.spotlightId) return false;
+	if (prev.menuOptions !== next.menuOptions) return false;
+	// Presence only, since a caller's inline arrow would defeat the comparator.
+	if (!prev.onLoadMore !== !next.onLoadMore) return false;
 	if (prev.loading !== next.loading || prev.titleWidth !== next.titleWidth || prev.cardType !== next.cardType) return false;
+	if (prev.deferImages !== next.deferImages || prev.ratingsSurface !== next.ratingsSurface || prev.hideOverview !== next.hideOverview) return false;
 	if (prev.items === next.items) return true;
 	if (prev.items?.length !== next.items?.length) return false;
 	for (let i = 0; i < prev.items.length; i++) {

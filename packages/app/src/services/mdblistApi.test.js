@@ -7,7 +7,8 @@ jest.mock('../utils/requestQueue', () => ({
 	mediaServerQueue: {run: (task) => task()}
 }));
 
-import {fetchRatings} from './mdblistApi';
+import {fetchRatings, isMdblistEnabled, ratingSettingsFor} from './mdblistApi';
+import {api} from './jellyfinApi';
 
 const respondWith = (ratings) => {
 	global.fetch = jest.fn(() => Promise.resolve({
@@ -41,5 +42,59 @@ describe('fetchRatings', () => {
 		const ratings = await fetchRatings('http://server', {Type: 'Movie', Id: 'm1', ProviderIds: {Tmdb: '202'}}, {sourcesKey: 'rt'});
 
 		expect(ratings).toEqual([{source: 'tomatoes_audience', value: undefined, score: 92, votes: undefined, url: undefined}]);
+	});
+
+	test("asks with a Seerr card's own TMDB id and never looks it up on the server", async () => {
+		respondWith([{source: 'imdb', value: 7.4, score: 74}]);
+		const seerrCard = (type, mediaType, mediaId) => ({Id: `seerr-${mediaType}-${mediaId}`, Type: type, _seerr: true, _seerrRaw: {mediaId, mediaType}});
+
+		await fetchRatings('http://server', seerrCard('Movie', 'movie', 603), {sourcesKey: 'seerr'});
+		await fetchRatings('http://server', seerrCard('Series', 'tv', 1399), {sourcesKey: 'seerr'});
+		expect(global.fetch.mock.calls.map(([url]) => url.match(/tmdbId=(\d+)/)[1])).toEqual(['603', '1399']);
+
+		expect(await fetchRatings('http://server', seerrCard('Series', 'tv', 'tt0944947'), {sourcesKey: 'seerr'})).toEqual([]);
+		expect(global.fetch).toHaveBeenCalledTimes(2);
+		expect(api.getItem).not.toHaveBeenCalled();
+	});
+});
+
+describe('ratingSettingsFor', () => {
+	const settings = {
+		useMoonfinPlugin: true,
+		mdblistEnabled: true,
+		mdblistRatingSources: ['imdb'],
+		showRatingLabels: true,
+		homeRowsMdblistEnabled: false,
+		homeRowsMdblistRatingSources: ['tmdb', 'stars'],
+		homeRowsTmdbEpisodeRatingsEnabled: true,
+		homeRowsShowRatingLabels: false,
+		homeRowsShowRatingBadges: true,
+		mediaBarMdblistEnabled: true,
+		mediaBarShowRatingLabels: false
+	};
+
+	test('hands back the plain settings without a surface', () => {
+		expect(ratingSettingsFor(settings)).toBe(settings);
+	});
+
+	test("reads a surface's own copy under the plain names", () => {
+		expect(ratingSettingsFor(settings, 'homeRows')).toMatchObject({
+			mdblistEnabled: false,
+			mdblistRatingSources: ['tmdb', 'stars'],
+			tmdbEpisodeRatingsEnabled: true,
+			showRatingLabels: false,
+			showRatingBadges: true
+		});
+	});
+
+	test('the media bar has no episode ratings of its own', () => {
+		expect(ratingSettingsFor(settings, 'mediaBar').tmdbEpisodeRatingsEnabled).toBeUndefined();
+	});
+
+	test("gates the plugin fetch on the surface's own switch", () => {
+		expect(isMdblistEnabled(settings)).toBe(true);
+		expect(isMdblistEnabled(settings, 'homeRows')).toBe(false);
+		expect(isMdblistEnabled(settings, 'mediaBar')).toBe(true);
+		expect(isMdblistEnabled({...settings, useMoonfinPlugin: false}, 'mediaBar')).toBe(false);
 	});
 });

@@ -1,4 +1,4 @@
-import {isStaticLibraryCard, modernCardMetrics, getCardDisplayTitle, getEpisodeLabels} from './modernCardLayout';
+import {isStaticLibraryCard, modernCardMetrics, modernRowSpacing, getCardDisplayTitle, getEpisodeLabels} from './modernCardLayout';
 
 const metrics = (over = {}) => modernCardMetrics({
 	posterSize: 'default',
@@ -32,6 +32,10 @@ describe('modernCardMetrics', () => {
 		expect(metrics().imageHeight).toBe(360);
 		expect(metrics({posterSize: 'xlarge'}).imageHeight).toBe(504);
 		expect(metrics({posterSize: 'nonsense'}).imageHeight).toBe(360);
+	});
+
+	test('keeps Grandparents at the Extra Large height', () => {
+		expect(metrics({posterSize: 'grandparents'}).imageHeight).toBe(504);
 	});
 
 	test('a poster is two thirds of its height and a sleeve is square', () => {
@@ -97,5 +101,21 @@ describe('Modern card labels and titles', () => {
 
 		expect(getEpisodeLabels({Type: 'Movie', Name: 'The Matrix'})).toBeNull();
 		expect(getEpisodeLabels({Type: 'Series', Name: 'Firefly'})).toBeNull();
+	});
+});
+
+describe('modernRowSpacing', () => {
+	test('turns the padding slider into the space below a row, every stop changing it', () => {
+		expect(modernRowSpacing({})).toBe(-34);
+		expect(modernRowSpacing({modernHomeRowsPadding: 420})).toBe(0);
+		expect(modernRowSpacing({modernHomeRowsPadding: 500})).toBe(66);
+		expect(modernRowSpacing({modernHomeRowsPadding: 560})).toBe(126);
+		expect(modernRowSpacing({modernHomeRowsPadding: 400})).toBe(-11);
+		expect(modernRowSpacing({modernHomeRowsPadding: 380})).toBe(-23);
+		expect(modernRowSpacing({modernHomeRowsPadding: 360})).toBe(-34);
+	});
+
+	test('leaves full screen rows to pace themselves', () => {
+		expect(modernRowSpacing({fullScreenRows: true, modernHomeRowsPadding: 500})).toBeNull();
 	});
 });

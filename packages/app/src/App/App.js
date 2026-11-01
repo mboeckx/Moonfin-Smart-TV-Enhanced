@@ -1,13 +1,14 @@
-import {useState, useCallback, useEffect, useMemo, lazy, Suspense, useRef} from 'react';
+import {useState, useCallback, useEffect, useLayoutEffect, useMemo, lazy, Suspense, useRef} from 'react';
 import {isKidsMode, blockedPanels, allowedPanel} from '../utils/kidsMode';
 import {
-	hashPin, pinMatches, lockoutRemaining, registerFailedAttempt, clearedLockout, tooManyAttempts,
-	SIGN_IN_PIN
-} from '../utils/pinLockout';
+	PIN_ACCEPTED, isSignInPinEnabled, markPinForgotten, refreshSignInPin, resetForgottenPin, signInPinMessage, takeForgottenPin,
+	takeProvedSignIn, verifySignInPin
+} from '../utils/signInPin';
 import ThemeDecorator from '@enact/sandstone/ThemeDecorator';
 import {Panels, Panel} from '@enact/sandstone/Panels';
 import Spottable from '@enact/spotlight/Spottable';
 import Spotlight from '@enact/spotlight';
+import SpotlightContainerDecorator from '@enact/spotlight/SpotlightContainerDecorator';
 import $L from '@enact/i18n/$L';
 
 import ilib from 'ilib';
@@ -18,6 +19,8 @@ import * as connectionPool from '../services/connectionPool';
 import * as jellyfinApi from '../services/jellyfinApi';
 import {adoptLegacyBlockedRatings, loadParentalControls, parentalScopeKey, setParentalScope} from '../services/parentalControls';
 import {libraryIdOf, seerrDetailStub} from '../utils/seerrTarget';
+import {setTmdbThumbsAvailable} from '../utils/tmdbThumb';
+import {configureIncompleteRecordings} from '../services/incompleteRecordings';
 import serverLogger from '../services/serverLogger';
 import * as remoteControl from '../services/remoteControl';
 import {isBackKey, KEYS} from '../utils/keys';
@@ -49,7 +52,7 @@ import AccountModal from '../components/AccountModal';
 import ExitDialog from '../components/ExitDialog';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Screensaver from '../components/Screensaver';
-import {clearLibraryStates, forgetLibraryItem, noteVisitedItem} from '../services/libraryReturnState';
+import {resetLibraryFilters} from '../services/libraryFilterReset';
 import {forgetCachedListItem} from '../services/libraryListCache';
 import {addToWatchlist} from '../services/watchlistPlaylist';
 import SeasonalTheme from '../components/SeasonalTheme';
@@ -57,19 +60,29 @@ import NoConnection from '../components/NoConnection/NoConnection';
 import SyncPlayDialog from '../components/SyncPlayDialog';
 import PhotoViewer from '../components/PhotoViewer';
 import ComicViewer from '../components/ComicViewer';
+import EpubReader from '../components/EpubReader';
+import PdfReader from '../components/PdfReader';
+import AdminMessageDialog from '../components/AdminMessageDialog';
+import {bookReader, isBookItem, supportsNewerBookFormats} from '../utils/books';
 import SettingsPanel from '../components/SettingsPanel';
 import ShuffleOverlay from '../components/ShuffleOverlay';
 import SpottableInput from '../components/SpottableInput/SpottableInput';
 import TVKeyboard from '../components/TVKeyboard/TVKeyboard';
 import {isTvKeyboardVisible, closeTvKeyboard} from '../components/TVKeyboard/keyboardBus';
 import useInactivityTimer from '../hooks/useInactivityTimer';
+import useSignInPin from '../hooks/useSignInPin';
 import {useThemeMusic} from '../hooks/useThemeMusic';
+import {useAccessSchedule} from '../hooks/useAccessSchedule';
+import {shiftedNow} from '../utils/clock';
+import TimesUp from '../components/TimesUp/TimesUp';
 import {buildThemeCssVars, toRgbTriplet} from '../theme/themeSpec';
 import {applyThemeOverrides} from '../theme/themeOverrides';
 import {resolveOverlayColor} from '../theme/overlayColors';
 import Login from '../views/Login';
 import Browse from '../views/Browse';
 import {isGameLibrary, refreshGameLibraries, resolveGameLibraryId} from '../utils/gameLibrary';
+import {afterHomeReady} from '../utils/homeReady';
+import {setMusicPlaying} from '../utils/sharedVideoOwner';
 
 const Details = lazy(() => import('../views/Details'));
 const Library = lazy(() => import('../views/Library'));
@@ -79,7 +92,6 @@ const Player = lazy(() => import('../views/Player'));
 const Favorites = lazy(() => import('../views/Favorites'));
 const Genres = lazy(() => import('../views/Genres'));
 const GenreBrowse = lazy(() => import('../views/GenreBrowse'));
-const Person = lazy(() => import('../views/Person'));
 const LiveTV = lazy(() => import('../views/LiveTV'));
 const Recordings = lazy(() => import('../views/Recordings'));
 const SeerrDiscover = lazy(() => import('../views/SeerrDiscover'));
@@ -98,6 +110,7 @@ import css from './App.module.less';
 
 const MAX_HISTORY_LENGTH = 10;
 const SpottableButton = Spottable('button');
+const BOOK_READERS = {comic: ComicViewer, epub: EpubReader, pdf: PdfReader};
 
 const isAudioItem = (item) => item?.MediaType === 'Audio' || item?.Type === 'Audio';
 
@@ -131,6 +144,11 @@ const PanelLoader = () => (
 	</div>
 );
 
+// Home sits outside the panels so it can stay mounted under the other screens, with the same focus
+// rules its panel gave it.
+const HomeLayer = SpotlightContainerDecorator({enterTo: 'last-focused', continue5WayHold: true}, 'div');
+const hiddenStyle = {display: 'none'};
+
 const PANELS = {
 	LOGIN: 0,
 	BROWSE: 1,
@@ -141,25 +159,24 @@ const PANELS = {
 	PLAYER: 6,
 	FAVORITES: 7,
 	GENRES: 8,
-	PERSON: 9,
-	LIVETV: 10,
-	SEERR_DISCOVER: 11,
-	SEERR_REQUESTS: 12,
-	GENRE_BROWSE: 13,
-	RECORDINGS: 14,
-	SEERR_BROWSE: 15,
-	SEERR_PERSON: 16,
-	ADD_SERVER: 17,
-	ADD_USER: 18,
-	GAMES: 19,
-	GAME_DETAILS: 20,
-	GAME_PLAYER: 21,
-	SEERR_COLLECTION: 22,
-	GAME_SYSTEM: 23
+	LIVETV: 9,
+	SEERR_DISCOVER: 10,
+	SEERR_REQUESTS: 11,
+	GENRE_BROWSE: 12,
+	RECORDINGS: 13,
+	SEERR_BROWSE: 14,
+	SEERR_PERSON: 15,
+	ADD_SERVER: 16,
+	ADD_USER: 17,
+	GAMES: 18,
+	GAME_DETAILS: 19,
+	GAME_PLAYER: 20,
+	SEERR_COLLECTION: 21,
+	GAME_SYSTEM: 22
 };
 
 const AppContent = (props) => {
-	const {isAuthenticated, isLoading, logout, serverUrl, serverName, api, user, hasMultipleServers, accessToken, connectionState, revalidateSession} = useAuth();
+	const {isAuthenticated, isLoading, logout, serverUrl, serverName, api, user, hasMultipleServers, accessToken, connectionState, revalidateSession, leaveSession, serverType} = useAuth();
 	const {settings, activeTheme, syncOnLogin, updateSettings, loaded: settingsLoaded} = useSettings();
 	const {streamNotification, dismissStreamNotification, pluginInfo} = useSeerr();
 	const {pendingPopups, markPopupsRead} = useServerMessages();
@@ -242,7 +259,6 @@ const AppContent = (props) => {
 	const [selectedGameSystem, setSelectedGameSystem] = useState(null);
 	const [selectedGame, setSelectedGame] = useState(null);
 	const [gameStartFresh, setGameStartFresh] = useState(false);
-	const [selectedPerson, setSelectedPerson] = useState(null);
 	const [selectedGenre, setSelectedGenre] = useState(null);
 	const [genreFilter, setGenreFilter] = useState(null);
 	const [studioFilter, setStudioFilter] = useState(null);
@@ -250,11 +266,26 @@ const AppContent = (props) => {
 	const [playbackOptions, setPlaybackOptions] = useState(null);
 	const [isResume, setIsResume] = useState(false);
 	const [isPlayerPaused, setIsPlayerPaused] = useState(false);
+	// Backing out of the music player keeps the same player playing, drawn hidden behind the screens.
+	const [musicInBackground, setMusicInBackground] = useState(false);
+	const backgroundMusic = musicInBackground && Boolean(playingItem) && panelIndex !== PANELS.PLAYER;
+	const navMusic = useMemo(
+		() => (backgroundMusic ? {item: playingItem, paused: isPlayerPaused} : null),
+		[backgroundMusic, playingItem, isPlayerPaused]
+	);
+	// A layout effect, so Home's trailers see it before their own effects decide to start.
+	useLayoutEffect(() => setMusicPlaying(backgroundMusic), [backgroundMusic]);
+	// A change of signed in user that didn't stop the music first, like an added account or an
+	// expired session, stops it here. So does opening sign in, which has no mini player to stop it.
+	const musicUserRef = useRef(null);
+	useEffect(() => {
+		const signingIn = panelIndex === PANELS.LOGIN || panelIndex === PANELS.ADD_SERVER || panelIndex === PANELS.ADD_USER;
+		if (!backgroundMusic) musicUserRef.current = user?.Id;
+		else if (signingIn || user?.Id !== musicUserRef.current) remoteControl.runPlayerCommand('stop');
+	}, [backgroundMusic, user?.Id, panelIndex]);
 	const [trailerPreviewActive, setTrailerPreviewActive] = useState(false);
+	const [trailerHidesChrome, setTrailerHidesChrome] = useState(false);
 	const [panelHistory, setPanelHistory] = useState([]);
-	// Patched: whether the panel on screen was reached with back, which is when a library
-	// screen picks up where it was left.
-	const [enteredByBack, setEnteredByBack] = useState(false);
 	const [seerrBrowse, setSeerrBrowse] = useState(null);
 	const [seerrPerson, setSeerrPerson] = useState(null);
 	const [authChecked, setAuthChecked] = useState(false);
@@ -270,7 +301,19 @@ const AppContent = (props) => {
 	const [shuffleOriginSpotlightId, setShuffleOriginSpotlightId] = useState('navbar-shuffle');
 	const [pinCodeInput, setPinCodeInput] = useState('');
 	const [pinCodeError, setPinCodeError] = useState('');
-	const [isPinUnlocked, setIsPinUnlocked] = useState(false);
+	// Each sign in, switch of account and return to the app is a new check, and the gate stays up
+	// until that check has passed.
+	const [pinCheckCount, setPinCheckCount] = useState(0);
+	const [pinPassed, setPinPassed] = useState(null);
+	const [pinChecked, setPinChecked] = useState(null);
+	const [pinVerifying, setPinVerifying] = useState(false);
+	// Whether the check under way follows a sign in with the account's password or Quick Connect,
+	// which lets Forgot PIN clear the PIN, and whether Forgot PIN is what sent the viewer to sign in.
+	const pinProofRef = useRef({session: null, proved: false, forgotten: false});
+	// Signing out ends the check, so signing back in to the same account starts a new one.
+	useEffect(() => {
+		if (!isAuthenticated) setPinCheckCount((count) => count + 1);
+	}, [isAuthenticated]);
 	const [setupWizardActive, setSetupWizardActive] = useState(false);
 	const setupWizardBackRef = useRef(null);
 	const cleanupHandlersRef = useRef(null);
@@ -281,23 +324,24 @@ const AppContent = (props) => {
 	const detailsItemStackRef = useRef([]);
 	// Play from a card's menu opens the item's screen, which starts it once it knows what to play.
 	const [detailsAutoPlay, setDetailsAutoPlay] = useState(false);
+	// A Smart Hub tile that opened the app, held until there's someone signed in to open it for.
+	const [deepLink, setDeepLink] = useState(null);
 	const [seerrCollection, setSeerrCollection] = useState(null);
 	const prevUserIdRef = useRef(null);
 	const [photoViewerItem, setPhotoViewerItem] = useState(null);
 	const [photoViewerItems, setPhotoViewerItems] = useState([]);
-	const [comicViewerItem, setComicViewerItem] = useState(null);
+	const [reading, setReading] = useState(null);
+	const BookReader = reading ? BOOK_READERS[reading.reader.kind] : null;
+	const [unreadableBook, setUnreadableBook] = useState(null);
 	const {updateInfo, formattedNotes, dismiss: dismissUpdate} = useVersionCheck(
 		isAuthenticated && settings.updateNotificationsEnabled !== false ? 3000 : null
 	);
-	// A PIN saved before this client started hashing is still stored as itself, so both are
-	// offered and the plain one is written back as a hash the first time it is entered.
-	const storedPin = useMemo(() => ({
-		hash: settings.pinCodeHash,
-		plain: typeof settings.pinCode === 'string' && /^\d{4}$/.test(settings.pinCode)
-			? settings.pinCode
-			: '0000'
-	}), [settings.pinCodeHash, settings.pinCode]);
-	const isPinGateActive = isAuthenticated && settings.pinCodeProtection === true && !isPinUnlocked;
+	const {userId, record: signInPin, account: pinAccount, latest: latestSignInPin, save: saveSignInPin} = useSignInPin();
+	const pinSession = isAuthenticated && userId ? `${userId}:${pinCheckCount}` : null;
+	const pinPending = Boolean(pinSession) && pinPassed !== pinSession;
+	const isPinGateActive = pinPending && isSignInPinEnabled(signInPin);
+	// Until the server has said whether the account has a PIN, nothing behind the gate shows.
+	const isPinChecking = pinPending && !isPinGateActive && pinChecked !== pinSession;
 	const screensaverTimeout = Number(settings.screensaverTimeout || 90);
 	const screensaverEnabled = Boolean(
 		settings.screensaverEnabled &&
@@ -314,16 +358,21 @@ const AppContent = (props) => {
 		!showAccountModal &&
 		!showServerMessages &&
 		!photoViewerItem &&
-		!comicViewerItem
+		!reading
 	);
-	const {isInactive: showScreensaver, dismiss: dismissScreensaver, wake: wakeScreensaver} = useInactivityTimer(screensaverTimeout, screensaverEnabled);
+	// Patched: the screensaver's own keys (OK, green, yellow) get the press before it wakes.
+	const screensaverKeyRef = useRef(null);
+	const {isInactive: showScreensaver, dismiss: dismissScreensaver, wake: wakeScreensaver} = useInactivityTimer(screensaverTimeout, screensaverEnabled, screensaverKeyRef);
 
 	useEffect(() => {
 		window.dispatchEvent(new CustomEvent('moonfin:screensaver', {detail: {active: showScreensaver}}));
 	}, [showScreensaver]);
 
 	useEffect(() => {
-		const handleTrailerPreview = (e) => setTrailerPreviewActive(!!e.detail?.active);
+		const handleTrailerPreview = (e) => {
+			setTrailerPreviewActive(!!e.detail?.active);
+			setTrailerHidesChrome(!!e.detail?.hidesChrome);
+		};
 		window.addEventListener('moonfin:trailerPreview', handleTrailerPreview);
 		return () => window.removeEventListener('moonfin:trailerPreview', handleTrailerPreview);
 	}, []);
@@ -347,6 +396,22 @@ const AppContent = (props) => {
 	}, [pluginInfo]);
 
 	useEffect(() => {
+		configureIncompleteRecordings({
+			supported: !!settings.useMoonfinPlugin && pluginInfo?.incompleteRecordingsSupported === true,
+			extended: pluginInfo?.extendedCompleteShowingsSupported === true,
+			canManage: user?.Policy?.EnableLiveTvManagement === true
+		});
+	}, [pluginInfo, settings.useMoonfinPlugin, user]);
+
+	// The cards read this without the Seerr context, so a title the server doesn't hold
+	// can grow into the plugin's titled thumb.
+	useEffect(() => {
+		setTmdbThumbsAvailable(!!settings.useMoonfinPlugin &&
+			pluginInfo?.tmdbAvailable === true &&
+			pluginInfo?.tmdbThumbsSupported === true);
+	}, [pluginInfo, settings.useMoonfinPlugin]);
+
+	useEffect(() => {
 		serverLogger.setEnabled(settings.serverLogging === true);
 	}, [settings.serverLogging]);
 
@@ -354,23 +419,39 @@ const AppContent = (props) => {
 		serverLogger.setRecording(settings.diagnosticLoggingEnabled === true);
 	}, [settings.diagnosticLoggingEnabled]);
 
+	// A TV that never saw the account's PIN learns of it here, and one an administrator removed stops
+	// being asked for.
 	useEffect(() => {
-		if (!isAuthenticated) {
-			setIsPinUnlocked(false);
-			setPinCodeInput('');
-			setPinCodeError('');
-			return;
-		}
-		if (settings.pinCodeProtection === true) {
-			setIsPinUnlocked(false);
-			setPinCodeInput('');
-			setPinCodeError('');
-			return;
-		}
-		setIsPinUnlocked(true);
 		setPinCodeInput('');
 		setPinCodeError('');
-	}, [isAuthenticated, settings.pinCodeProtection, user?.Id]);
+		if (!pinSession) return undefined;
+		if (pinProofRef.current.session !== pinSession) {
+			const proved = takeProvedSignIn(pinAccount?.serverUrl, userId);
+			const forgotten = takeForgottenPin(pinAccount?.serverUrl, userId);
+			pinProofRef.current = {session: pinSession, proved, forgotten: forgotten && proved};
+		}
+		let cancelled = false;
+		const before = latestSignInPin();
+		refreshSignInPin(before, pinAccount).then(async (next) => {
+			if (cancelled) return;
+			if (next !== before) saveSignInPin(next);
+			if (isSignInPinEnabled(next) && pinProofRef.current.forgotten) {
+				pinProofRef.current.forgotten = false;
+				const outcome = await resetForgottenPin(next, pinAccount, userId);
+				if (cancelled) return;
+				if (outcome.record) {
+					saveSignInPin(outcome.record);
+					setPinPassed(pinSession);
+				} else {
+					setPinCodeError(outcome.refused);
+				}
+			} else if (!isSignInPinEnabled(next)) {
+				setPinPassed(pinSession);
+			}
+			setPinChecked(pinSession);
+		});
+		return () => { cancelled = true; };
+	}, [pinSession, pinAccount, userId, latestSignInPin, saveSignInPin]);
 
 	useEffect(() => {
 		if (isAuthenticated && serverUrl && accessToken) {
@@ -433,7 +514,7 @@ const AppContent = (props) => {
 				setLibraries(libs);
 				// Warm the plugin's game library list so selecting a tile can tell a game
 				// library from a normal one without waiting on a request.
-				refreshGameLibraries();
+				afterHomeReady().then(refreshGameLibraries);
 			} catch (err) {
 				console.error('Failed to fetch libraries:', err);
 			}
@@ -539,7 +620,7 @@ const AppContent = (props) => {
 	const THEME_MUSIC_TYPES = ['Movie', 'Series', 'Season', 'Episode'];
 
 	useEffect(() => {
-		if (panelIndex === PANELS.DETAILS && selectedItem && THEME_MUSIC_TYPES.includes(selectedItem.Type)) {
+		if (panelIndex === PANELS.DETAILS && selectedItem && THEME_MUSIC_TYPES.includes(selectedItem.Type) && !backgroundMusic) {
 			themeMusic.playThemeMusic(selectedItem.SeriesId || selectedItem.Id);
 		} else if (panelIndex === PANELS.PLAYER) {
 			themeMusic.stopThemeMusicImmediate();
@@ -547,13 +628,57 @@ const AppContent = (props) => {
 			themeMusic.cancelDelayed();
 			themeMusic.stopThemeMusic();
 		}
-	}, [panelIndex, selectedItem?.Id]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [panelIndex, selectedItem?.Id, backgroundMusic]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	// The hardware decoder stays claimed until these are torn down.
 	const releaseVideoElements = useCallback(() => {
 		const videoElements = document.querySelectorAll('video');
 		videoElements.forEach(video => {
 			cleanupVideoElement(video);
+		});
+	}, []);
+
+	// A user outside the hours their account allows can't do anything on the server, so the
+	// app says so and stops what is playing. The check is run again whenever the app comes back.
+	const recheckAccessRef = useRef(null);
+	const {blocked: timesUp, nextAccess, recheck: recheckAccess} = useAccessSchedule({
+		userId: isAuthenticated ? user?.Id : null,
+		enabled: serverType !== 'emby',
+		fetchUser: () => api.getUserConfiguration(),
+		// The user's own record honors the schedule, so a 403 there is the server turning them away.
+		serverRefuses: () => api.getCurrentUser().then(() => false, (err) => (err?.status === 403 ? true : null)),
+		getNow: () => shiftedNow(settings.timeOffsetHours),
+		onBlocked: () => {
+			releaseVideoElements();
+			setPlayingItem(null);
+			setPlaybackOptions(null);
+			setIsResume(false);
+			setIsPlayerPaused(false);
+			setPanelHistory([]);
+			setPanelIndex(PANELS.BROWSE);
+			themeMusic.stopThemeMusicImmediate();
+		}
+	});
+	recheckAccessRef.current = recheckAccess;
+	const timesUpRef = useRef(false);
+	timesUpRef.current = timesUp;
+
+	// What was refused while the hours were closed is allowed again once they open.
+	useEffect(() => {
+		if (!timesUp) jellyfinApi.clearAccessDenied();
+	}, [timesUp]);
+
+	// An administrator can end the hours while someone is watching. Every request is refused from
+	// then on, so a refusal is the cue to look, not more than every few seconds.
+	useEffect(() => {
+		let last = 0;
+		return jellyfinApi.onForbidden(() => {
+			// While blocked every request is refused, the check's own question included.
+			if (timesUpRef.current) return;
+			const now = Date.now();
+			if (now - last < 5000) return;
+			last = now;
+			recheckAccessRef.current?.();
 		});
 	}, []);
 
@@ -589,6 +714,7 @@ const AppContent = (props) => {
 		};
 
 		const handleVisibilityVisible = () => {
+			recheckAccessRef.current?.();
 			revalidateSession();
 		};
 
@@ -599,14 +725,11 @@ const AppContent = (props) => {
 				releaseVideoElements();
 				setPlayingItem(null);
 				setPanelHistory([]);
-				if (isAuthenticated && settings.pinCodeProtection === true) {
-					setIsPinUnlocked(false);
-					setPinCodeInput('');
-					setPinCodeError('');
-				}
+				setPinCheckCount((count) => count + 1);
 				if (isAuthenticated) {
 					setPanelIndex(PANELS.BROWSE);
 				}
+				recheckAccessRef.current?.();
 			} finally {
 				activateApp();
 			}
@@ -643,7 +766,7 @@ const AppContent = (props) => {
 				cleanupHandlersRef.current();
 			}
 		};
-	}, [isAuthenticated, performAppCleanup, releaseVideoElements, revalidateSession, settings.pinCodeProtection]);
+	}, [isAuthenticated, performAppCleanup, releaseVideoElements, revalidateSession]);
 
 	useEffect(() => {
 		if (!isAuthenticated || !user?.Id) {
@@ -686,7 +809,6 @@ const AppContent = (props) => {
 				return newHistory;
 			});
 		}
-		setEnteredByBack(false);
 		showPanel(panel);
 	}, [panelIndex, showPanel]);
 
@@ -700,22 +822,20 @@ const AppContent = (props) => {
 		if (panelHistory.length > 0) {
 			const prevPanel = panelHistory[panelHistory.length - 1];
 			setPanelHistory(prev => prev.slice(0, -1));
-			setEnteredByBack(true);
 			setPanelIndex(prevPanel);
 		} else if (panelIndex > PANELS.BROWSE) {
-			setEnteredByBack(true);
 			setPanelIndex(PANELS.BROWSE);
 		}
 	}, [panelHistory, panelIndex]);
 
-	// Patched: reaching the home screen, by back or the home button, starts every library over.
+	// Patched: reaching the home screen, by back or the home button, clears the library filters,
+	// so a library opened from home starts unfiltered.
 	useEffect(() => {
-		if (panelIndex === PANELS.BROWSE) clearLibraryStates();
+		if (panelIndex === PANELS.BROWSE) resetLibraryFilters();
 	}, [panelIndex]);
 
 	// A title deleted from its page leaves the remembered library grid before back returns to it.
 	const handleItemDeleted = useCallback(() => {
-		forgetLibraryItem(selectedItem?.Id);
 		forgetCachedListItem(selectedItem?.Id);
 		handleBack();
 	}, [selectedItem, handleBack]);
@@ -730,7 +850,9 @@ const AppContent = (props) => {
 			if ((e.keyCode === KEYS.UP || e.keyCode === KEYS.DOWN || e.keyCode === KEYS.LEFT || e.keyCode === KEYS.RIGHT) && Spotlight.getPointerMode()) {
 				Spotlight.setPointerMode(false);
 			}
-			if (showShuffleOverlay) {
+			// The photo viewer, the book readers and their dialog take Back themselves, from a
+			// listener beside this one on the window, so this one stays out of it.
+			if (showShuffleOverlay || photoViewerItem || reading || unreadableBook) {
 				return;
 			}
 			if (isTvKeyboardVisible()) {
@@ -743,7 +865,7 @@ const AppContent = (props) => {
 				e.preventDefault();
 				e.stopPropagation();
 
-				if (isPinGateActive) {
+				if (isPinGateActive || isPinChecking || timesUp) {
 					return;
 				}
 
@@ -815,7 +937,14 @@ const AppContent = (props) => {
 
 		window.addEventListener('keydown', handleKeyDown, true);
 		return () => window.removeEventListener('keydown', handleKeyDown, true);
-	}, [panelIndex, handleBack, performAppCleanup, settings.exitConfirmation, showAccountModal, showServerMessages, showExitDialog, showSettingsPanel, showShuffleOverlay, isPinGateActive, setupWizardActive, updateInfo, dismissUpdate, syncPlayDialogOpen, closeSyncPlay]);
+	}, [panelIndex, handleBack, performAppCleanup, settings.exitConfirmation, showAccountModal, showServerMessages, showExitDialog, showSettingsPanel, showShuffleOverlay, photoViewerItem, reading, unreadableBook, isPinGateActive, isPinChecking, timesUp, setupWizardActive, updateInfo, dismissUpdate, syncPlayDialogOpen, closeSyncPlay]);
+
+	// The account stays saved, so it can be chosen again from the picker once its hours are back.
+	const handleTimesUpSwitchUser = useCallback(() => {
+		leaveSession();
+		setPanelHistory([]);
+		setPanelIndex(PANELS.LOGIN);
+	}, [leaveSession]);
 
 	const handleLoggedIn = useCallback(() => {
 		setPanelHistory([]);
@@ -851,9 +980,8 @@ const AppContent = (props) => {
 		navigateTo(PANELS.PLAYER);
 	}, [navigateTo]);
 
-	const handleSelectItem = useCallback((item) => {
-		setDetailsAutoPlay(false);
-		noteVisitedItem(item?.Id);
+	const handleSelectItem = useCallback((item, autoPlay = false) => {
+		setDetailsAutoPlay(Boolean(autoPlay) && item?.Type !== 'Audio' && !isLiveTvChannel(item));
 		// A channel has no details worth landing on, so it tunes straight away.
 		if (isLiveTvChannel(item)) {
 			handlePlayChannel(item);
@@ -876,7 +1004,8 @@ const AppContent = (props) => {
 			return;
 		}
 		if (panelIndex === PANELS.DETAILS && selectedItem) {
-			detailsItemStackRef.current.push(selectedItem);
+			// One episode to the next takes its place, so Back leaves the run of episodes in one press.
+			if (selectedItem.Type !== 'Episode' || item.Type !== 'Episode') detailsItemStackRef.current.push(selectedItem);
 			setSelectedItem(item);
 		} else {
 			detailsItemStackRef.current = [];
@@ -887,8 +1016,7 @@ const AppContent = (props) => {
 
 	// A song or a channel plays as soon as it's picked, so only the rest wait for their screen to start them.
 	const handlePlayFromMenu = useCallback((item) => {
-		handleSelectItem(item);
-		if (item.Type !== 'Audio' && !isLiveTvChannel(item)) setDetailsAutoPlay(true);
+		handleSelectItem(item, true);
 	}, [handleSelectItem]);
 
 	const handleAutoPlayed = useCallback(() => setDetailsAutoPlay(false), []);
@@ -934,6 +1062,21 @@ const AppContent = (props) => {
 		return null;
 	}, [api, dismissScreensaver]);
 
+	useEffect(() => {
+		const onDeepLink = (e) => setDeepLink(e.detail || null);
+		window.addEventListener('moonfin:deepLink', onDeepLink);
+		return () => window.removeEventListener('moonfin:deepLink', onDeepLink);
+	}, []);
+
+	// The tiles are Continue Watching and Next Up, so they go where those cards go on Home. A tile
+	// left from another server is dropped.
+	useEffect(() => {
+		if (!deepLink?.id || !isAuthenticated || !settingsLoaded || !user || pinPending || timesUp) return;
+		setDeepLink(null);
+		if (deepLink.serverId && user.ServerId && deepLink.serverId !== user.ServerId) return;
+		handleSelectItem({Id: deepLink.id, Type: deepLink.type === 'episode' ? 'Episode' : 'Movie'}, settings.continueWatchingDefaultAction === 'play');
+	}, [deepLink, isAuthenticated, settingsLoaded, user, pinPending, timesUp, handleSelectItem, settings.continueWatchingDefaultAction]);
+
 	const handleViewPhoto = useCallback((item, siblings) => {
 		setPhotoViewerItem(item);
 		setPhotoViewerItems(siblings || []);
@@ -944,8 +1087,23 @@ const AppContent = (props) => {
 		setPhotoViewerItems([]);
 	}, []);
 
-	const handleCloseComicViewer = useCallback(() => {
-		setComicViewerItem(null);
+	const handleCloseReader = useCallback(() => {
+		setReading(null);
+	}, []);
+
+	const handleCloseUnreadableBook = useCallback(() => {
+		const returnTo = unreadableBook?.returnTo;
+		setUnreadableBook(null);
+		if (returnTo) setTimeout(() => Spotlight.focus(returnTo), 0);
+	}, [unreadableBook]);
+
+	const openBook = useCallback((item) => {
+		const reader = bookReader(item);
+		if (reader && (!reader.newer || supportsNewerBookFormats())) {
+			setReading({item, reader});
+		} else {
+			setUnreadableBook({ext: reader ? reader.ext : null, returnTo: Spotlight.getCurrent()});
+		}
 	}, []);
 
 	const handleSelectLibrary = useCallback(async (library) => {
@@ -1002,28 +1160,33 @@ const AppContent = (props) => {
 		navigateTo(PANELS.GAME_DETAILS);
 	}, [navigateTo]);
 
-	const handlePlayGame = useCallback((gameLibrary, game, opts) => {
+	const handlePlayGame = useCallback(async (gameLibrary, game, opts) => {
+		if (backgroundMusic) await remoteControl.runPlayerCommand('stop');
 		setSelectedGameLibrary(gameLibrary);
 		setSelectedGame(game);
 		setGameStartFresh(!!(opts && opts.fresh));
 		navigateTo(PANELS.GAME_PLAYER);
-	}, [navigateTo]);
+	}, [navigateTo, backgroundMusic]);
 
-	const handlePlay = useCallback((item, resume, options) => {
-		if (item.MediaType === 'Book' && item.Path?.toLowerCase().endsWith('.cbz')) {
-			setComicViewerItem(item);
+	const handlePlay = useCallback(async (item, resume, options) => {
+		if (isBookItem(item)) {
+			openBook(item);
 			return;
 		}
-		if (isSyncPlayInGroup) {
+		// Music left playing behind the screens reports its stop before the new item opens.
+		if (backgroundMusic) await remoteControl.releasePlayer();
+		// Plex has no SyncPlay, so a Plex item neither joins a group nor opens it.
+		const itemOnPlex = (item._serverType || serverType) === 'plex';
+		if (isSyncPlayInGroup && !itemOnPlex) {
 			syncPlaySetNewQueue([item.Id]);
-		} else if (settings.syncplayEnabled !== false && settings.syncplayAutoOpen) {
+		} else if (!itemOnPlex && settings.syncplayEnabled !== false && settings.syncplayAutoOpen) {
 			openSyncPlay();
 		}
 		setPlayingItem(item);
 		setPlaybackOptions(options || null);
 		setIsResume(!!resume);
 		navigateTo(PANELS.PLAYER);
-	}, [navigateTo, isSyncPlayInGroup, openSyncPlay, settings.syncplayAutoOpen, settings.syncplayEnabled, syncPlaySetNewQueue]);
+	}, [navigateTo, isSyncPlayInGroup, openSyncPlay, serverType, settings.syncplayAutoOpen, settings.syncplayEnabled, syncPlaySetNewQueue, backgroundMusic, openBook]);
 
 	const playSyncPlayItem = useCallback((item) => {
 		if (panelIndex === PANELS.PLAYER && playingItem?.Id === item.Id) return;
@@ -1092,9 +1255,23 @@ const AppContent = (props) => {
 		setPlayingItem(null);
 		setPlaybackOptions(null);
 		setIsResume(false);
-		handleBack();
+		setMusicInBackground(false);
+		// Music stopped from the mini player ends wherever the viewer already is.
+		if (panelIndex === PANELS.PLAYER) handleBack();
 		window.dispatchEvent(new CustomEvent('moonfin:browseRefresh'));
-	}, [handleBack, panelHistory, selectedItem, playingItem]);
+	}, [handleBack, panelHistory, selectedItem, playingItem, panelIndex]);
+
+	const handlePlayerBackground = useCallback(() => {
+		setMusicInBackground(true);
+		handleBack();
+	}, [handleBack]);
+
+	const handleOpenMusic = useCallback(() => navigateTo(PANELS.PLAYER), [navigateTo]);
+
+	// Landing on the player screen by any route takes the music out of the background.
+	useEffect(() => {
+		if (panelIndex === PANELS.PLAYER) setMusicInBackground(false);
+	}, [panelIndex]);
 
 	// The guide button on the live TV OSD always lands on the guide, not wherever
 	// playback was launched from. When the player was opened from the guide its
@@ -1181,6 +1358,13 @@ const AppContent = (props) => {
 	}, [navigateTo]);
 
 	const handleSelectGenre = useCallback((genre, library) => {
+		// A genre merged across servers has no single library to open, so it goes to the browse
+		// screen that queries every server instead of the library screen.
+		if (genre._unifiedGenre) {
+			setSelectedGenre(genre);
+			navigateTo(PANELS.GENRE_BROWSE);
+			return;
+		}
 		setGenreFilter(genre.name);
 		setStudioFilter(null);
 		if (library) {
@@ -1208,16 +1392,12 @@ const AppContent = (props) => {
 		navigateTo(PANELS.GENRE_BROWSE);
 	}, [navigateTo]);
 
-	// Nouveau draws a person on the detail screen itself, so they open there rather than on the
-	// separate screen the other styles send them to.
+	// A cast entry comes without a type, so it's marked as a person to open in whichever detail style is chosen.
 	const handleSelectPerson = useCallback((person) => {
-		if (settings.detailScreenStyle === 'v4') {
-			handleSelectItem(person);
-			return;
-		}
-		setSelectedPerson(person);
-		navigateTo(PANELS.PERSON);
-	}, [navigateTo, settings.detailScreenStyle, handleSelectItem]);
+		if (!person?.Id) return;
+		const item = person.Type ? person : {...person, Type: 'Person'};
+		handleSelectItem(item);
+	}, [handleSelectItem]);
 
 	const handleSelectPersonFromPlayer = useCallback((person) => {
 		if (!person?.Id) return;
@@ -1225,14 +1405,10 @@ const AppContent = (props) => {
 		setPlayingItem(null);
 		setPlaybackOptions(null);
 		setIsResume(false);
-		if (settings.detailScreenStyle === 'v4') {
-			setSelectedItem(person);
-			navigateTo(PANELS.DETAILS, false);
-			return;
-		}
-		setSelectedPerson(person);
-		navigateTo(PANELS.PERSON, false);
-	}, [navigateTo, settings.detailScreenStyle]);
+		const item = person.Type ? person : {...person, Type: 'Person'};
+		setSelectedItem(item);
+		navigateTo(PANELS.DETAILS, false);
+	}, [navigateTo]);
 
 	const handleOpenRecordings = useCallback(() => {
 		navigateTo(PANELS.RECORDINGS);
@@ -1251,10 +1427,8 @@ const AppContent = (props) => {
 
 	const handleHome = useCallback(() => {
 		setPanelHistory([]);
-		setEnteredByBack(false);
 		setSelectedItem(null);
 		setSelectedLibrary(null);
-		setSelectedPerson(null);
 		setSelectedGenre(null);
 		setGenreFilter(null);
 		setStudioFilter(null);
@@ -1263,6 +1437,15 @@ const AppContent = (props) => {
 		window.dispatchEvent(new CustomEvent('moonfin:browseRefresh'));
 		setPanelIndex(PANELS.BROWSE);
 	}, []);
+
+	// Home pressed in the navigation while Home is showing draws a new media bar set.
+	const handleNavHome = useCallback(() => {
+		if (panelIndex === PANELS.BROWSE) {
+			window.dispatchEvent(new CustomEvent('moonfin:browseRefresh', {detail: {newMediaBar: true}}));
+			return;
+		}
+		handleHome();
+	}, [panelIndex, handleHome]);
 
 	const showRemoteMessage = useCallback((text, header) => {
 		setRemoteMessage({key: Date.now(), title: header?.trim() || $L('Remote message'), body: text});
@@ -1466,39 +1649,46 @@ const AppContent = (props) => {
 		}
 	}, [pinCodeError]);
 
-	const handlePinSubmit = useCallback(() => {
-		const refocus = () => Spotlight.focus('[data-spotlight-id="app-pin-input"]');
-
-		// Asked before the guess is looked at, so waiting is the only way through and reopening
-		// the gate hands back no fresh guesses.
-		const waiting = lockoutRemaining(settings, SIGN_IN_PIN);
-		if (waiting > 0) {
-			setPinCodeInput('');
-			setPinCodeError(tooManyAttempts(waiting));
-			refocus();
-			return;
-		}
-
-		if (pinMatches(pinCodeInput, storedPin)) {
-			setIsPinUnlocked(true);
-			setPinCodeInput('');
-			setPinCodeError('');
-			// Store it as a hash from here on, and let a correct PIN clear the count. There is no
-			// way to reset a forgotten one on a television, so a lockout that outlived the right
-			// PIN would be a trap.
-			updateSettings({
-				pinCodeHash: settings.pinCodeHash || hashPin(pinCodeInput),
-				...clearedLockout(SIGN_IN_PIN)
-			});
-			return;
-		}
-
-		const {wait, changes} = registerFailedAttempt(settings, SIGN_IN_PIN);
-		updateSettings(changes);
+	const handlePinSubmit = useCallback(async () => {
+		if (pinVerifying || !pinSession) return;
+		const session = pinSession;
+		const before = latestSignInPin();
+		setPinVerifying(true);
+		const result = await verifySignInPin(before, pinCodeInput, pinAccount);
+		setPinVerifying(false);
+		if (result.record !== before) saveSignInPin(result.record);
 		setPinCodeInput('');
-		setPinCodeError(wait > 0 ? tooManyAttempts(wait) : $L('Incorrect PIN'));
-		refocus();
-	}, [pinCodeInput, storedPin, settings, updateSettings]);
+		if (result.outcome === PIN_ACCEPTED) {
+			setPinCodeError('');
+			setPinPassed(session);
+			return;
+		}
+		setPinCodeError(signInPinMessage(result));
+		Spotlight.focus('[data-spotlight-id="app-pin-input"]');
+	}, [pinVerifying, pinSession, pinCodeInput, pinAccount, latestSignInPin, saveSignInPin]);
+
+	// Right after signing in with the password or Quick Connect the PIN just clears. Otherwise the
+	// account goes back to its sign in, and the PIN clears once that proves who it is.
+	const handleForgotPin = useCallback(async () => {
+		if (pinVerifying || !pinSession) return;
+		if (pinProofRef.current.session === pinSession && pinProofRef.current.proved) {
+			const session = pinSession;
+			setPinVerifying(true);
+			const outcome = await resetForgottenPin(latestSignInPin(), pinAccount, userId);
+			setPinVerifying(false);
+			if (outcome.record) {
+				saveSignInPin(outcome.record);
+				setPinPassed(session);
+			} else {
+				setPinCodeError(outcome.refused);
+			}
+			return;
+		}
+		markPinForgotten(pinAccount?.serverUrl, userId, user?.Name);
+		leaveSession();
+		setPanelHistory([]);
+		setPanelIndex(PANELS.LOGIN);
+	}, [pinVerifying, pinSession, pinAccount, userId, user, latestSignInPin, saveSignInPin, leaveSession]);
 
 	const handlePinInputKeyDown = useCallback((e) => {
 		const code = e.keyCode || e.which;
@@ -1512,6 +1702,27 @@ const AppContent = (props) => {
 	// pinCodeProtection reads as off until then and a protected profile would
 	// come up unlocked.
 	if (isLoading || !authChecked || !settingsLoaded) {
+		return (
+			<div className={css.loading}>
+				<LoadingSpinner />
+			</div>
+		);
+	}
+
+	if (timesUp) {
+		return (
+			<div className={css.app} {...props}>
+				<TimesUp
+					nextAccess={nextAccess}
+					now={shiftedNow(settings.timeOffsetHours)}
+					clockDisplay={settings.clockDisplay}
+					onSwitchUser={handleTimesUpSwitchUser}
+				/>
+			</div>
+		);
+	}
+
+	if (isPinChecking) {
 		return (
 			<div className={css.loading}>
 				<LoadingSpinner />
@@ -1545,6 +1756,13 @@ const AppContent = (props) => {
 								spotlightId='app-pin-submit'
 							>
 								{$L('Unlock')}
+							</SpottableButton>
+							<SpottableButton
+								className={`${css.pinButton} ${css.pinButtonQuiet}`}
+								onClick={handleForgotPin}
+								spotlightId='app-pin-forgot'
+							>
+								{$L('Forgot PIN?')}
 							</SpottableButton>
 						</div>
 					</div>
@@ -1606,7 +1824,7 @@ const AppContent = (props) => {
 				<Sidebar
 					libraries={libraries}
 					hasLiveTv={hasLiveTv}
-					onHome={handleHome}
+					onHome={handleNavHome}
 					onSearch={handleOpenSearch}
 					onShuffle={handleShuffle}
 					onGenres={handleOpenGenres}
@@ -1619,13 +1837,16 @@ const AppContent = (props) => {
 					onUserMenu={handleOpenAccountModal}
 					onMessages={handleOpenServerMessages}
 					onFriends={handleOpenFriends}
+					music={navMusic}
+					onOpenMusic={handleOpenMusic}
+					hideForTrailer={trailerHidesChrome}
 				/>
 			) : showNavBar ? (
 				<NavBar
 					activeView={getActiveView()}
 					libraries={libraries}
 					hasLiveTv={hasLiveTv}
-					onHome={handleHome}
+					onHome={handleNavHome}
 					onSearch={handleOpenSearch}
 					onShuffle={handleShuffle}
 					onGenres={handleOpenGenres}
@@ -1638,6 +1859,9 @@ const AppContent = (props) => {
 					onUserMenu={handleOpenAccountModal}
 					onMessages={handleOpenServerMessages}
 					onFriends={handleOpenFriends}
+					music={navMusic}
+					onOpenMusic={handleOpenMusic}
+					hideForTrailer={trailerHidesChrome}
 				/>
 			) : null}
 			<ItemMenuProvider onPlay={handlePlayFromMenu} onOpenItem={handleSelectItem} backRef={itemMenuBackRef} controlsRef={itemMenuControlsRef}>
@@ -1646,25 +1870,8 @@ const AppContent = (props) => {
 						<Panel>
 							<Login onLoggedIn={handleLoggedIn} backHandlerRef={backHandlerRef} />
 						</Panel>
-						<Panel>
-							<Browse
-								onSelectItem={handleSelectItem}
-								onSelectLibrary={handleSelectLibrary}
-								onOpenRecordings={handleOpenRecordings}
-								onPlayRecording={handlePlayRecording}
-								onSelectGenre={handleSelectGenreFromBrowse}
-								onSelectSeerrItem={handleSelectSeerrItem}
-								onSelectSeerrGenre={handleSelectSeerrGenre}
-								onSelectSeerrStudio={handleSelectSeerrStudio}
-								onSelectSeerrNetwork={handleSelectSeerrNetwork}
-								onOpenSeerrShortcut={handleOpenSeerrShortcut}
-								isVisible={panelIndex === PANELS.BROWSE && !showSettingsPanel}
-								backHandlerRef={backHandlerRef}
-								onFocusItemThemeMusic={themeMusic.playThemeMusicDelayed}
-								onBlurItemThemeMusic={themeMusic.cancelDelayed}
-								onLeaveThemeMusic={themeMusic.stopThemeMusic}
-							/>
-						</Panel>
+						{/* Home's place in the panel order, it's drawn by the layer after the panels. */}
+						<Panel />
 						<Panel>
 							{panelIndex === PANELS.DETAILS && (
 								<Details
@@ -1691,14 +1898,15 @@ const AppContent = (props) => {
 								onSelectItem={handleSelectItem}
 								onViewPhoto={handleViewPhoto}
 								onHome={handleHome}
+								onPlay={handlePlay}
+								onSearch={handleOpenSearch}
 									backHandlerRef={backHandlerRef}
-									restoreOnMount={enteredByBack}
 							/>
 							)}
 						</Panel>
 						<Panel>
 							{panelIndex === PANELS.SEARCH && (
-								<Search remoteSearch={remoteSearch} onSelectItem={handleSelectItem} onSelectSeerrItem={handleSelectSeerrItem} onSelectPerson={handleSelectPerson} onSelectGame={handleSelectGame} onPlayChannel={handlePlayChannel} />
+								<Search remoteSearch={remoteSearch} musicBar={backgroundMusic} onSelectItem={handleSelectItem} onSelectSeerrItem={handleSelectSeerrItem} onSelectPerson={handleSelectPerson} onSelectGame={handleSelectGame} onPlayChannel={handlePlayChannel} />
 							)}
 						</Panel>
 						<Panel>
@@ -1708,32 +1916,12 @@ const AppContent = (props) => {
 									onLibrariesChanged={fetchLibraries}
 									onRunSetupWizard={handleRunSetupWizard}
 									onSelectItem={handleSelectItemFromSettings}
+									hasLiveTv={hasLiveTv}
 								/>
 							)}
 						</Panel>
-						<Panel>
-							{panelIndex === PANELS.PLAYER && playingItem && (
-								<Player
-									item={playingItem}
-									resume={isResume}
-									initialMediaSourceId={playbackOptions?.mediaSourceId}
-									initialAudioIndex={playbackOptions?.audioStreamIndex}
-									initialSubtitleIndex={playbackOptions?.subtitleStreamIndex}
-									initialStartPositionTicks={playbackOptions?.startPositionTicks}
-									initialQuality={playbackOptions?.forceBitrate}
-									forceTranscode={playbackOptions?.forceTranscode}
-									audioPlaylist={playbackOptions?.audioPlaylist}
-									videoQueue={playbackOptions?.videoQueue}
-									liveTvChannels={playbackOptions?.liveTvChannels}
-									onEnded={handlePlayerEnd}
-									onBack={handlePlayerEnd}
-									onGuide={handlePlayerGuide}
-									onPlayNext={handlePlayNext}
-									onSelectPerson={handleSelectPersonFromPlayer}
-									onPausedChange={setIsPlayerPaused}
-								/>
-							)}
-						</Panel>
+						{/* The player's place in the panel order. It's drawn after the panels so music can keep playing behind them. */}
+						<Panel />
 						<Panel>
 							{panelIndex === PANELS.FAVORITES && (
 								<Favorites onSelectItem={handleSelectItem} onSelectPerson={handleSelectPerson} onHome={handleHome} backHandlerRef={backHandlerRef} />
@@ -1742,11 +1930,6 @@ const AppContent = (props) => {
 						<Panel>
 							{panelIndex === PANELS.GENRES && (
 								<Genres onSelectGenre={handleSelectGenre} onHome={handleHome} backHandlerRef={backHandlerRef} />
-							)}
-						</Panel>
-						<Panel>
-							{panelIndex === PANELS.PERSON && (
-								<Person personId={selectedPerson?.Id} onSelectItem={handleSelectItem} onSelectSeerrItem={handleSelectSeerrItem} onSelectSeerrPerson={handleSelectSeerrPerson} />
 							)}
 						</Panel>
 						<Panel>
@@ -1891,6 +2074,57 @@ const AppContent = (props) => {
 						</Panel>
 					</Panels>
 				</Suspense>
+				{/* Its own boundary, so a screen loading for the first time can't swap out music playing behind it. */}
+				<Suspense fallback={<PanelLoader />}>
+					{playingItem && (panelIndex === PANELS.PLAYER || backgroundMusic) && (
+						<Player
+							item={playingItem}
+							resume={isResume}
+							initialMediaSourceId={playbackOptions?.mediaSourceId}
+							initialAudioIndex={playbackOptions?.audioStreamIndex}
+							initialSubtitleIndex={playbackOptions?.subtitleStreamIndex}
+							initialStartPositionTicks={playbackOptions?.startPositionTicks}
+							initialQuality={playbackOptions?.forceBitrate}
+							forceTranscode={playbackOptions?.forceTranscode}
+							audioPlaylist={playbackOptions?.audioPlaylist}
+							videoQueue={playbackOptions?.videoQueue}
+							liveTvChannels={playbackOptions?.liveTvChannels}
+							background={backgroundMusic}
+							onBackground={handlePlayerBackground}
+							onEnded={handlePlayerEnd}
+							onBack={handlePlayerEnd}
+							onGuide={handlePlayerGuide}
+							onPlayNext={handlePlayNext}
+							onSelectPerson={handleSelectPersonFromPlayer}
+							onPausedChange={setIsPlayerPaused}
+						/>
+					)}
+				</Suspense>
+				{/* Covered screens hide Home rather than unmount it, so going back is instant and lands on
+				the same card. It's let go at sign in and during playback, which wants the memory. */}
+				{panelIndex !== PANELS.LOGIN && panelIndex !== PANELS.PLAYER && panelIndex !== PANELS.GAME_PLAYER && (
+					<HomeLayer style={panelIndex === PANELS.BROWSE ? null : hiddenStyle}>
+						<Browse
+							onSelectItem={handleSelectItem}
+							onSelectLibrary={handleSelectLibrary}
+							onOpenRecordings={handleOpenRecordings}
+							onPlayRecording={handlePlayRecording}
+							onSelectGenre={handleSelectGenreFromBrowse}
+							onSelectSeerrItem={handleSelectSeerrItem}
+							onSelectSeerrGenre={handleSelectSeerrGenre}
+							onSelectSeerrStudio={handleSelectSeerrStudio}
+							onSelectSeerrNetwork={handleSelectSeerrNetwork}
+							onOpenSeerrShortcut={handleOpenSeerrShortcut}
+							isVisible={panelIndex === PANELS.BROWSE && !showSettingsPanel}
+							backHandlerRef={backHandlerRef}
+							onFocusItemThemeMusic={backgroundMusic ? undefined : themeMusic.playThemeMusicDelayed}
+							onBlurItemThemeMusic={themeMusic.cancelDelayed}
+							onLeaveThemeMusic={themeMusic.stopThemeMusic}
+							onHoldThemeMusic={themeMusic.holdThemeMusic}
+							trailerHidesChrome={trailerHidesChrome}
+						/>
+					</HomeLayer>
+				)}
 			</ItemMenuProvider>
 			<AccountModal
 				open={showAccountModal}
@@ -1955,14 +2189,23 @@ const AppContent = (props) => {
 					onClose={handleClosePhotoViewer}
 				/>
 			)}
-			{comicViewerItem && (
-				<ComicViewer
-					item={comicViewerItem}
+			{BookReader && (
+				<BookReader
+					item={reading.item}
+					archive={reading.reader.archive}
 					serverUrl={serverUrl}
 					accessToken={accessToken}
-					onClose={handleCloseComicViewer}
+					onClose={handleCloseReader}
 				/>
 			)}
+			<AdminMessageDialog
+				open={!!unreadableBook}
+				title={$L('This book can\'t be read here')}
+				message={unreadableBook?.ext
+					? $L('{format} books need a newer TV. Read this one in Moonfin on a phone, tablet or computer.').replace('{format}', unreadableBook.ext.toUpperCase())
+					: $L('This TV can\'t read books in this format. Read this one in Moonfin on a phone, tablet or computer.')}
+				onDismiss={handleCloseUnreadableBook}
+			/>
 			<Screensaver
 				visible={showScreensaver}
 				backdrop={settings.screensaverBackdrop || 'library'}
@@ -1982,13 +2225,14 @@ const AppContent = (props) => {
 				onPlayItem={panelIndex === PANELS.PLAYER ? undefined : handleScreensaverEnter}
 				onColorKey={panelIndex === PANELS.PLAYER ? undefined : handleScreensaverColorKey}
 				shuffleLibrary={settings.screensaverShuffleLibrary !== false}
+				keyHandlerRef={screensaverKeyRef}
 				serverUrl={serverUrl}
 			/>
 			{/* Home only, and unmounted under the screensaver and the full screen overlays so it
 			never keeps animating behind them. */}
 			{panelIndex === PANELS.BROWSE && !showScreensaver && !showShuffleOverlay &&
-				!photoViewerItem && !comicViewerItem && (
-				<SeasonalTheme theme={settings.seasonalTheme} density={settings.seasonalDensity} />
+				!photoViewerItem && !reading && (
+				<SeasonalTheme theme={settings.seasonalTheme} density={settings.seasonalDensity} follower={settings.seasonalFollower} />
 			)}
 			<NoConnection />
 			<DebugOverlay />
@@ -2007,6 +2251,7 @@ const AppContent = (props) => {
 					onLibrariesChanged={fetchLibraries}
 					onRunSetupWizard={handleRunSetupWizard}
 					onSelectItem={handleSelectItemFromSettings}
+					hasLiveTv={hasLiveTv}
 				/>
 			)}
 			<TVKeyboard />

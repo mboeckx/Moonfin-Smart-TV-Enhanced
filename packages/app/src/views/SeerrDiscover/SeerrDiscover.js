@@ -6,13 +6,17 @@ import $L from '@enact/i18n/$L';
 import {useSeerr} from '../../context/SeerrContext';
 import {pointerHover} from '../../utils/focusScroll';
 import {useSettings} from '../../context/SettingsContext';
+import {useAuth} from '../../context/AuthContext';
+import {ModernMediaRow} from '../../components/MediaRow';
+import {modernRowSpacing} from '../../components/MediaCard/modernCardLayout';
 import seerrApi from '../../services/seerrApi';
 import {seerrGenreBackdrop} from '../../utils/seerrGenreArt';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import {KEYS} from '../../utils/keys';
 import hydrateRequestMediaItems from '../../utils/seerrHydration';
-import {STREAMING_NETWORKS, MOVIE_STUDIOS, SEERR_SHORTCUTS, pickShortcutBackdrops} from '../../utils/seerrHomeRows';
+import {STREAMING_NETWORKS, MOVIE_STUDIOS, SEERR_SHORTCUTS, pickShortcutBackdrops, normalizeMediaItem, normalizeRequestItem} from '../../utils/seerrHomeRows';
 import {libraryIdOf} from '../../utils/seerrTarget';
+import {isSupportedSlider, loadDiscoverSliders, loadSliderPage} from '../../utils/seerrSliders';
 import {isScrolledAway} from '../../utils/quickReturn';
 import {focusedCardIndex, cardToRestore} from '../../utils/rowFocusMemory';
 
@@ -56,6 +60,40 @@ const getShortcuts = (trendingResults = []) => {
 
 let lastFocusedRowIndex = null;
 let lastFocusedCardIndex = -1;
+
+// Where a request stands, as its card words it. Request status wins only for declined
+// and failed.
+const requestStatusInfo = (request) => {
+	const requestStatus = request.status;
+	const mediaStatus = request.media?.status;
+	if (requestStatus === 1) return {text: $L('Pending'), cls: css.requestStatusPending};
+	if (requestStatus === 3) return {text: $L('Declined'), cls: css.requestStatusDeclined};
+	if (requestStatus === 4) return {text: $L('Failed'), cls: css.requestStatusDeclined};
+	if (requestStatus === 5) return {text: $L('Available'), cls: css.requestStatusAvailable};
+	if (mediaStatus === 5) return {text: $L('Available'), cls: css.requestStatusAvailable};
+	if (mediaStatus === 4) return {text: $L('Partial'), cls: css.requestStatusAvailable};
+	if (mediaStatus === 3) return {text: $L('Requested'), cls: css.requestStatusDownloading};
+	if (requestStatus === 2) return {text: $L('Approved'), cls: css.requestStatusApproved};
+	return {text: $L('Unknown'), cls: css.requestStatusPending};
+};
+
+// The rows the Modern style draws with Home's row and cards. Shortcuts, genres, studios
+// and networks stay tiles in both styles.
+const isModernRowType = (type) => type === 'media' || type === 'request';
+
+// Home's cards read normalized items, so the raw Seerr results go through the same
+// normalizers the Home rows use.
+const toModernItems = (config, rawItems) => {
+	if (config.type === 'request') {
+		return rawItems.filter((request) => request?.media?.tmdbId).map((request) => ({
+			...normalizeRequestItem(request),
+			// One title can carry more than one request, and each keeps a card of its own.
+			Id: `seerr-request-${request.id}`,
+			Subtitle: requestStatusInfo(request).text
+		}));
+	}
+	return rawItems.map(normalizeMediaItem);
+};
 
 // Memoized card components for performance
 const MediaCard = memo(function MediaCard({item, mediaType, onSelect, onFocus}) {
@@ -170,22 +208,10 @@ const RequestCard = memo(function RequestCard({request, onSelect, onFocus}) {
 	const posterUrl = media?.posterPath ? seerrApi.getImageUrl(media.posterPath, 'w342') : null;
 	const title = media?.title || media?.name || 'Unknown';
 	const requestStatus = request.status;
-	const mediaStatus = media?.status;
 	const mediaType = request.type;
 
-	// Request status wins only for declined and failed.
-	const getStatusInfo = () => {
-		if (requestStatus === 3) return {text: $L('Declined'), cls: css.requestStatusDeclined};
-		if (requestStatus === 4) return {text: $L('Failed'), cls: css.requestStatusDeclined};
-		if (requestStatus === 5) return {text: $L('Available'), cls: css.requestStatusAvailable};
-		if (mediaStatus === 5) return {text: $L('Available'), cls: css.requestStatusAvailable};
-		if (mediaStatus === 4) return {text: $L('Partial'), cls: css.requestStatusAvailable};
-		if (mediaStatus === 3) return {text: $L('Requested'), cls: css.requestStatusDownloading};
-		if (requestStatus === 2) return {text: $L('Approved'), cls: css.requestStatusApproved};
-		return {text: $L('Unknown'), cls: css.requestStatusPending};
-	};
-
-	const {text: statusText, cls: statusClass} = requestStatus !== 1 ? getStatusInfo() : {};
+	// A pending request shows the dot rather than a label.
+	const {text: statusText, cls: statusClass} = requestStatus !== 1 ? requestStatusInfo(request) : {};
 
 	const handleClick = useCallback(() => {
 		const item = {
@@ -381,10 +407,18 @@ const BADGE_TTL_MS = 60000;
 const SeerrDiscover = ({onSelectItem, onSelectGenre, onSelectNetwork, onSelectStudio, onOpenRequests, onOpenShortcut, backHandlerRef}) => {
 	const {isAuthenticated, isEnabled, user: contextUser} = useSeerr();
 	const {settings} = useSettings();
+	const {serverUrl} = useAuth();
+	// Discover follows the Home rows style. Modern cards carry their own details, so the
+	// info header goes with it, the way Home drops its top info area.
+	const useModernRows = settings.homeRowsStyle !== 'v1';
+	const rowSpacing = modernRowSpacing(settings);
 	const [rows, setRows] = useState({});
 	const [rowPages, setRowPages] = useState({});
 	const [rowHasMore, setRowHasMore] = useState({});
 	const [rowLoading, setRowLoading] = useState({});
+	// The custom sliders a Seerr admin set up, drawn after this screen's own rows in Seerr's order.
+	const [sliderConfigs, setSliderConfigs] = useState([]);
+	const rowConfigs = useMemo(() => [...getRowConfigs(), ...sliderConfigs], [sliderConfigs]);
 	const [isLoading, setIsLoading] = useState(true);
 	const [backdropUrl, setBackdropUrl] = useState('');
 	const [focusedItem, setFocusedItem] = useState(null);
@@ -521,11 +555,44 @@ const SeerrDiscover = ({onSelectItem, onSelectGenre, onSelectNetwork, onSelectSt
 		}
 	}, [isAuthenticated, contextUser]);
 
+	// The sliders wait for this screen's own rows, since those replace every row when they land. A
+	// missing or failing endpoint just leaves them out, and their rows load two at a time.
+	useEffect(() => {
+		if (!isAuthenticated || isLoading) return undefined;
+		let cancelled = false;
+		(async () => {
+			let sliders;
+			try {
+				sliders = (await loadDiscoverSliders({force: true})).filter(isSupportedSlider);
+			} catch {
+				return;
+			}
+			if (cancelled || !sliders.length) return;
+			setSliderConfigs(sliders.map((slider) => ({id: `slider-${slider.id}`, title: slider.title, type: 'media', fetchFn: 'slider', slider})));
+			for (let i = 0; i < sliders.length; i += 2) {
+				const batch = sliders.slice(i, i + 2);
+				const pages = await Promise.all(batch.map((slider) => loadSliderPage(slider, 1).catch(() => null)));
+				if (cancelled) return;
+				batch.forEach((slider, index) => {
+					const page = pages[index];
+					if (!page) return;
+					const id = `slider-${slider.id}`;
+					setRows((prev) => ({...prev, [id]: page.results.slice(0, ITEMS_PER_PAGE)}));
+					setRowPages((prev) => ({...prev, [id]: 1}));
+					setRowHasMore((prev) => ({...prev, [id]: page.totalPages > 1}));
+				});
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [isAuthenticated, isLoading]);
+
 	// Load more items for a specific row
 	const loadMoreForRow = useCallback(async (rowId) => {
 		if (rowLoading[rowId] || !rowHasMore[rowId]) return;
 
-		const config = getRowConfigs().find(r => r.id === rowId);
+		const config = rowConfigs.find(r => r.id === rowId);
 		if (!config || !config.fetchFn) return;
 
 		setRowLoading(prev => ({...prev, [rowId]: true}));
@@ -551,6 +618,9 @@ const SeerrDiscover = ({onSelectItem, onSelectGenre, onSelectNetwork, onSelectSt
 				case 'upcomingTv':
 					data = await seerrApi.upcomingTv(nextPage);
 					break;
+				case 'slider':
+					data = await loadSliderPage(config.slider, nextPage);
+					break;
 				default:
 					return;
 			}
@@ -563,7 +633,7 @@ const SeerrDiscover = ({onSelectItem, onSelectGenre, onSelectNetwork, onSelectSt
 					return {...prev, [rowId]: [...prev[rowId], ...uniqueNew.slice(0, ITEMS_PER_PAGE)]};
 				});
 				setRowPages(prev => ({...prev, [rowId]: nextPage}));
-				setRowHasMore(prev => ({...prev, [rowId]: newItems.length >= 20}));
+				setRowHasMore(prev => ({...prev, [rowId]: config.slider ? nextPage < data.totalPages : newItems.length >= 20}));
 			} else {
 				setRowHasMore(prev => ({...prev, [rowId]: false}));
 			}
@@ -572,7 +642,13 @@ const SeerrDiscover = ({onSelectItem, onSelectGenre, onSelectNetwork, onSelectSt
 		} finally {
 			setRowLoading(prev => ({...prev, [rowId]: false}));
 		}
-	}, [rowLoading, rowHasMore, rowPages]);
+	}, [rowConfigs, rowLoading, rowHasMore, rowPages]);
+
+	// The Modern rows only look at their items when deciding to redraw, so they're handed
+	// a callback that always reaches the current paging state.
+	const loadMoreRef = useRef(loadMoreForRow);
+	loadMoreRef.current = loadMoreForRow;
+	const handleLoadMore = useCallback((rowId) => loadMoreRef.current(rowId), []);
 
 	const handleItemFocus = useCallback((item) => {
 		setFocusedItem(item);
@@ -580,7 +656,11 @@ const SeerrDiscover = ({onSelectItem, onSelectGenre, onSelectNetwork, onSelectSt
 			clearTimeout(backdropTimeoutRef.current);
 		}
 		backdropTimeoutRef.current = setTimeout(() => {
-			if (item?.backdrop_path || item?.backdropPath) {
+			// A Modern card hands over the normalized item, which carries its backdrop
+			// ready made. The page keeps the plain backdrop, never the titled thumb.
+			if (item?._externalBackdropUrl) {
+				setBackdropUrl(item._externalBackdropUrl);
+			} else if (item?.backdrop_path || item?.backdropPath) {
 				const path = item.backdrop_path || item.backdropPath;
 				setBackdropUrl(seerrApi.getImageUrl(path, 'w1280'));
 			} else if (item?.backdrops?.length > 0) {
@@ -599,9 +679,26 @@ const SeerrDiscover = ({onSelectItem, onSelectGenre, onSelectNetwork, onSelectSt
 		});
 	}, [onSelectItem]);
 
+	// A Modern card picks the same Seerr title the classic card builds from the raw result.
+	const handleSelectModernItem = useCallback((item) => {
+		const raw = item._seerrRaw || {};
+		handleSelectItem({id: raw.mediaId, _seerrLibraryId: item._seerrLibraryId}, raw.mediaType);
+	}, [handleSelectItem]);
+
+	const rowItems = useMemo(() => {
+		const items = {};
+		rowConfigs.forEach((config) => {
+			const raw = rows[config.id];
+			items[config.id] = raw && useModernRows && isModernRowType(config.type) ? toModernItems(config, raw) : raw;
+		});
+		return items;
+	}, [rowConfigs, rows, useModernRows]);
+
 	const visibleRows = useMemo(() => {
-		return getRowConfigs().filter(r => rows[r.id]?.length > 0);
-	}, [rows]);
+		return rowConfigs.filter(r => rowItems[r.id]?.length > 0);
+	}, [rowConfigs, rowItems]);
+	const visibleCountRef = useRef(0);
+	visibleCountRef.current = visibleRows.length;
 
 	const handleRequestsPillKeyDown = useCallback((e) => {
 		if (e.keyCode === KEYS.UP || e.keyCode === KEYS.LEFT) {
@@ -615,6 +712,27 @@ const SeerrDiscover = ({onSelectItem, onSelectGenre, onSelectNetwork, onSelectSt
 		}
 	}, []);
 
+	// Brings a row into view. A Modern row rests with its top pinned to the top of the list,
+	// the way Home rests its rows, since the focused card's details grow below it. It's
+	// pinned again over the next frames because the row focus just left shrinks back after
+	// this runs. Discover's own rows keep the smooth scroll they always had.
+	const scrollRowIntoView = useCallback((index, options) => {
+		const container = rowsContainerRef.current;
+		const row = container?.querySelector(`[data-row-index="${index}"]`);
+		if (!row) return;
+		if (row.classList.contains(css.contentRow)) {
+			row.scrollIntoView(options);
+			return;
+		}
+		const pin = () => {
+			const offset = row.getBoundingClientRect().top - container.getBoundingClientRect().top;
+			if (Math.abs(offset) > 1) container.scrollTop += offset;
+		};
+		pin();
+		window.requestAnimationFrame(pin);
+		window.requestAnimationFrame(() => window.requestAnimationFrame(pin));
+	}, []);
+
 	const handleNavigateUp = useCallback((fromRowIndex) => {
 		if (fromRowIndex === 0) {
 			// The requests pill sits between the rows and the navbar.
@@ -626,21 +744,15 @@ const SeerrDiscover = ({onSelectItem, onSelectGenre, onSelectNetwork, onSelectSt
 		}
 		const targetIndex = fromRowIndex - 1;
 		Spotlight.focus(`discover-row-${targetIndex}`);
-		const targetRow = document.querySelector(`[data-row-index="${targetIndex}"]`);
-		if (targetRow) {
-			targetRow.scrollIntoView({behavior: 'smooth', block: 'start'});
-		}
-	}, []);
+		scrollRowIntoView(targetIndex, {behavior: 'smooth', block: 'start'});
+	}, [scrollRowIntoView]);
 
 	const handleNavigateDown = useCallback((fromRowIndex) => {
 		const targetIndex = fromRowIndex + 1;
-		if (targetIndex >= visibleRows.length) return;
+		if (targetIndex >= visibleCountRef.current) return;
 		Spotlight.focus(`discover-row-${targetIndex}`);
-		const targetRow = document.querySelector(`[data-row-index="${targetIndex}"]`);
-		if (targetRow) {
-			targetRow.scrollIntoView({behavior: 'smooth', block: 'center'});
-		}
-	}, [visibleRows.length]);
+		scrollRowIntoView(targetIndex, {behavior: 'smooth', block: 'center'});
+	}, [scrollRowIntoView]);
 
 	const handleRowFocus = useCallback((rowIndex) => {
 		if (typeof rowIndex === 'number') {
@@ -649,6 +761,13 @@ const SeerrDiscover = ({onSelectItem, onSelectGenre, onSelectNetwork, onSelectSt
 			lastFocusedRowIndex = rowIndex;
 		}
 	}, []);
+
+	// The classic rows bring themselves into view as focus moves through them, and a
+	// Modern row leaves that to the screen, so it's done here instead.
+	const handleModernRowFocus = useCallback((rowIndex) => {
+		handleRowFocus(rowIndex);
+		if (!pointerHover()) scrollRowIntoView(rowIndex);
+	}, [handleRowFocus, scrollRowIntoView]);
 
 	useEffect(() => {
 		if (!isLoading && visibleRows.length > 0) {
@@ -659,16 +778,13 @@ const SeerrDiscover = ({onSelectItem, onSelectGenre, onSelectNetwork, onSelectSt
 					if (!card || !Spotlight.focus(card)) {
 						Spotlight.focus(rowId);
 					}
-					const targetRow = document.querySelector(`[data-row-index="${lastFocusedRowIndex}"]`);
-					if (targetRow) {
-						targetRow.scrollIntoView({block: 'center'});
-					}
+					scrollRowIntoView(lastFocusedRowIndex, {block: 'center'});
 				} else {
 					Spotlight.focus('discover-row-0');
 				}
 			}, 100);
 		}
-	}, [isLoading, visibleRows.length]);
+	}, [isLoading, visibleRows.length, scrollRowIntoView]);
 
 	if (!isEnabled) {
 		return (
@@ -723,35 +839,54 @@ const SeerrDiscover = ({onSelectItem, onSelectGenre, onSelectNetwork, onSelectSt
 				<LoadingSpinner />
 			) : (
 				<div className={`${css.mainContent} ${settings.navbarPosition === 'left' ? css.sidebarOffset : ''}`}>
-					{/* Detail section for focused item - always present for consistent split view */}
-					<div className={css.detailSection}>
-						{focusedItem && (focusedItem.title || focusedItem.name) ? (
-							<>
-								<h2 className={css.detailTitle}>{focusedItem.title || focusedItem.name}</h2>
-								<div className={css.detailMeta}>
-									{focusedItem.vote_average > 0 && (
-										<span className={css.detailRating}>★ {focusedItem.vote_average?.toFixed(1)}</span>
+					{/* The info header for the focused item, Classic only */}
+					{!useModernRows && (
+						<div className={css.detailSection}>
+							{focusedItem && (focusedItem.title || focusedItem.name) ? (
+								<>
+									<h2 className={css.detailTitle}>{focusedItem.title || focusedItem.name}</h2>
+									<div className={css.detailMeta}>
+										{focusedItem.vote_average > 0 && (
+											<span className={css.detailRating}>★ {focusedItem.vote_average?.toFixed(1)}</span>
+										)}
+										{(focusedItem.release_date || focusedItem.first_air_date) && (
+											<span className={css.detailYear}>
+												{(focusedItem.release_date || focusedItem.first_air_date)?.substring(0, 4)}
+											</span>
+										)}
+									</div>
+									{focusedItem.overview && (
+										<p className={css.detailOverview}>{focusedItem.overview}</p>
 									)}
-									{(focusedItem.release_date || focusedItem.first_air_date) && (
-										<span className={css.detailYear}>
-											{(focusedItem.release_date || focusedItem.first_air_date)?.substring(0, 4)}
-										</span>
-									)}
-								</div>
-								{focusedItem.overview && (
-									<p className={css.detailOverview}>{focusedItem.overview}</p>
-								)}
-							</>
+								</>
+							) : (
+								<h2 className={css.detailTitle}>{$L('Discover')}</h2>
+							)}
+						</div>
+					)}
+					<div className={`${css.rowsContainer} ${useModernRows ? css.modernRows : ''}`} ref={rowsContainerRef}>
+						{visibleRows.map((config, index) => (useModernRows && isModernRowType(config.type) ? (
+							<ModernMediaRow
+								key={config.id}
+								rowId={config.id}
+								title={config.title}
+								items={rowItems[config.id]}
+								serverUrl={serverUrl}
+								rowIndex={index}
+								spotlightId={`discover-row-${index}`}
+								onSelectItem={handleSelectModernItem}
+								onFocus={handleModernRowFocus}
+								onFocusItem={handleItemFocus}
+								onNavigateUp={handleNavigateUp}
+								onNavigateDown={handleNavigateDown}
+								onLoadMore={handleLoadMore}
+								rowSpacing={rowSpacing}
+							/>
 						) : (
-							<h2 className={css.detailTitle}>{$L('Discover')}</h2>
-						)}
-					</div>
-					<div className={css.rowsContainer} ref={rowsContainerRef}>
-						{visibleRows.map((config, index) => (
 							<DiscoverRow
 								key={config.id}
 								config={config}
-								items={rows[config.id] || []}
+								items={rowItems[config.id] || []}
 								rowIndex={index}
 								isLoading={rowLoading[config.id]}
 								onSelectItem={handleSelectItem}
@@ -765,7 +900,7 @@ const SeerrDiscover = ({onSelectItem, onSelectGenre, onSelectNetwork, onSelectSt
 								onLoadMore={loadMoreForRow}
 								onRowFocus={handleRowFocus}
 							/>
-						))}
+						)))}
 					</div>
 				</div>
 			)}

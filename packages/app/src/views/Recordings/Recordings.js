@@ -1,4 +1,4 @@
-import {useState, useEffect, useCallback, useMemo, memo} from 'react';
+import {useState, useEffect, useCallback, useMemo, useRef, memo} from 'react';
 import Spottable from '@enact/spotlight/Spottable';
 import SpotlightContainerDecorator from '@enact/spotlight/SpotlightContainerDecorator';
 import Spotlight from '@enact/spotlight';
@@ -7,7 +7,15 @@ import {useAuth} from '../../context/AuthContext';
 import {pointerHover} from '../../utils/focusScroll';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import {formatDayLabel} from '../../utils/clock';
-import {formatDuration} from '../../utils/helpers';
+import {useSettings} from '../../context/SettingsContext';
+import IncompleteBadge, {incompleteDetailText} from '../../components/IncompleteBadge';
+import {
+	canKeepAsComplete, keepAsComplete, refreshIncompleteRecordings, useIncompleteRecording
+} from '../../services/incompleteRecordings';
+import {formatDuration, getImageUrl} from '../../utils/helpers';
+import {parseServerDate} from '../../utils/serverDate';
+import {seriesChoiceFlags, seriesChoiceOf} from '../../utils/liveTvGuide';
+import SeriesEpisodeChoices from '../../components/SeriesEpisodeChoices';
 
 import css from './Recordings.module.less';
 
@@ -41,15 +49,20 @@ const RecIcon = ({paths, className}) => (
 // primary image, then the parent's backdrop, and finally the placeholder icon.
 const recordingImageUrl = (serverUrl, item) => {
 	if (!item) return null;
-	if (item.ImageTags?.Thumb) return `${serverUrl}/Items/${item.Id}/Images/Backdrop/0?maxWidth=600`;
-	if (item.ImageTags?.Primary) return `${serverUrl}/Items/${item.Id}/Images/Primary?maxHeight=450`;
-	if (item.ParentThumbItemId) return `${serverUrl}/Items/${item.ParentThumbItemId}/Images/Backdrop/0?maxWidth=600`;
+	if (item.ImageTags?.Thumb) return getImageUrl(serverUrl, item.Id, 'Backdrop/0', {maxWidth: 600});
+	if (item.ImageTags?.Primary) return getImageUrl(serverUrl, item.Id, 'Primary', {maxHeight: 450, tag: item.ImageTags.Primary});
+	if (item.ParentThumbItemId) return getImageUrl(serverUrl, item.ParentThumbItemId, 'Backdrop/0', {maxWidth: 600});
 	return null;
 };
 
 const joinParts = (...parts) => parts.filter(Boolean).join(' • ');
 
-const Card = memo(({payload, imageUrl, title, subtitle, isSeries, onSelect}) => {
+// A cancelled, finished or failed timer, or one whose showing is over, has nothing left to record.
+const HIDDEN_TIMER_STATUSES = ['Cancelled', 'Completed', 'Error'];
+const isUpcomingTimer = (timer, now) => HIDDEN_TIMER_STATUSES.indexOf(timer.Status) < 0 &&
+	!(parseServerDate(timer.EndDate)?.getTime() <= now);
+
+const Card = memo(({payload, imageUrl, title, subtitle, isSeries, isRecording, onSelect}) => {
 	const [imgFailed, setImgFailed] = useState(false);
 
 	const handleClick = useCallback(() => {
@@ -59,7 +72,13 @@ const Card = memo(({payload, imageUrl, title, subtitle, isSeries, onSelect}) => 
 	const handleFocus = useCallback((e) => {
 		if (pointerHover()) return;
 		const el = e.currentTarget || e.target;
-		if (el) el.scrollIntoView({behavior: 'smooth', block: 'nearest', inline: 'nearest'});
+		if (!el) return;
+		el.scrollIntoView({behavior: 'smooth', block: 'nearest', inline: 'nearest'});
+		// Scrolling only the card would leave its row's title above the top edge on the way up. A
+		// row taller than the list keeps the card in view instead.
+		const row = el.closest(`.${css.row}`);
+		const list = row && row.closest(`.${css.body}`);
+		if (list && row.offsetHeight <= list.clientHeight) row.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 	}, []);
 
 	const handleImgError = useCallback(() => setImgFailed(true), []);
@@ -67,6 +86,7 @@ const Card = memo(({payload, imageUrl, title, subtitle, isSeries, onSelect}) => 
 	return (
 		<SpottableDiv className={css.card} onClick={handleClick} onFocus={handleFocus}>
 			<div className={css.cardThumb}>
+				{isRecording && <IncompleteBadge itemId={payload.Id} />}
 				{imageUrl && !imgFailed ? (
 					<img className={css.cardImage} src={imageUrl} alt="" loading="lazy" onError={handleImgError} />
 				) : (
@@ -103,12 +123,27 @@ const friendlyDate = (date) => {
 
 const Recordings = ({onPlayRecording, onBack, backHandlerRef}) => {
 	const {api, serverUrl} = useAuth();
+	const {settings} = useSettings();
 	const [recordingRows, setRecordingRows] = useState(null);
 	const [timers, setTimers] = useState([]);
 	const [seriesTimers, setSeriesTimers] = useState([]);
 	const [isLoading, setIsLoading] = useState(true);
 	const [activeTab, setActiveTab] = useState('recordings');
 	const [selectedItem, setSelectedItem] = useState(null);
+	const selectedIncomplete = useIncompleteRecording(selectedItem?.type === 'recording' ? selectedItem.item.Id : null);
+	// The schedule is read again whenever a series rule changes, since the rule decides which showings
+	// are booked. Those reads can overlap and finish in any order, so each is numbered and only one
+	// newer than the last applied replaces the list.
+	const timerReads = useRef({started: 0, applied: 0});
+	const reloadTimers = useCallback(() => {
+		const read = ++timerReads.current.started;
+		return api.getLiveTvTimers().then((result) => {
+			if (read < timerReads.current.applied) return;
+			timerReads.current.applied = read;
+			const now = Date.now();
+			setTimers((result?.Items || []).filter((timer) => isUpcomingTimer(timer, now)));
+		}, () => {});
+	}, [api]);
 
 	useEffect(() => {
 		if (!backHandlerRef) return;
@@ -128,14 +163,14 @@ const Recordings = ({onPlayRecording, onBack, backHandlerRef}) => {
 		// on its own, so a server without series flags just loses that rail.
 		const loadData = async () => {
 			setIsLoading(true);
-			const [recent, series, movies, sports, kids, timersResult, seriesTimersResult] = await Promise.all([
+			const [recent, series, movies, sports, kids, seriesTimersResult] = await Promise.all([
 				api.getLiveTvRecordings({limit: 40}).catch(() => null),
 				api.getLiveTvRecordings({limit: 60, isSeries: true}).catch(() => null),
 				api.getLiveTvRecordings({limit: 60, isMovie: true}).catch(() => null),
 				api.getLiveTvRecordings({limit: 60, isSports: true}).catch(() => null),
 				api.getLiveTvRecordings({limit: 60, isKids: true}).catch(() => null),
-				api.getLiveTvTimers().catch(() => null),
-				api.getLiveTvSeriesTimers().catch(() => null)
+				api.getLiveTvSeriesTimers().catch(() => null),
+				reloadTimers()
 			]);
 			setRecordingRows({
 				recent: recent?.Items || [],
@@ -144,13 +179,13 @@ const Recordings = ({onPlayRecording, onBack, backHandlerRef}) => {
 				sports: sports?.Items || [],
 				kids: kids?.Items || []
 			});
-			setTimers(timersResult?.Items || []);
 			setSeriesTimers(seriesTimersResult?.Items || []);
 			setIsLoading(false);
 		};
 
 		loadData();
-	}, [api]);
+		refreshIncompleteRecordings();
+	}, [api, reloadTimers]);
 
 	// Timers airing within a day open the recordings tab, like core's first rail.
 	const scheduledSoon = useMemo(() => {
@@ -229,6 +264,8 @@ const Recordings = ({onPlayRecording, onBack, backHandlerRef}) => {
 		if (selectedItem?.item?.Id) {
 			try {
 				await api.cancelLiveTvTimer(selectedItem.item.Id);
+				// A read started before the cancel can still return the cancelled timer.
+				timerReads.current.applied = ++timerReads.current.started;
 				setTimers(prev => prev.filter(t => t.Id !== selectedItem.item.Id));
 				setSelectedItem(null);
 			} catch (err) {
@@ -242,16 +279,46 @@ const Recordings = ({onPlayRecording, onBack, backHandlerRef}) => {
 			try {
 				await api.cancelLiveTvSeriesTimer(selectedItem.item.Id);
 				setSeriesTimers(prev => prev.filter(s => s.Id !== selectedItem.item.Id));
+				reloadTimers();
 				setSelectedItem(null);
 			} catch (err) {
 				console.error('Failed to cancel series timer:', err);
 			}
 		}
-	}, [api, selectedItem]);
+	}, [api, reloadTimers, selectedItem]);
 
 	const handleClosePopup = useCallback(() => {
 		setSelectedItem(null);
 	}, []);
+
+	const handleKeepAsComplete = useCallback(async () => {
+		try {
+			await keepAsComplete(selectedItem.item.Id);
+			setSelectedItem(null);
+		} catch (err) {
+			console.error('Failed to mark recording as complete:', err);
+		}
+	}, [selectedItem]);
+
+	const handleOpenSeriesSettings = useCallback(() => {
+		openPopup('seriesChoice', selectedItem.item);
+	}, [openPopup, selectedItem]);
+
+	const handleSeriesChoice = useCallback(async (key) => {
+		const rule = selectedItem.item;
+		if (seriesChoiceOf(rule) !== key) {
+			const updated = {...rule, ...seriesChoiceFlags(key)};
+			try {
+				await api.updateLiveTvSeriesTimer(rule.Id, updated);
+				setSeriesTimers(prev => prev.map(s => (s.Id === rule.Id ? updated : s)));
+				reloadTimers();
+			} catch (err) {
+				console.error('Failed to update series timer:', err);
+				return;
+			}
+		}
+		setSelectedItem(null);
+	}, [api, reloadTimers, selectedItem]);
 
 	const renderRecordingCard = useCallback((recording) => (
 		<Card
@@ -260,6 +327,7 @@ const Recordings = ({onPlayRecording, onBack, backHandlerRef}) => {
 			imageUrl={recordingImageUrl(serverUrl, recording)}
 			title={recording.Name}
 			subtitle={joinParts(recording.ChannelName, recording.EpisodeTitle)}
+			isRecording
 			onSelect={handleSelectRecording}
 		/>
 	), [serverUrl, handleSelectRecording]);
@@ -394,6 +462,9 @@ const Recordings = ({onPlayRecording, onBack, backHandlerRef}) => {
 									selectedItem.item.RunTimeTicks ? formatDuration(selectedItem.item.RunTimeTicks) : ''
 								)}
 							</div>
+							{selectedIncomplete && (
+								<div className={css.incompleteLine}>{incompleteDetailText(selectedIncomplete, settings.clockDisplay)}</div>
+							)}
 						</div>
 						<div className={css.dialogActions}>
 							<SpottableButton
@@ -402,6 +473,11 @@ const Recordings = ({onPlayRecording, onBack, backHandlerRef}) => {
 							>
 								{$L('Play')}
 							</SpottableButton>
+							{selectedIncomplete && canKeepAsComplete() && (
+								<SpottableButton className={css.dialogBtn} onClick={handleKeepAsComplete}>
+									{$L('Keep as Complete')}
+								</SpottableButton>
+							)}
 							<SpottableButton
 								className={`${css.dialogBtn} ${css.danger}`}
 								onClick={handleDeleteSelectedRecording}
@@ -416,18 +492,13 @@ const Recordings = ({onPlayRecording, onBack, backHandlerRef}) => {
 				</div>
 			)}
 
-			{selectedItem && selectedItem.type !== 'recording' && (
+			{selectedItem && selectedItem.type === 'timer' && (
 				<div className={css.dialogScrim}>
 					<PopupContainer className={`${css.dialog} ${css.confirmDialog}`} spotlightId="recordings-popup">
-						<div className={css.dialogTitle}>
-							{selectedItem.type === 'timer' ? $L('Cancel Recording?') : $L('Cancel Series Recording?')}
-						</div>
+						<div className={css.dialogTitle}>{$L('Cancel Recording?')}</div>
 						<div className={css.dialogBody}>
 							<div className={css.dialogText}>
-								{(selectedItem.type === 'timer'
-									? $L('Cancel scheduled recording of "{name}"?')
-									: $L('Stop recording "{name}"?')
-								).replace('{name}', selectedItem.item.Name)}
+								{$L('Cancel scheduled recording of "{name}"?').replace('{name}', selectedItem.item.Name)}
 							</div>
 						</div>
 						<div className={css.dialogActions}>
@@ -440,10 +511,46 @@ const Recordings = ({onPlayRecording, onBack, backHandlerRef}) => {
 							</SpottableButton>
 							<SpottableButton
 								className={`${css.dialogBtn} ${css.danger}`}
-								onClick={selectedItem.type === 'timer' ? handleCancelSelectedTimer : handleCancelSelectedSeriesTimer}
+								onClick={handleCancelSelectedTimer}
 							>
 								{$L('Yes, Cancel')}
 							</SpottableButton>
+						</div>
+					</PopupContainer>
+				</div>
+			)}
+
+			{selectedItem && selectedItem.type === 'seriesTimer' && (
+				<div className={css.dialogScrim}>
+					<PopupContainer className={`${css.dialog} ${css.confirmDialog}`} spotlightId="recordings-popup">
+						<div className={css.dialogTitle}>{selectedItem.item.Name}</div>
+						<div className={css.dialogActions}>
+							<SpottableButton
+								className={`${css.dialogBtn} spottable-default`}
+								onClick={handleClosePopup}
+							>
+								{$L('Close')}
+							</SpottableButton>
+							<SpottableButton className={css.dialogBtn} onClick={handleOpenSeriesSettings}>
+								{$L('Series Settings')}
+							</SpottableButton>
+							<SpottableButton
+								className={`${css.dialogBtn} ${css.danger}`}
+								onClick={handleCancelSelectedSeriesTimer}
+							>
+								{$L('Cancel Series Recording')}
+							</SpottableButton>
+						</div>
+					</PopupContainer>
+				</div>
+			)}
+
+			{selectedItem && selectedItem.type === 'seriesChoice' && (
+				<div className={css.dialogScrim}>
+					<PopupContainer className={css.dialog} spotlightId="recordings-popup">
+						<div className={css.dialogTitle}>{$L('Which episodes should be recorded?')}</div>
+						<div className={css.dialogBody}>
+							<SeriesEpisodeChoices selected={seriesChoiceOf(selectedItem.item)} onPick={handleSeriesChoice} />
 						</div>
 					</PopupContainer>
 				</div>

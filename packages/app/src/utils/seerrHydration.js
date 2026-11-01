@@ -51,7 +51,9 @@ const hydrateRequestMediaItems = async (requests = []) => {
 				backdropPath: media?.backdropPath || details.backdropPath || details.backdrop_path,
 				overview: media?.overview || details.overview,
 				releaseDate: media?.releaseDate || details.releaseDate || details.release_date,
-				firstAirDate: media?.firstAirDate || details.firstAirDate || details.first_air_date
+				firstAirDate: media?.firstAirDate || details.firstAirDate || details.first_air_date,
+				voteAverage: media?.voteAverage ?? details.voteAverage,
+				popularity: media?.popularity ?? details.popularity
 			}
 		};
 	});
@@ -80,7 +82,39 @@ export const hydrateWatchlistItems = async (items = []) => {
 			overview: item.overview || details.overview,
 			releaseDate: item.releaseDate || details.releaseDate,
 			firstAirDate: item.firstAirDate || details.firstAirDate,
+			voteAverage: item.voteAverage ?? details.voteAverage,
+			popularity: item.popularity ?? details.popularity,
 			mediaInfo: item.mediaInfo || details.mediaInfo
+		};
+	});
+};
+
+// Seerr's recently added list is its own media records, which carry the TMDB id but no title or
+// artwork, so each becomes a card filled in from the title's details.
+export const hydrateRecentlyAddedItems = async (records = []) => {
+	if (!Array.isArray(records) || records.length === 0) return [];
+
+	const lookup = detailsLookup();
+
+	return inBatches(records, async (record) => {
+		const type = record?.mediaType;
+		const item = {id: record?.tmdbId ?? record?.id, mediaType: type, mediaInfo: record};
+		if (!record?.tmdbId || (type !== 'movie' && type !== 'tv')) return item;
+
+		const details = await lookup(type, record.tmdbId);
+		if (!details) return item;
+
+		return {
+			...item,
+			title: details.title,
+			name: details.name,
+			posterPath: details.posterPath,
+			backdropPath: details.backdropPath,
+			overview: details.overview,
+			releaseDate: details.releaseDate,
+			firstAirDate: details.firstAirDate,
+			voteAverage: details.voteAverage,
+			popularity: details.popularity
 		};
 	});
 };

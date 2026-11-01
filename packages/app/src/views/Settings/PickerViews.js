@@ -1,4 +1,5 @@
 /* eslint-disable react/jsx-no-bind */
+import {useState} from 'react';
 import $L from '@enact/i18n/$L';
 
 import LoadingSpinner from '../../components/LoadingSpinner';
@@ -105,6 +106,39 @@ export const BlockedRatingsView = ({ratings, blocked, loading, loadFailed, onTog
 	);
 };
 
+// A list of ticks with the ticked ones first. With a cap, the unticked rows dim once
+// it is reached.
+export const CheckListView = ({spotlightId, rowIdPrefix, title, lead, options, picked, max = Infinity, onToggle}) => {
+	// Ordered once on open, so a press never moves the row under focus
+	const [ordered] = useState(() => [
+		...options.filter(({value}) => picked.includes(value)),
+		...options.filter(({value}) => !picked.includes(value))
+	]);
+	return (
+		<SettingsView spotlightId={spotlightId} title={title} clean>
+			<div className={css.editorLead}>{lead}</div>
+			{ordered.map(({value, label}) => {
+				const ticked = picked.includes(value);
+				const locked = !ticked && picked.length >= max;
+				return (
+					<SpottableDiv
+						key={value}
+						className={css.listItem}
+						style={locked ? {opacity: 0.4} : undefined}
+						onClick={() => onToggle(value)}
+						spotlightId={`${rowIdPrefix}-${value}`}
+					>
+						{renderSettingsIcon(ticked ? 'check_box' : 'check_box_outline_blank', false, true)}
+						<div className={css.listItemBody}>
+							<div className={css.listItemHeading}>{label}</div>
+						</div>
+					</SpottableDiv>
+				);
+			})}
+		</SettingsView>
+	);
+};
+
 // One row per enabled home section. Clicking cycles Default and the four
 // image types, writing through immediately like the plain settings rows do.
 export const RowImageTypesView = ({rows, overrides, globalLabel, onCycleRow}) => (
@@ -164,10 +198,11 @@ export const ExcludedGenresView = ({text, onTextChange, onCancel, onSave}) => (
 	</SettingsView>
 );
 
-export const PinCodeView = ({pin, error, onPinChange, onCancel, onSave}) => (
-	<SettingsView spotlightId='pin-code-view' title={$L('Set PIN Code')} clean>
+// Sets a new PIN, or with `verify` asks for the current one before it's changed or removed.
+export const PinCodeView = ({pin, error, verify, onPinChange, onCancel, onSave}) => (
+	<SettingsView spotlightId='pin-code-view' title={verify ? $L('Enter PIN') : $L('Set PIN Code')} clean>
 		<div className={css.viewDescription}>
-			{$L('Enter a 4-digit PIN used to unlock the app when PIN protection is enabled.')}
+			{verify ? $L('Enter your 4-digit PIN') : $L('Enter a 4-digit PIN used to unlock the app when PIN protection is enabled.')}
 		</div>
 		<div className={css.inputGroup}>
 			<label>{$L('PIN')}</label>
@@ -188,7 +223,7 @@ export const PinCodeView = ({pin, error, onPinChange, onCancel, onSave}) => (
 				{$L('Cancel')}
 			</SettingsButton>
 			<SettingsButton primary onClick={onSave} spotlightId='pin-code-save'>
-				{$L('Save')}
+				{verify ? $L('Continue') : $L('Save')}
 			</SettingsButton>
 		</div>
 	</SettingsView>

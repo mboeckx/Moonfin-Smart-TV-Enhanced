@@ -1,7 +1,7 @@
 import $L from '@enact/i18n/$L';
 import seerrApi from '../services/seerrApi';
 import {seerrGenreBackdrop} from './seerrGenreArt';
-import hydrateRequestMediaItems, {hydrateWatchlistItems} from './seerrHydration';
+import hydrateRequestMediaItems, {hydrateRecentlyAddedItems, hydrateWatchlistItems} from './seerrHydration';
 import {libraryIdOf} from './seerrTarget';
 
 const HOME_ROW_LIMIT = 20;
@@ -83,6 +83,8 @@ export const normalizeMediaItem = (item) => {
 		Type: mediaType === 'movie' ? 'Movie' : 'Series',
 		ProductionYear: yearOf(item),
 		Overview: item.overview || '',
+		CommunityRating: item.vote_average ?? item.voteAverage,
+		Popularity: item.popularity,
 		_externalPosterUrl: poster ? seerrApi.getImageUrl(poster, 'w342') : null,
 		_externalBackdropUrl: backdrop ? seerrApi.getImageUrl(backdrop, 'w1280') : null,
 		mediaInfo: {status: item.mediaInfo?.status},
@@ -94,7 +96,7 @@ export const normalizeMediaItem = (item) => {
 	};
 };
 
-const normalizeRequestItem = (request) => {
+export const normalizeRequestItem = (request) => {
 	const media = request.media || {};
 	const mediaType = request.type || media.mediaType || 'movie';
 	const poster = media.posterPath || media.poster_path;
@@ -103,7 +105,10 @@ const normalizeRequestItem = (request) => {
 		Id: `seerr-${mediaType}-${media.tmdbId}`,
 		Name: media.title || media.name || $L('Unknown'),
 		Type: mediaType === 'movie' ? 'Movie' : 'Series',
+		ProductionYear: yearOf(media),
 		Overview: media.overview || request.overview || '',
+		CommunityRating: media.voteAverage ?? media.vote_average,
+		Popularity: media.popularity,
 		_externalPosterUrl: poster ? seerrApi.getImageUrl(poster, 'w342') : null,
 		_externalBackdropUrl: backdrop ? seerrApi.getImageUrl(backdrop, 'w1280') : null,
 		mediaInfo: {status: media.status},
@@ -233,7 +238,7 @@ export const fetchSeerrHomeRow = async (rowId, {userId} = {}) => {
 			case 'trending':
 				return ((await seerrApi.trending(1)).results || []).slice(0, HOME_ROW_LIMIT).map(normalizeMediaItem);
 			case 'recentlyAdded':
-				return ((await seerrApi.getRecentlyAdded(HOME_ROW_LIMIT)).results || []).map(normalizeMediaItem);
+				return (await hydrateRecentlyAddedItems((await seerrApi.getRecentlyAdded(HOME_ROW_LIMIT)).results || [])).map(normalizeMediaItem);
 			case 'yourWatchlist': {
 				const results = ((await seerrApi.getWatchlist(1)).results || []).slice(0, HOME_ROW_LIMIT);
 				return (await hydrateWatchlistItems(results)).map(normalizeMediaItem);

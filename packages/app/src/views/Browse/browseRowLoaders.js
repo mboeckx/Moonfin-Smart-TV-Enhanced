@@ -6,16 +6,27 @@ import {scopedGetItems} from '../../services/libraryScope';
 import {genericCollectionLabel, mergeRecentRows} from '../../utils/mergeRecentRows';
 import {latestMediaFetchLimitForCollection, normalizeLatestMediaItems} from '../../utils/latestMediaRowNormalizer';
 
-import {HOME_ROW_ITEM_FIELDS} from '../../services/jellyfinApi';
+import {HOME_ROW_ITEM_FIELDS, createApiForServer} from '../../services/jellyfinApi';
+import {getAllServersArray} from '../../services/multiServerManager';
 import {loadSinceYouWatchedRows, loadRewatchItems} from '../../services/homeRecommendations';
-import {FAVORITE_ROW_CONFIGS, getItemGenreNames, parsePluginSpec, stableIndex} from './browseFilters';
+import {FAVORITE_ROW_CONFIGS, getItemGenreNames, stableIndex} from './browseFilters';
 import {loadCollectionRowItems} from './collectionRowItems';
 import {apiSortBy, getGenresIncludeTypes, isPlaylistOrder, resolveSortOrder} from '../../utils/homeRowSorting';
+import {collapseLatestTvItems} from '../../utils/latestMediaRowNormalizer';
+import {isPickedRow, isPickedRowShown, isSameServer} from '../../utils/pickedRows';
+import mapBounded from '../../utils/mapBounded';
+
+// How many sections from the top load with Home. A picked row below them waits until Home comes
+// near it, so a Home with hundreds of collections doesn't fetch them all up front.
+const EAGER_SECTION_COUNT = 8;
 
 // The sort settings and enabled flags every loader reads, worked out once rather than by each
-// of them. Everything here is a plain function of the settings and the row list.
-export const buildLoaderContext = ({api, settings, homeRowsConfig, eligibleLibraries, seerrEnabled, seerrAuthenticated, recommendationsSupported, appendRows}) => {
+// of them. Everything here is a plain function of the settings and the row list, apart from the
+// Seerr state, which is read when the Since you watched rows load.
+export const buildLoaderContext = ({api, serverUrl, settings, homeRowsConfig, eligibleLibraries, recommendations, appendRows}) => {
 	const rowEnabled = (id) => homeRowsConfig.some((row) => row.enabled && row.id === id);
+	const enabledRows = homeRowsConfig.filter((row) => row.enabled);
+	const pickedRows = enabledRows.filter((row) => isPickedRow(row) && isPickedRowShown(row, settings, serverUrl));
 	// Playlist order is not a server sort field, so every row hands the server
 	// the fallback and the rows that honor the arrangement check the setting
 	// itself.
@@ -27,12 +38,11 @@ export const buildLoaderContext = ({api, settings, homeRowsConfig, eligibleLibra
 
 	return {
 		api,
+		serverUrl,
 		settings,
 		appendRows,
 		eligibleLibraries,
-		seerrEnabled,
-		seerrAuthenticated,
-		recommendationsSupported,
+		recommendations,
 		favoriteSortBy,
 		favoriteSortOrder: resolveSortOrder(favoriteSortBy, settings.favoritesRowSortOrder),
 		collectionsSortBy,
@@ -49,9 +59,11 @@ export const buildLoaderContext = ({api, settings, homeRowsConfig, eligibleLibra
 		audioPlaylistsEnabled: settings.displayAudioRows && rowEnabled('audioplaylists'),
 		resumeAudioEnabled: settings.displayAudioRows && rowEnabled('resumeaudio'),
 		recordingsEnabled: rowEnabled('activerecordings'),
+		onNowEnabled: rowEnabled('onnow'),
 		rewatchEnabled: settings.displayRewatchRow !== false && rowEnabled('rewatch'),
 		studiosEnabled: settings.displayStudiosRows && rowEnabled('studios'),
-		enabledPluginSections: (settings.pluginSections || []).filter((section) => section.enabled),
+		enabledPluginSections: pickedRows.filter((row) => enabledRows.indexOf(row) < EAGER_SECTION_COUNT),
+		deferredPluginSections: pickedRows.filter((row) => enabledRows.indexOf(row) >= EAGER_SECTION_COUNT),
 		sinceYouWatchedIndexes: homeRowsConfig
 			.filter((row) => row.enabled && row.id.startsWith('sinceyouwatched'))
 			.map((row) => parseInt(row.id.replace('sinceyouwatched', ''), 10))
@@ -365,15 +377,16 @@ const loadGenres = async (ctx) => {
 };
 
 const loadPlaylistsAndMusic = async (ctx) => {
-	const {api, appendRows, audioAlbumsEnabled, audioArtistsEnabled, audioPlaylistsEnabled, audioRowsSortBy, audioRowsSortOrder, playlistsSortBy, playlistsSortOrder, recordingsEnabled, resumeAudioEnabled, settings} = ctx;
+	const {api, appendRows, audioAlbumsEnabled, audioArtistsEnabled, audioPlaylistsEnabled, audioRowsSortBy, audioRowsSortOrder, onNowEnabled, playlistsSortBy, playlistsSortOrder, recordingsEnabled, resumeAudioEnabled, settings} = ctx;
 	try {
-		const [playlistsResult, audioArtistsResult, audioAlbumsResult, audioPlaylistsResult, resumeAudioResult, recordingsResult] = await Promise.all([
+		const [playlistsResult, audioArtistsResult, audioAlbumsResult, audioPlaylistsResult, resumeAudioResult, recordingsResult, onNowResult] = await Promise.all([
 			settings.displayPlaylistsRows ? api.getPlaylists(playlistsSortBy, playlistsSortOrder).catch(() => null) : Promise.resolve(null),
 			audioArtistsEnabled ? scopedGetItems(api, {IncludeItemTypes: 'MusicArtist', Limit: 20, SortBy: audioRowsSortBy, SortOrder: audioRowsSortOrder, Fields: HOME_ROW_ITEM_FIELDS}, {via: (params) => api.getAlbumArtists(params)}).catch(() => null) : Promise.resolve(null),
 			audioAlbumsEnabled ? scopedGetItems(api, {IncludeItemTypes: 'MusicAlbum', Recursive: true, SortBy: audioRowsSortBy, SortOrder: audioRowsSortOrder, Limit: 20, Fields: HOME_ROW_ITEM_FIELDS}).catch(() => null) : Promise.resolve(null),
 			audioPlaylistsEnabled ? api.getPlaylists(audioRowsSortBy, audioRowsSortOrder).catch(() => null) : Promise.resolve(null),
 			resumeAudioEnabled ? api.getResumeAudioItems(20).catch(() => null) : Promise.resolve(null),
-			recordingsEnabled ? api.getLiveTvRecordings().catch(() => null) : Promise.resolve(null)
+			recordingsEnabled ? api.getLiveTvRecordings().catch(() => null) : Promise.resolve(null),
+			onNowEnabled ? api.getLiveTvAiringPrograms(20).catch(() => null) : Promise.resolve(null)
 		]);
 
 		const rows = [];
@@ -431,183 +444,127 @@ const loadPlaylistsAndMusic = async (ctx) => {
 				type: 'landscape'
 			});
 		}
+		if (onNowResult?.Items?.length > 0) {
+			rows.push({
+				id: 'onnow',
+				title: $L('On Now'),
+				items: onNowResult.Items,
+				type: 'landscape'
+			});
+		}
 		appendRows(rows);
 	} catch (e) {
 		console.warn('[Browse] Failed to load playlists/music:', e);
 	}
 };
 
-const loadPluginsAndRecos = async (ctx) => {
-	const {api, appendRows, collectionsSortBy, collectionsSortOrder, enabledPluginSections, recommendationsSupported, rewatchEnabled, seerrAuthenticated, seerrEnabled, settings, sinceYouWatchedIndexes} = ctx;
-	const fetchPluginSectionRow = async (section) => {
-		if (!section?.enabled) return null;
-		const spec = parsePluginSpec(section.specJson);
-		if (!spec || typeof spec !== 'object') return null;
-		const limit = Number.isFinite(Number(spec.limit)) ? Number(spec.limit) : 20;
-		const title = section.name || section.displayText || $L('Plugin Section');
-		const fields = HOME_ROW_ITEM_FIELDS;
+const PICKED_ROW_LIMIT = 40;
 
-		try {
-			let items = [];
-			switch (spec.kind) {
-				case 'recentlyReleasedMovies': {
-					const result = await api.getItems({
-						IncludeItemTypes: 'Movie',
-						SortBy: 'PremiereDate',
-						SortOrder: 'Descending',
-						Recursive: true,
-						Limit: limit,
-						Fields: fields
-					});
-					items = result?.Items || [];
-					break;
-				}
-				case 'recentlyReleasedEpisodes': {
-					const result = await api.getItems({
-						IncludeItemTypes: 'Episode',
-						SortBy: 'PremiereDate',
-						SortOrder: 'Descending',
-						Recursive: true,
-						Limit: limit,
-						Fields: fields
-					});
-					items = result?.Items || [];
-					break;
-				}
-				case 'watchAgain': {
-					const result = await api.getItems({
-						IncludeItemTypes: 'Movie,Series',
-						Filters: 'IsPlayed',
-						SortBy: 'DatePlayed',
-						SortOrder: 'Descending',
-						Recursive: true,
-						Limit: limit,
-						Fields: fields
-					});
-					items = result?.Items || [];
-					break;
-				}
-				case 'recentlyAddedInLibrary': {
-					const libraryIds = Array.isArray(spec.libraryIds) ? spec.libraryIds : [];
-					const responses = await Promise.all(
-						libraryIds.map((libraryId) => api.getItems({
-							ParentId: libraryId,
-							IncludeItemTypes: 'Movie,Series',
-							SortBy: 'DateCreated',
-							SortOrder: 'Descending',
-							Recursive: true,
-							Limit: limit,
-							Fields: fields
-						}).catch(() => null))
-					);
-					items = responses.flatMap((response) => response?.Items || []).slice(0, limit);
-					break;
-				}
-				case 'custom': {
-					const includeItemTypes = Array.isArray(spec.includeItemTypes)
-						? spec.includeItemTypes.join(',')
-						: 'Movie,Series';
-					const sortBy = spec.sortBy || 'Random';
-					const sortOrder = spec.sortOrderDirection || 'Ascending';
-					const params = {
-						IncludeItemTypes: includeItemTypes,
-						SortBy: sortBy,
-						SortOrder: sortOrder,
-						Recursive: true,
-						Limit: limit,
-						Fields: fields
-					};
-					if (spec.type === 'genre' && spec.source) params.Genres = spec.source;
-					if (spec.type === 'person' && spec.source) params.PersonIds = spec.source;
-					if (spec.type === 'studio' && spec.source) params.StudioIds = spec.source;
-					if (spec.type === 'collection' && spec.source) params.ParentId = spec.source;
-					const result = await api.getItems(params);
-					items = result?.Items || [];
-					break;
-				}
-				case 'collection': {
-					const collectionId = spec.collectionId || null;
-					if (!collectionId) {
-						items = [];
-						break;
-					}
-					items = await loadCollectionRowItems(api, collectionId, {
-						limit,
-						usePlaylistOrder: isPlaylistOrder(settings.collectionsRowSortBy),
-						sortBy: collectionsSortBy,
-						sortOrder: collectionsSortOrder,
-						showEpisodes: settings.collectionsRowShowEpisodes
-					});
-					break;
-				}
-				case 'genre': {
-					const params = {
-						IncludeItemTypes: spec.includeItemTypes || 'Movie,Series',
-						SortBy: spec.sortBy || 'SortName',
-						SortOrder: spec.sortOrder || 'Ascending',
-						Recursive: true,
-						Limit: limit,
-						Fields: fields
-					};
-					if (spec.genreId) {
-						params.GenreIds = spec.genreId;
-					} else if (spec.genreName) {
-						params.Genres = spec.genreName;
-					}
-					const result = await api.getItems(params);
-					items = result?.Items || [];
-					break;
-				}
-				default:
-					items = [];
-			}
+// A collection picked from another signed in server loads from that server, and its cards carry
+// the server along so they open there
+const pickedRowSource = async (ctx, row) => {
+	if (isSameServer(row.serverUrl, ctx.serverUrl)) return {api: ctx.api, server: null};
+	const server = (await getAllServersArray()).find((entry) => isSameServer(entry.url, row.serverUrl));
+	if (!server) return null;
+	return {api: createApiForServer(server.url, server.accessToken, server.userId, server.serverType || 'jellyfin'), server};
+};
 
-			if (items.length === 0) return null;
-			const cardTypeHint = spec.cardType || spec.section?.CardType || spec.section?.cardType || spec.section?.Layout || spec.section?.layout;
-			const normalizedCardType = typeof cardTypeHint === 'string' ? cardTypeHint.toLowerCase() : '';
-			const viewModeHint = spec.viewMode || spec.section?.ViewMode || spec.section?.viewMode || '';
-			const normalizedViewMode = typeof viewModeHint === 'string' ? viewModeHint.toLowerCase() : '';
-			let rowType = 'portrait';
-			if (normalizedViewMode.includes('portrait')) {
-				rowType = 'portrait';
-			} else if (normalizedViewMode.includes('square')) {
-				rowType = 'square';
-			} else if (
-				normalizedViewMode.includes('landscape') ||
-				normalizedViewMode.includes('small') ||
-				normalizedViewMode.includes('backdrop') ||
-				normalizedCardType.includes('landscape') ||
-				normalizedCardType.includes('thumb') ||
-				spec.kind === 'recentlyReleasedEpisodes'
-			) {
-				rowType = 'landscape';
-			}
-			return {
-				id: section.id,
-				title,
-				items,
-				type: rowType,
-				isPluginRow: true,
-				pluginSource: section.source
-			};
-		} catch (_error) {
-			return null;
-		}
-	};
+const loadPickedRowItems = async (ctx, api, row) => {
+	const {settings} = ctx;
+	if (row.source === 'collections') {
+		return loadCollectionRowItems(api, row.itemId, {
+			limit: PICKED_ROW_LIMIT,
+			usePlaylistOrder: isPlaylistOrder(settings.collectionsRowSortBy),
+			sortBy: ctx.collectionsSortBy,
+			sortOrder: ctx.collectionsSortOrder,
+			showEpisodes: settings.collectionsRowShowEpisodes
+		});
+	}
+	if (row.source === 'genres') {
+		const result = await api.getItems({
+			GenreIds: row.itemId,
+			IncludeItemTypes: ctx.genresIncludeTypes,
+			ExcludeItemTypes: 'Episode',
+			SortBy: ctx.genresSortBy,
+			SortOrder: ctx.genresSortOrder,
+			Recursive: true,
+			Limit: PICKED_ROW_LIMIT,
+			Fields: HOME_ROW_ITEM_FIELDS
+		});
+		return result?.Items || [];
+	}
+	const playlist = isPlaylistOrder(settings.playlistsRowSortBy)
+		? await api.getPlaylistItems(row.itemId, PICKED_ROW_LIMIT)
+		: await api.getItems({ParentId: row.itemId, SortBy: ctx.playlistsSortBy, SortOrder: ctx.playlistsSortOrder, Limit: PICKED_ROW_LIMIT, Fields: HOME_ROW_ITEM_FIELDS});
+	const items = playlist?.Items || [];
+	return settings.playlistsRowShowEpisodes ? items : collapseLatestTvItems(items);
+};
 
+const fetchPluginSectionRow = async (ctx, row) => {
 	try {
-		const [pluginRows, sinceYouWatchedRows, rewatchItems] = await Promise.all([
-			Promise.all(enabledPluginSections.map((section) => fetchPluginSectionRow(section))),
-			sinceYouWatchedIndexes.length
-				? loadSinceYouWatchedRows(api, {
-					sinceYouWatchedSource: settings.sinceYouWatchedSource,
-					sinceYouWatchedSourceItem: settings.sinceYouWatchedSourceItem,
-					sinceYouWatchedSourceType: settings.sinceYouWatchedSourceType,
-					sinceYouWatchedIncludeWatched: settings.sinceYouWatchedIncludeWatched,
-					tmdbApiKey: settings.tmdbApiKey,
-					recommendationsSupported
-				}, sinceYouWatchedIndexes, seerrEnabled && seerrAuthenticated).catch(() => [])
-				: Promise.resolve([]),
+		const source = await pickedRowSource(ctx, row);
+		if (!source) return null;
+		const items = await loadPickedRowItems(ctx, source.api, row);
+		if (items.length === 0) return null;
+		const {server} = source;
+		return {
+			id: row.id,
+			title: row.name,
+			items: server
+				? items.map((item) => ({
+					...item,
+					_serverId: server.serverId,
+					_serverName: server.name,
+					_serverUrl: server.url,
+					_serverUserId: server.userId,
+					_serverAccessToken: server.accessToken,
+					_serverType: server.serverType || 'jellyfin'
+				}))
+				: items,
+			type: 'portrait',
+			isPluginRow: true
+		};
+	} catch (_error) {
+		return null;
+	}
+};
+
+// The picked rows Home held back, three at a time, each landing as soon as it's in.
+export const loadDeferredSections = (ctx, sections, onDone) => mapBounded(sections, 3, async (section) => {
+	const row = await fetchPluginSectionRow(ctx, section);
+	if (row) ctx.appendRows([row]);
+	onDone(section.id);
+});
+
+// Also run on its own when Seerr signs in or out, which only these rows read.
+export const loadSinceYouWatched = async (ctx) => {
+	const {api, settings, sinceYouWatchedIndexes} = ctx;
+	if (sinceYouWatchedIndexes.length === 0) return;
+	const recommendations = ctx.recommendations();
+	const rows = await loadSinceYouWatchedRows(api, {
+		sinceYouWatchedSource: settings.sinceYouWatchedSource,
+		sinceYouWatchedSourceItem: settings.sinceYouWatchedSourceItem,
+		sinceYouWatchedSourceType: settings.sinceYouWatchedSourceType,
+		sinceYouWatchedIncludeWatched: settings.sinceYouWatchedIncludeWatched,
+		tmdbApiKey: settings.tmdbApiKey,
+		recommendationsSupported: recommendations.recommendationsSupported
+	}, sinceYouWatchedIndexes, recommendations.seerrEnabled && recommendations.seerrAuthenticated).catch(() => []);
+	// The Seerr state moved while these loaded, so the load it started has the rows to keep.
+	if (ctx.recommendations() !== recommendations) return;
+	ctx.appendRows(rows.map((row) => ({
+		id: row.id,
+		title: $L('Since you watched {name}').replace('{name}', row.seedName),
+		items: row.items,
+		type: 'portrait',
+		isOnlineRecoRow: row.isSeerr === true
+	})));
+};
+
+const loadPluginsAndRewatch = async (ctx) => {
+	const {api, appendRows, enabledPluginSections, rewatchEnabled, settings} = ctx;
+	try {
+		const [pluginRows, rewatchItems] = await Promise.all([
+			Promise.all(enabledPluginSections.map((section) => fetchPluginSectionRow(ctx, section))),
 			rewatchEnabled
 				? loadRewatchItems(api, {
 					rewatchIncludeMovies: settings.rewatchIncludeMovies,
@@ -618,17 +575,7 @@ const loadPluginsAndRecos = async (ctx) => {
 				: Promise.resolve(null)
 		]);
 
-		const rows = [];
-		pluginRows.filter(Boolean).forEach((pluginRow) => rows.push(pluginRow));
-		sinceYouWatchedRows.forEach((row) => {
-			rows.push({
-				id: row.id,
-				title: $L('Since you watched {name}').replace('{name}', row.seedName),
-				items: row.items,
-				type: 'portrait',
-				isOnlineRecoRow: row.isSeerr === true
-			});
-		});
+		const rows = pluginRows.filter(Boolean);
 		if (rewatchItems && rewatchItems.length > 0) {
 			rows.push({
 				id: 'rewatch',
@@ -639,25 +586,29 @@ const loadPluginsAndRecos = async (ctx) => {
 		}
 		appendRows(rows);
 	} catch (e) {
-		console.warn('[Browse] Failed to load plugins/recos:', e);
+		console.warn('[Browse] Failed to load picked rows and Rewatch:', e);
 	}
 };
 // Fired together rather than in sequence: their requests queue on the media server anyway, so
 // holding the later ones back would only delay those rows without easing the load. Each names
-// the home sections it answers for, so a section still waiting on its loader can hold its place.
+// the home sections it fetches, so a section still waiting on its loader can hold its place and
+// one it skips is never taken for empty.
+const fetched = (flags) => Object.keys(flags).filter((id) => flags[id]);
 export const BROWSE_ROW_LOADERS = [
 	{load: loadLatestAndRecentlyReleased, sections: () => ['latest-media', 'recently-released']},
-	{load: loadCollections, sections: () => ['collections']},
-	{load: loadStudios, sections: () => ['studios']},
-	{load: loadFavorites, sections: () => FAVORITE_ROW_CONFIGS.map((row) => row.id)},
-	{load: loadGenres, sections: () => ['genres']},
-	{load: loadPlaylistsAndMusic, sections: () => ['playlists', 'audioartists', 'audioalbums', 'audioplaylists', 'resumeaudio', 'activerecordings']},
-	{
-		load: loadPluginsAndRecos,
-		sections: (ctx) => [
-			...ctx.enabledPluginSections.map((section) => section.id),
-			...ctx.sinceYouWatchedIndexes.map((index) => `sinceyouwatched${index}`),
-			'rewatch'
-		]
-	}
+	{load: loadCollections, sections: (ctx) => fetched({collections: ctx.settings.displayCollectionsRows})},
+	{load: loadStudios, sections: (ctx) => fetched({studios: ctx.studiosEnabled})},
+	{load: loadFavorites, sections: (ctx) => (ctx.settings.displayFavoritesRows ? FAVORITE_ROW_CONFIGS.map((row) => row.id) : [])},
+	{load: loadGenres, sections: (ctx) => fetched({genres: ctx.settings.displayGenresRows})},
+	{load: loadPlaylistsAndMusic, sections: (ctx) => fetched({
+		playlists: ctx.settings.displayPlaylistsRows,
+		audioartists: ctx.audioArtistsEnabled,
+		audioalbums: ctx.audioAlbumsEnabled,
+		audioplaylists: ctx.audioPlaylistsEnabled,
+		resumeaudio: ctx.resumeAudioEnabled,
+		activerecordings: ctx.recordingsEnabled,
+		onnow: ctx.onNowEnabled
+	})},
+	{load: loadPluginsAndRewatch, sections: (ctx) => [...ctx.enabledPluginSections.map((section) => section.id), ...fetched({rewatch: ctx.rewatchEnabled})]},
+	{load: loadSinceYouWatched, sections: (ctx) => ctx.sinceYouWatchedIndexes.map((index) => `sinceyouwatched${index}`)}
 ];

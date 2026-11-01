@@ -13,7 +13,9 @@ export type PageMessage =
 	| {type: 'EXIT_APP'}
 	| {type: 'LOG'; payload: unknown}
 	| {type: 'ALLOW_INSECURE_HOST'; payload: {host: string}}
-	| {type: 'PLAYBACK_SESSION'; payload: PlaybackSession | null};
+	| {type: 'PLAYBACK_SESSION'; payload: PlaybackSession | null}
+	| {type: 'READ_MANIFEST'; payload: ManifestRequest}
+	| {type: 'HTTP_REQUEST'; payload: HttpRequest};
 
 // What the shell needs to report a stop on the page's behalf when the page is
 // frozen in the background.
@@ -23,12 +25,44 @@ export interface PlaybackSession {
 	body: string;
 }
 
+// A YouTube manifest the page cant read itself, and the shell's answer, where a
+// status of 0 means it couldnt be read at all.
+export interface ManifestRequest {
+	id: number;
+	url: string;
+}
+
+export interface ManifestAnswer {
+	id: number;
+	status: number;
+	body: string;
+}
+
+// A request the page's CORS rules would hold the answer back from, and the shell's answer, where a status of 0 means
+// nothing answered.
+export interface HttpRequest {
+	id: number;
+	url: string;
+	method: string;
+	headers: Record<string, string>;
+	body: string | null;
+	timeoutMs: number;
+}
+
+export interface HttpAnswer {
+	id: number;
+	status: number;
+	body: string;
+}
+
 // Shell to page
 export type ShellMessage =
 	| {type: 'APP_STATE'; payload: {state: string}}
 	| {type: 'KEY'; payload: {key: string; action: 'down' | 'up'}}
 	| {type: 'NETWORK'; payload: {connected: boolean; ip: string | null}}
-	| {type: 'DISPLAY_CHANGED'; payload: {connected: boolean}};
+	| {type: 'DISPLAY_CHANGED'; payload: {connected: boolean}}
+	| {type: 'MANIFEST'; payload: ManifestAnswer}
+	| {type: 'HTTP_RESPONSE'; payload: HttpAnswer};
 
 interface Envelope {
 	v: number;

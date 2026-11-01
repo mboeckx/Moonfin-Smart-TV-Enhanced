@@ -33,6 +33,7 @@ const DetailActionButtons = ({
 	settings,
 	seerr,
 	seerrOnly,
+	searchesTrailer,
 	isSeries,
 	isSeason,
 	isBoxSet,
@@ -73,6 +74,7 @@ const DetailActionButtons = ({
 	onOpenDeleteDialog,
 	onOpenIdentifyModal,
 	seriesTrack,
+	onKeepAsComplete,
 	maxVisibleButtons,
 	overflowAsMenu
 }) => {
@@ -188,7 +190,7 @@ const DetailActionButtons = ({
 				)}
 			</SpottableDiv>
 		)},
-		{id: 'trailer', when: item.LocalTrailerCount > 0 || item.RemoteTrailers?.length > 0, render: () => (
+		{id: 'trailer', when: item.LocalTrailerCount > 0 || item.RemoteTrailers?.length > 0 || searchesTrailer, render: () => (
 			<SpottableDiv className={css.btnWrapper} onClick={onTrailer}>
 				<div className={css.btnAction}>
 					<BtnIcon path={DETAIL_ICON_PATHS.trailer}/>
@@ -230,7 +232,7 @@ const DetailActionButtons = ({
 				<span className={css.btnLabel}>{personalRatingLabel(personalRatingStyle, item.UserData)}</span>
 			</SpottableDiv>
 		)},
-		{id: 'goToSeries', when: isEpisode && item.SeriesId, render: () => (
+		{id: 'goToSeries', when: (isEpisode || isSeason) && item.SeriesId, render: () => (
 			<SpottableDiv className={css.btnWrapper} onClick={onGoToSeries}>
 				<div className={css.btnAction}>
 					<BtnIcon path={DETAIL_ICON_PATHS.series}/>
@@ -283,6 +285,14 @@ const DetailActionButtons = ({
 					<BtnIcon path={DETAIL_ICON_PATHS.manageRequests}/>
 				</div>
 				<span className={css.btnLabel}>{$L('Manage Requests')}</span>
+			</SpottableDiv>
+		)},
+		{id: 'keepAsComplete', when: Boolean(onKeepAsComplete), render: () => (
+			<SpottableDiv className={css.btnWrapper} onClick={onKeepAsComplete}>
+				<div className={css.btnAction}>
+					<BtnIcon path={DETAIL_ICON_PATHS.keepAsComplete}/>
+				</div>
+				<span className={css.btnLabel}>{$L('Keep as Complete')}</span>
 			</SpottableDiv>
 		)},
 		{id: 'admin', when: canIdentify, render: () => (

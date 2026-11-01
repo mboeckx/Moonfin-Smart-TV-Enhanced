@@ -1,13 +1,16 @@
-import {useState, useEffect, useRef, useMemo} from 'react';
+import {useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback} from 'react';
 import $L from '@enact/i18n/$L';
-import {fetchRatings, fetchEpisodeRatings, buildDisplayRatings, getContentType, getTmdbId, getSelectionSource, isRatingSourceEnabled} from '../../services/mdblistApi';
+import {fetchRatings, fetchEpisodeRatings, buildDisplayRatings, getContentType, getTmdbId, getSelectionSource, isRatingSourceEnabled, ratingSettingsFor} from '../../services/mdblistApi';
 import {useSettings} from '../../context/SettingsContext';
 import {normalizeRatingStyle, personalRatingOf} from '../../utils/personalRating';
 import {getRtFallbackIcon} from '../icons/rtIcons';
 import css from './RatingsRow.module.less';
 
-const RatingsRow = ({item, serverUrl, compact = false, pluginEnabled = true}) => {
-	const {settings} = useSettings();
+// surface is 'homeRows' or 'mediaBar' for the screens that keep their own ratings settings.
+// inline keeps the full size chips on one line with each label after its value.
+// sampleRatings stands in for the plugin's answer, so the settings preview never asks the server.
+const RatingsRow = ({item, serverUrl, compact = false, singleLineWidth, pluginEnabled = true, surface, inline = false, sampleRatings}) => {
+	const settings = ratingSettingsFor(useSettings().settings, surface);
 	const showLabels = settings.showRatingLabels !== false;
 	// Badges only choose the chip chrome around each rating. Off means plain, not hidden.
 	const showBadges = settings.showRatingBadges !== false;
@@ -15,6 +18,7 @@ const RatingsRow = ({item, serverUrl, compact = false, pluginEnabled = true}) =>
 	const [allRatings, setAllRatings] = useState([]);
 	const mountedRef = useRef(true);
 	const itemIdRef = useRef(null);
+	const singleLineRef = useRef(null);
 
 	useEffect(() => {
 		mountedRef.current = true;
@@ -25,7 +29,7 @@ const RatingsRow = ({item, serverUrl, compact = false, pluginEnabled = true}) =>
 	const episodeRatingsEnabled = settings.tmdbEpisodeRatingsEnabled === true && isRatingSourceEnabled(settings, 'tmdb');
 
 	useEffect(() => {
-		if (!pluginEnabled || !item || !serverUrl) {
+		if (!pluginEnabled || !item || !serverUrl || sampleRatings) {
 			setAllRatings([]);
 			return;
 		}
@@ -60,14 +64,15 @@ const RatingsRow = ({item, serverUrl, compact = false, pluginEnabled = true}) =>
 
 		fetchRatings(serverUrl, item, {signal: controller.signal, sourcesKey}).then(apply);
 		return () => controller.abort();
-	}, [item, serverUrl, pluginEnabled, episodeRatingsEnabled, sourcesKey]);
+	}, [item, serverUrl, pluginEnabled, episodeRatingsEnabled, sourcesKey, sampleRatings]);
 
+	const shownRatings = sampleRatings && pluginEnabled ? sampleRatings : allRatings;
 	const displayRatings = useMemo(() => {
-		if (!Array.isArray(enabledSources)) return allRatings;
-		return allRatings
+		if (!Array.isArray(enabledSources)) return shownRatings;
+		return shownRatings
 			.filter(r => enabledSources.includes(getSelectionSource(r.source)))
 			.sort((a, b) => enabledSources.indexOf(getSelectionSource(a.source)) - enabledSources.indexOf(getSelectionSource(b.source)));
-	}, [allRatings, enabledSources]);
+	}, [shownRatings, enabledSources]);
 
 	// The viewer's own score leads the row, formatted the way their chosen
 	// rating style reads. It never waits on the plugin, since it comes from the
@@ -79,14 +84,32 @@ const RatingsRow = ({item, serverUrl, compact = false, pluginEnabled = true}) =>
 	const communityRating = isRatingSourceEnabled(settings, 'stars') && item && item.CommunityRating ? item.CommunityRating.toFixed(1) : null;
 	// The server's own critic rating stands in until plugin ratings actually
 	// arrive, so it stays visible when there's no API key or nothing came back.
-	const showCriticRating = allRatings.length === 0 && item && item.CriticRating != null;
+	const showCriticRating = shownRatings.length === 0 && item && item.CriticRating != null;
 	const hasContent = personalRating || communityRating || displayRatings.length > 0 || showCriticRating;
+
+	// Zoom rather than a scale transform, so the line gives back its height too.
+	// The icons size to their images, so each one that loads fits the line again.
+	const fitSingleLine = useCallback(() => {
+		const row = singleLineRef.current;
+		if (!row) return;
+		row.style.zoom = '';
+		if (row.scrollWidth > row.clientWidth) {
+			row.style.zoom = String(row.clientWidth / row.scrollWidth);
+		}
+	}, []);
+	useLayoutEffect(fitSingleLine, [fitSingleLine, singleLineWidth, displayRatings, personalRating, communityRating, showCriticRating, showLabels, showBadges]);
+
 	if (!hasContent) return null;
 
 	if (compact) {
 		const compactClass = `${css.ratingCompact}${showBadges ? ' ' + css.ratingCompactBadge : ''}`;
+		const singleLine = Boolean(singleLineWidth);
+		const onIconLoad = singleLine ? fitSingleLine : undefined;
 		return (
-			<div className={css.ratingsRowCompact}>
+			<div
+				ref={singleLine ? singleLineRef : null}
+				className={`${css.ratingsRowCompact}${singleLine ? ' ' + css.ratingsRowSingleLine : ''}`}
+			>
 				{personalRating && (
 					<span className={compactClass}>
 						<span className={css.ratingTopCompact}>
@@ -112,6 +135,7 @@ const RatingsRow = ({item, serverUrl, compact = false, pluginEnabled = true}) =>
 								className={css.ratingIconCompact}
 								src={getRtFallbackIcon(item.CriticRating)}
 								alt={$L('Rotten Tomatoes')}
+								onLoad={onIconLoad}
 							/>
 							<span className={css.ratingValueCompact}>{item.CriticRating}%</span>
 						</span>
@@ -126,6 +150,7 @@ const RatingsRow = ({item, serverUrl, compact = false, pluginEnabled = true}) =>
 								src={r.iconUrl}
 								alt={r.name}
 								title={r.name}
+								onLoad={onIconLoad}
 							/>
 							<span className={css.ratingValueCompact}>{r.formatted}</span>
 						</span>
@@ -138,7 +163,7 @@ const RatingsRow = ({item, serverUrl, compact = false, pluginEnabled = true}) =>
 
 	const itemClass = `${css.ratingItem}${showBadges ? '' : ' ' + css.ratingItemPlain}`;
 	return (
-		<div className={css.ratingsRow}>
+		<div className={inline ? `${css.ratingsRow} ${css.ratingsRowInline}` : css.ratingsRow}>
 			{personalRating && (
 				<div className={itemClass}>
 					<div className={css.ratingTop}>

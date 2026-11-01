@@ -512,6 +512,10 @@
 	}
 }
 
+.groupChevronOpen svg {
+	transform: rotate(90deg);
+}
+
 .colorCircle {
 	box-sizing: border-box;
 	width: (24 * @dp);
@@ -1200,6 +1204,15 @@ background: var(--theme-focus-border-color, #00a4dc);
 .qrCanvas {
 	background: #ffffff;
 	border-radius: 8px;
+}
+
+.rommCode {
+	padding: 8px 24px 0;
+	text-align: center;
+	font-size: 56px;
+	font-weight: 700;
+	letter-spacing: 8px;
+	color: var(--theme-text-primary, #fff);
 }
 
 // The Settings Sync screen. Every card takes the focus the way a settings row does, and the text

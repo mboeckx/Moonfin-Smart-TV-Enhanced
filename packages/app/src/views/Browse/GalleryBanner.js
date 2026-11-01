@@ -3,7 +3,7 @@ import {isMdblistEnabled} from '../../services/mdblistApi';
 import Spottable from '@enact/spotlight/Spottable';
 import Spotlight from '@enact/spotlight';
 import $L from '@enact/i18n/$L';
-import {getImageUrl, getBackdropId, formatDuration} from '../../utils/helpers';
+import {getFeaturedBackdropUrl, formatDuration} from '../../utils/helpers';
 import RatingsRow from '../../components/RatingsRow';
 import {createApiForServer} from '../../services/jellyfinApi';
 import {KEYS} from '../../utils/keys';
@@ -11,6 +11,8 @@ import {genreGlowRgb} from './galleryGlow';
 import useTrailerPreview from './useTrailerPreview';
 import css from './Browse.module.less';
 import {carouselIntervalMs} from '../../utils/carouselTiming';
+import {useScreensaverActive} from '../../hooks/useScreensaverActive';
+import {rem} from '../../utils/rootScale';
 
 const GALLERY_GENRES_LIMIT = 3;
 const GALLERY_CAST_LIMIT = 5;
@@ -25,6 +27,7 @@ const padIndex = (n) => String(n + 1).padStart(2, '0');
 
 const GalleryBanner = memo(({
 	isVisible,
+	rowPeek = 0,
 	browseVisible = true,
 	featuredItems,
 	api,
@@ -38,6 +41,7 @@ const GalleryBanner = memo(({
 }) => {
 	const [activeIndex, setActiveIndex] = useState(0);
 	const [featuredFocused, setFeaturedFocused] = useState(false);
+	const screensaverActive = useScreensaverActive();
 	const [activeDetail, setActiveDetail] = useState(null);
 
 	const carouselIntervalRef = useRef(null);
@@ -56,9 +60,10 @@ const GalleryBanner = memo(({
 		currentItem: currentFeatured,
 		// The banner stays mounted behind the settings overlay so the hero keeps its
 		// place, but the trailer has to stop or it plays on underneath it.
-		isVisible: isVisible && browseVisible,
+		isVisible: isVisible && browseVisible && featuredFocused,
 		enabled: settingsLoaded && settings.featuredTrailerPreview,
 		preferMuted: settings.featuredTrailerMuted,
+		volume: settings.trailerVolume,
 		showCaptions: settings.mediaBarTrailerCaptions,
 		captionLanguage: settings.uiLanguage,
 		api,
@@ -81,7 +86,8 @@ const GalleryBanner = memo(({
 	}, [featuredItems]);
 
 	useEffect(() => {
-		if (!currentFeatured?.Id) {
+		// A slide from an outside list isn't on the server, so there is no cast to ask it for.
+		if (!currentFeatured?.Id || currentFeatured._external) {
 			setActiveDetail(null);
 			return;
 		}
@@ -134,12 +140,12 @@ const GalleryBanner = memo(({
 			settings.autoAdvanceInterval,
 			settings.carouselSpeed
 		);
-		if (!isVisible || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0 || trailerHolding) return;
+		if (!isVisible || screensaverActive || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0 || trailerHolding) return;
 
 		carouselIntervalRef.current = setInterval(() => {
 			setActiveIndex((prev) => (prev + 1) % featuredItems.length);
 		}, carouselSpeed);
-	}, [isVisible, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed, trailerHolding]);
+	}, [isVisible, screensaverActive, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed, trailerHolding]);
 
 	useEffect(() => {
 		startCarouselTimer();
@@ -217,6 +223,8 @@ const GalleryBanner = memo(({
 	if (!isVisible || !currentFeatured) return null;
 
 	const glowStyle = {'--gallery-glow-rgb': genreGlowRgb(currentFeatured.Genres)};
+	// The idle title runs along 66 percent of the panel's inside, which is 918 tall until the peek takes its share.
+	const idleTitleStyle = rowPeek ? {maxWidth: rem(0.66 * (918 - rowPeek))} : undefined;
 
 	return (
 		<div className={css.galleryBanner}>
@@ -234,10 +242,7 @@ const GalleryBanner = memo(({
 					{panels.map((item, i) => {
 						const absoluteIndex = pageStart + i;
 						const isActive = absoluteIndex === safeIndex;
-						const backdropId = getBackdropId(item);
-						const backdropUrl = backdropId
-							? getImageUrl(getItemServerUrl(item), backdropId, 'Backdrop', BACKDROP_OPTS)
-							: null;
+						const backdropUrl = getFeaturedBackdropUrl(getItemServerUrl(item), item, BACKDROP_OPTS);
 
 						return (
 							<div
@@ -254,7 +259,7 @@ const GalleryBanner = memo(({
 									<span className={css.galleryIndex}>{padIndex(absoluteIndex)}</span>
 									<span className={css.galleryLine} />
 									<div className={css.galleryTitleWrap}>
-										<span className={css.galleryVerticalTitle}>{item.Name}</span>
+										<span className={css.galleryVerticalTitle} style={idleTitleStyle}>{item.Name}</span>
 									</div>
 									<span className={css.galleryLine} />
 								</div>
@@ -286,7 +291,8 @@ const GalleryBanner = memo(({
 												item={item}
 												serverUrl={getItemServerUrl(item)}
 												compact
-												pluginEnabled={isMdblistEnabled(settings)}
+												surface='mediaBar'
+												pluginEnabled={isMdblistEnabled(settings, 'mediaBar')}
 											/>
 
 											{!settings.hideHomeMediaDescription && item.Overview && (

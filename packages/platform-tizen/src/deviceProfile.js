@@ -254,12 +254,14 @@ export const testHevcSupport = () => {
 
 /**
  * AV1 support - Listed in Samsung per-year video spec tables from 2020 onwards.
- * 2020 (Tizen 5.5): AV1 on Premium/Standard/Basic1 UHD tiers (WebM container only)
+ * 2020 (Tizen 5.5): every tier but the FHD only 20TV_BASIC2. 2018 and 2019 sets updated to
+ * Tizen 5.5 have no AV1 decoder, so a 2020 set is told apart by its model year, and an FHD
+ * panel is left out, which also drops the few FHD Basic1 sets.
  * 2021 (Tizen 6): AV1 on ALL tiers including FHD models
- * 2022+ (Tizen 6.5+): AV1 on all tiers; 8K Premium models also support AV1 in MP4/MKV/TS
+ * 2022+ (Tizen 6.5+): AV1 on all tiers, and 8K Premium models also support AV1 in MP4/MKV/TS
  */
-export const testAv1Support = (tizenVersion = 4) => {
-	return tizenVersion >= 5.5;
+export const testAv1Support = (tizenVersion = 4, modelYear = 2018, uhd = false) => {
+	return tizenVersion >= 6 || (tizenVersion >= 5.5 && modelYear >= 2020 && uhd);
 };
 
 /**
@@ -405,7 +407,7 @@ export const getDeviceCapabilities = async () => {
 
 		// Video codec capabilities
 		hevc: testHevcSupport(),
-		av1: testAv1Support(tizenVersion),
+		av1: testAv1Support(tizenVersion, modelYear, uhd),
 		vp9: testVp9Support(tizenVersion, uhd),
 
 		...containerSupport,
@@ -534,21 +536,24 @@ export const getJellyfinDeviceProfile = async (options = {}) => {
 	// use TS because copying HEVC (especially Dolby Vision) into fMP4 HLS fails
 	// on several Tizen firmwares, so they must not match the fMP4 profile
 	const isOldTizen = caps.tizenVersion < 6;
+	// Sets before Tizen 6 play E-AC3 copied into a stream from the server with no
+	// sound, so the server converts it to AC3 for them
 	const tsAudio = isOldTizen
-		? (caps.eac3 ? 'eac3,ac3' : (caps.ac3 ? 'ac3' : 'mp3'))
+		? (caps.ac3 ? 'ac3' : 'mp3')
 		: (caps.eac3 ? 'eac3,ac3,aac' : (caps.ac3 ? 'ac3,aac' : 'aac'));
 	const transcodingProfiles = [];
 
-	// hevc inside HLS TS only demuxes reliably from Tizen 6 up. Short segments
-	// and non keyframe breaks stall AVPlay on segment boundaries, so use longer
-	// keyframe aligned ones. VBR AAC in TS comes out LATM framed, which older
-	// firmware refuses, so keep the encoder on CBR
+	// Samsung recommends TS for HEVC over HLS on 2018 and 2019 sets, so HEVC is
+	// remuxed there too rather than encoded to H.264. Short segments and non
+	// keyframe breaks stall AVPlay on segment boundaries, so use longer keyframe
+	// aligned ones. VBR AAC in TS comes out LATM framed, which older firmware
+	// refuses, so keep the encoder on CBR
 	transcodingProfiles.push(
 		{
 			Container: 'ts',
 			Type: 'Video',
 			AudioCodec: tsAudio,
-			VideoCodec: caps.hevc && caps.tizenVersion >= 6 ? 'hevc,h264' : 'h264',
+			VideoCodec: caps.hevc ? 'hevc,h264' : 'h264',
 			Context: 'Streaming',
 			Protocol: 'hls',
 			MaxAudioChannels: maxAudioChannels,

@@ -15,6 +15,8 @@
  * one, taking every other client's disabled rows and plugin rows with it.
  */
 
+import {PICK_SOURCES, isPickedRow, isSeerrSliderRow, makePickedRow, makeSeerrSliderRow} from './pickedRows';
+
 export const DEFAULT_HOME_ROWS = [
 	{id: 'resume', name: 'Continue Watching', enabled: true, order: 0},
 	{id: 'nextup', name: 'Next Up', enabled: true, order: 1},
@@ -82,7 +84,8 @@ export const DEFAULT_HOME_ROWS = [
 	{id: 'seerr_watchlist', name: 'Your Watchlist', enabled: false, order: 61},
 	{id: 'librarybuttons', name: 'Library Buttons', enabled: false, order: 62},
 	{id: 'studios', name: 'Studios', enabled: false, order: 63},
-	{id: 'seasonal', name: 'Seasonal Row', enabled: false, order: 64}
+	{id: 'seasonal', name: 'Seasonal Row', enabled: false, order: 64},
+	{id: 'onnow', name: 'On Now', enabled: false, order: 65}
 ];
 
 export const TV_TO_SERVER_ROW = {
@@ -125,6 +128,36 @@ export const SERVER_TO_TV_ROW = {
 	'imdb_most_popular_tv_shows': 'imdb-popular-tv',
 	'imdb_lowest_rated_movies': 'imdb-lowest-rated',
 	'imdb_top_english_movies': 'imdb-top-english'
+};
+
+const ROW_IMAGE_TYPES = ['poster', 'backdrop', 'logo', 'thumb', 'banner'];
+
+export const rowImageTypeFromServer = (value) => {
+	const type = typeof value === 'string' ? value.trim().toLowerCase() : '';
+	return ROW_IMAGE_TYPES.includes(type) ? type : undefined;
+};
+
+// The per row image types travel as row:type pairs under the server's row names, for
+// example "genres:thumb,nextup:poster", since the plugin saves its admin defaults as XML,
+// which can't hold a map. Continue Watching has its own key. An empty list is still sent,
+// because the server keeps the old list when the value is missing and a cleared row would
+// come back.
+export const homeRowImageTypesToServer = (overrides) => Object.entries(overrides || {})
+	.filter(([id]) => id !== 'resume')
+	.map(([id, type]) => `${TV_TO_SERVER_ROW[id] || id}:${type}`)
+	.join(',');
+
+export const homeRowImageTypesFromServer = (value) => {
+	if (typeof value !== 'string') return undefined;
+	const overrides = {};
+	for (const part of value.split(',')) {
+		const pair = part.split(':');
+		if (pair.length !== 2) continue;
+		const row = pair[0].trim().toLowerCase();
+		const type = rowImageTypeFromServer(pair[1]);
+		if (row && row !== 'resume' && type) overrides[SERVER_TO_TV_ROW[row] || row] = type;
+	}
+	return overrides;
 };
 
 // A row the saved layout lacks is appended switched off, except where `enabledById` says
@@ -180,11 +213,33 @@ const ROW_BY_ID = new Map(DEFAULT_HOME_ROWS.map((row) => [row.id, row]));
 // A server type we don't have a row for is left out rather than invented.
 const rowForServerType = (type) => ROW_BY_ID.get(SERVER_TO_TV_ROW[type] || type);
 
+// A collection, genre or playlist picked on any client, or a Seerr slider put on Home, as the row
+// this client keeps for it
+const pickedRowFromSection = (section) => {
+	const source = String(section.pluginSource || '').toLowerCase();
+	if (source === 'seerr' && section.pluginSection && section.pluginAdditionalData && section.serverId) {
+		return makeSeerrSliderRow({
+			serverUrl: section.serverId,
+			sliderId: section.pluginSection,
+			sliderType: section.pluginAdditionalData,
+			name: section.pluginDisplayText || ''
+		});
+	}
+	if (!PICK_SOURCES[source] || !section.pluginAdditionalData || !section.serverId) return undefined;
+	return makePickedRow({
+		source,
+		serverUrl: section.serverId,
+		itemId: String(section.pluginAdditionalData),
+		name: section.pluginDisplayText || ''
+	});
+};
+
 // The row that writes a section back, if this client has one. A section with none has
 // to be carried through untouched instead, so the type is what decides it rather than
 // the kind, which the server often leaves off entirely.
 const modelledRow = (section) => {
-	if (!section || section.kind === 'pluginDynamic') return undefined;
+	if (!section) return undefined;
+	if (section.kind === 'pluginDynamic') return pickedRowFromSection(section);
 	return rowForServerType(section.type);
 };
 
@@ -228,24 +283,27 @@ export const homeRowsFromProfile = (serverProfile, enabledById) => {
 	return undefined;
 };
 
-// The plugin rows of the layout that was read. They ride the passthrough so a save
-// hands them back, and the home screen draws them from here.
-export const serverPluginSections = () =>
-	(homeSectionsPassthrough || []).filter((section) => section && section.kind === 'pluginDynamic');
+// A picked row or a slider goes over the way the other clients write it, typed none, since its
+// id alone can't say which item it stands for
+const rowToSection = (row, order) => {
+	const plugin = {kind: 'pluginDynamic', type: 'none', enabled: !!row.enabled, order, serverId: row.serverUrl, pluginDisplayText: row.name};
+	if (isSeerrSliderRow(row)) {
+		return {...plugin, pluginSource: 'seerr', pluginSection: row.sliderId, pluginAdditionalData: row.sliderType};
+	}
+	if (isPickedRow(row)) {
+		return {...plugin, pluginSource: row.source, pluginSection: PICK_SOURCES[row.source].section, pluginAdditionalData: row.itemId};
+	}
+	return {kind: 'builtin', type: TV_TO_SERVER_ROW[row.id] || row.id, enabled: !!row.enabled, order};
+};
 
 export const homeRowsToSections = (rows) => [
 	...[...rows]
 		.sort((left, right) => left.order - right.order)
-		.map((row, index) => ({
-			kind: 'builtin',
-			type: TV_TO_SERVER_ROW[row.id] || row.id,
-			enabled: !!row.enabled,
-			order: index
-		})),
+		.map(rowToSection),
 	...(homeSectionsPassthrough || [])
 ];
 
 export const homeRowsToRowOrder = (rows) => [...rows]
 	.sort((left, right) => left.order - right.order)
-	.filter((row) => row.enabled)
+	.filter((row) => row.enabled && !isPickedRow(row) && !isSeerrSliderRow(row))
 	.map((row) => TV_TO_SERVER_ROW[row.id] || row.id);

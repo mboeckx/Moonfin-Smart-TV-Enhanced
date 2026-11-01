@@ -217,7 +217,8 @@ export const getPosterSizeOptions = () => [
 	{ value: 'small', label: $L('Small') },
 	{ value: 'default', label: $L('Default') },
 	{ value: 'large', label: $L('Large') },
-	{ value: 'xlarge', label: $L('Extra Large') }
+	{ value: 'xlarge', label: $L('Extra Large') },
+	{ value: 'grandparents', label: $L('Grandparents') }
 ];
 
 export const getImageTypeOptions = () => [
@@ -231,6 +232,44 @@ export const getImageTypeOptions = () => [
 export const getHomeRowsStyleOptions = () => [
 	{ value: 'v2', label: $L('Modern') },
 	{ value: 'v1', label: $L('Classic') }
+];
+
+export const getHomeBackdropStyleOptions = () => [
+	{ value: 'off', label: $L('Off') },
+	{ value: 'fullScreen', label: $L('Full Screen') },
+	{ value: 'corner', label: $L('Corner') },
+	{ value: 'top', label: $L('Top') }
+];
+
+export const getMediaPreviewModeOptions = () => [
+	{ value: 'off', label: $L('Off') },
+	{ value: 'media', label: $L('Media Preview') },
+	{ value: 'trailer', label: $L('Trailer Preview') }
+];
+
+export const getLibraryStyleOptions = () => [
+	{ value: 'classic', label: $L('Classic') },
+	{ value: 'modern', label: $L('Modern') },
+	{ value: 'docked', label: $L('Docked') }
+];
+
+export const getBookLibraryStyleOptions = () => [
+	{ value: 'classic', label: $L('Classic') },
+	{ value: 'readingRoom', label: $L('Reading Room') },
+	{ value: 'bookstore', label: $L('Bookstore') }
+];
+
+export const getKeyboardStyleOptions = () => [
+	{ value: 'native', label: $L('Native') },
+	{ value: 'classic', label: $L('Classic') },
+	{ value: 'glass', label: $L('Glass') },
+	{ value: 'docked', label: $L('Docked') }
+];
+
+export const getMusicLibraryStyleOptions = () => [
+	{ value: 'classic', label: $L('Classic') },
+	{ value: 'quickAccess', label: $L('Quick Access') },
+	{ value: 'immersive', label: $L('Immersive') }
 ];
 
 export const getModernCardTransitionSpeedOptions = () => [
@@ -311,10 +350,9 @@ export const getServerSortOptions = () => [
 	{ value: 'added', label: $L('Date Added') }
 ];
 
-export const getFolderViewModeOptions = () => [
-	{ value: 'local', label: $L('Per Library') },
-	{ value: 'on', label: $L('Always on.') },
-	{ value: 'off', label: $L('Always Off') }
+export const getContinueWatchingDefaultActionOptions = () => [
+	{ value: 'details', label: $L('Go to Details') },
+	{ value: 'play', label: $L('Play immediately') }
 ];
 
 export const getNextUpMaxDaysOptions = () => [
@@ -408,6 +446,20 @@ export const getSortOrderOptions = () => [
 	{ value: 'Descending', label: $L('Descending') }
 ];
 
+export const getExternalRowSortByOptions = () => [
+	{ value: 'none', label: $L('Default (List Order)') },
+	{ value: 'name', label: $L('Name') },
+	{ value: 'releaseDate', label: $L('Release Date') },
+	{ value: 'rating', label: $L('Rating') },
+	{ value: 'popularity', label: $L('Popularity') },
+	{ value: 'shuffle', label: $L('Shuffle') }
+];
+
+export const getExternalRowSortOrderOptions = () => [
+	{ value: 'ascending', label: $L('Ascending') },
+	{ value: 'descending', label: $L('Descending') }
+];
+
 export const getOledModeOptions = () => [
 	{ value: 'off', label: $L('Off') },
 	{ value: 'subtle', label: $L('Subtle') },
@@ -456,7 +508,7 @@ export const getTrickplayModeOptions = () => [
 
 export const getZoomModeOptions = () => [
 	{ value: 'fit', label: $L('Fit') },
-	{ value: 'autoCrop', label: $L('Auto Crop') },
+	{ value: 'autoCrop', label: $L('Zoom to Fill') },
 	{ value: 'stretch', label: $L('Stretch') }
 ];
 
@@ -483,6 +535,22 @@ export const getMaxAudioChannelsOptions = () => [
 	{ value: 6, label: $L('5.1') },
 	{ value: 7, label: $L('6.1') },
 	{ value: 8, label: $L('7.1') }
+];
+
+// Codec names stay as they are in every language.
+export const getTranscodeAudioCodecOptions = () => [
+	{ value: 'aac', label: 'AAC' },
+	{ value: 'ac3', label: 'AC3' },
+	{ value: 'eac3', label: 'EAC3' },
+	{ value: 'dts', label: 'DTS' },
+	{ value: 'truehd', label: 'TrueHD' },
+	{ value: 'flac', label: 'FLAC' },
+	{ value: 'alac', label: 'ALAC' },
+	{ value: 'mp3', label: 'MP3' },
+	{ value: 'mp2', label: 'MP2' },
+	{ value: 'opus', label: 'Opus' },
+	{ value: 'vorbis', label: 'Vorbis' },
+	{ value: 'pcm', label: 'PCM' }
 ];
 
 export const getRatingSourceOptions = () => [
@@ -631,7 +699,12 @@ export const getSeasonalThemeOptions = () => [
 	{ value: 'petals', label: $L('Spring Petals') },
 	{ value: 'fireflies', label: $L('Fireflies') },
 	{ value: 'leaves', label: $L('Falling Leaves') },
-	{ value: 'halloween', label: $L('Halloween') }
+	{ value: 'halloween', label: $L('Halloween') },
+	{ value: 'valentines', label: $L("Valentine's Day") },
+	{ value: 'easter', label: $L('Easter') },
+	{ value: 'pride', label: $L('Pride') },
+	{ value: 'lunar', label: $L('Lunar New Year') },
+	{ value: 'diwali', label: $L('Diwali') }
 ];
 
 export const getSeasonalDensityOptions = () => [

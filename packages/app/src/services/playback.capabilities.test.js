@@ -1,6 +1,6 @@
 import * as playback from './playback';
 import * as jellyfinApi from './jellyfinApi';
-import {getDeviceCapabilities} from './deviceProfile';
+import {getDeviceCapabilities, getDeviceProfile} from './deviceProfile';
 import {linkBitrate} from './linkBitrate';
 
 jest.mock('./jellyfinApi', () => {
@@ -18,7 +18,7 @@ jest.mock('./jellyfinApi', () => {
 	};
 });
 jest.mock('./deviceProfile', () => ({
-	getDeviceProfile: async () => ({}),
+	getDeviceProfile: jest.fn(),
 	getDeviceCapabilities: jest.fn()
 }));
 jest.mock('./linkBitrate', () => ({linkBitrate: jest.fn()}));
@@ -26,12 +26,13 @@ jest.mock('./video', () => ({
 	getPlayMethod: () => 'DirectPlay',
 	getMimeType: () => 'video/mp4',
 	isAudioStreamPlayable: () => true,
-	canRenderEmbeddedPgsInBand: () => false
+	canRenderEmbeddedPgsInBand: () => false,
+	rendersSubtitleInHost: () => false
 }));
 jest.mock('./storage', () => ({getFromStorage: async () => ({})}));
 jest.mock('./serverLogger', () => ({serverLogger: {playback: jest.fn()}}));
 jest.mock('./systemVolume', () => ({getVolumeState: jest.fn(), lastVolumeState: () => null}));
-jest.mock('../platform', () => ({isVega: () => false, isXbox: () => false}));
+jest.mock('../platform', () => ({isVega: () => false, isXbox: () => false, isTizen: () => false}));
 
 const {api} = jellyfinApi;
 const movie = {Id: 'movie-1', Type: 'Movie'};
@@ -41,6 +42,7 @@ beforeEach(async () => {
 	jest.clearAllMocks();
 	jest.spyOn(console, 'log').mockImplementation(() => {});
 	api.reportPlaybackStopped.mockResolvedValue(null);
+	getDeviceProfile.mockResolvedValue({});
 	api.getPlaybackInfo.mockResolvedValue({
 		PlaySessionId: 'session',
 		MediaSources: [{Id: 'source', SupportsDirectPlay: true, Container: 'mkv', MediaStreams: []}]
@@ -78,6 +80,14 @@ describe('the automatic bitrate', () => {
 			expect(askedFor()).toBe(40000000);
 			await playback.reportStop(0);
 		}
+	});
+
+	test("is the platform's own where it names one", async () => {
+		getDeviceCapabilities.mockResolvedValue({uhd: true, autoMaxBitrate: 120000000});
+
+		await playback.getPlaybackInfo(movie.Id, {item: movie});
+
+		expect(askedFor()).toBe(120000000);
 	});
 
 	test('gives way to a limit the user set', async () => {
@@ -159,5 +169,52 @@ describe('frames that never reach the screen', () => {
 		for (let i = 0; i < 30; i++) second(video, 12);
 
 		expect(monitor.checkHealth()).toBe(true);
+	});
+});
+
+describe('the transcoding profile that only offers AV1', () => {
+	const profile = {TranscodingProfiles: [
+		{Container: 'ts', Type: 'Video', VideoCodec: 'hevc,h264'},
+		{Container: 'mp4', Type: 'Video', VideoCodec: 'av1'}
+	]};
+	const episode = {Id: 'episode-1', Type: 'Episode', MediaStreams: [
+		{Type: 'Subtitle', Index: 2, Codec: 'dvdsub'},
+		{Type: 'Subtitle', Index: 3, Codec: 'subrip'}
+	]};
+	const sentCodecs = () => api.getPlaybackInfo.mock.calls[0][1].DeviceProfile.TranscodingProfiles.map((p) => p.VideoCodec);
+
+	beforeEach(() => {
+		getDeviceCapabilities.mockResolvedValue({});
+		getDeviceProfile.mockResolvedValue(profile);
+	});
+
+	test('is left out when a subtitle gets burned in, since the video has to be encoded', async () => {
+		await playback.getPlaybackInfo(episode.Id, {item: episode, subtitleStreamIndex: 2});
+		expect(sentCodecs()).toEqual(['hevc,h264']);
+	});
+
+	test('stays for a subtitle the TV draws itself', async () => {
+		await playback.getPlaybackInfo(episode.Id, {item: episode, subtitleStreamIndex: 3});
+		expect(sentCodecs()).toEqual(['hevc,h264', 'av1']);
+	});
+});
+
+describe('a Plex subtitle', () => {
+	const streams = [{Type: 'Subtitle', Index: 2, Codec: 'pgs'}, {Type: 'Subtitle', Index: 3, Codec: 'none'}];
+	const plexMovie = {...movie, _serverType: 'plex', MediaStreams: streams, MediaSources: [{Id: 'source', Container: 'mkv', MediaStreams: streams}]};
+	const directPlayAsked = () => api.getPlaybackInfo.mock.calls[api.getPlaybackInfo.mock.calls.length - 1][1].EnableDirectPlay;
+
+	beforeEach(() => getDeviceCapabilities.mockResolvedValue({}));
+
+	test('the TV cant read from the file turns direct play off, so Plex burns it in', async () => {
+		await playback.getPlaybackInfo(plexMovie.Id, {item: plexMovie, subtitleStreamIndex: 2});
+
+		expect(directPlayAsked()).toBe(false);
+	});
+
+	test('Plex lists as codec none keeps direct play, since Plex never burns one', async () => {
+		await playback.getPlaybackInfo(plexMovie.Id, {item: plexMovie, subtitleStreamIndex: 3});
+
+		expect(directPlayAsked()).toBe(true);
 	});
 });

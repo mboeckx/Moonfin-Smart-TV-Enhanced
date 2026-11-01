@@ -42,6 +42,15 @@ import nouveauCardsCss from '../views/Details/nouveau/cards/NouveauCards.module.
 import nouveauFooterCss from '../views/Details/nouveau/footer/NouveauDetailsFooter.module.less';
 import nouveauSectionsCss from '../views/Details/nouveau/sections/NouveauSections.module.less';
 import trackListCss from '../components/DetailTrackList/DetailTrackList.module.less';
+import musicCss from '../views/MusicBrowse/MusicLibrary.module.less';
+import musicScreensCss from '../views/MusicBrowse/MusicScreens.module.less';
+import musicFilterCss from '../views/MusicBrowse/MusicFilterPanel.module.less';
+import musicChipsCss from '../views/MusicBrowse/MusicChips.module.less';
+import bookScreensCss from '../views/BookBrowse/BookScreens.module.less';
+import bookCardCss from '../views/BookBrowse/BookCard.module.less';
+import bookRailCss from '../views/BookBrowse/BookstoreRail.module.less';
+import classicBooksCss from '../views/BookBrowse/ClassicBooks.module.less';
+import readingRoomCss from '../views/BookBrowse/ReadingRoomBooks.module.less';
 import overviewCss from '../views/Details/ExpandableOverview.module.less';
 import tabBarCss from '../components/DetailsTabBar/DetailsTabBar.module.less';
 import backdropCss from '../components/BackdropLayer/BackdropLayer.module.less';
@@ -53,6 +62,8 @@ import modernRowCss from '../components/MediaRow/ModernMediaRow.module.less';
 import ratingsCss from '../components/RatingsRow/RatingsRow.module.less';
 import itemMenuCss from '../components/ItemContextMenu/ItemContextMenu.module.less';
 import skeletonCss from '../components/Skeleton/Skeleton.module.less';
+import playlistSortFilterCss from '../components/PlaylistSortFilterBar/PlaylistSortFilterBar.module.less';
+import playbackInfoCss from '../views/Player/PlaybackInfoModal.module.less';
 
 const STYLE_ELEMENT_ID = 'moonfin-theme-overrides';
 
@@ -375,6 +386,13 @@ export const buildThemeOverrideCss = (theme, options = {}) => {
 	rule(`.${detailsCss.toast}`, `background: ${surfaceA(0.9)}; color: ${onBackground}; border-color: ${os(0.12)};`);
 	rule(`.${detailsCss.trailerCloseBtn}`, `background: ${os(0.15)}; color: ${onBackground};`);
 
+	// Playlist sort & filter controls
+	rule(`.${playlistSortFilterCss.pill}:focus, .${playlistSortFilterCss.pill}.spottable-focus`, `background: ${focusColor}; border-color: ${focusColor}; color: ${buttonInk};`);
+	rule(`.${playlistSortFilterCss.pillActive}`, `background: ${accentA(0.22)}; border-color: ${accent}; color: ${onBackground};`);
+	rule(`.${playlistSortFilterCss.badge}`, `background: ${accent}; color: ${onBadge};`);
+	rule(`.${playlistSortFilterCss.pill}:focus .${playlistSortFilterCss.badge}, .${playlistSortFilterCss.pill}.spottable-focus .${playlistSortFilterCss.badge}`, `background: #ffffff; color: ${accent};`);
+	rule(`.${playlistSortFilterCss.clearFiltersBtn}:focus, .${playlistSortFilterCss.clearFiltersBtn}.spottable-focus`, `background: ${focusColor}; border-color: ${focusColor};`);
+
 	// Detail screens, modern layout
 	rule(`.${modernDetailCss.metaRow}, .${modernDetailCss.techSize}`, `color: ${os(0.75)};`);
 	rule(`.${modernDetailCss.actionBtn}:focus`, `background: ${buttonFocused}; border-color: ${focusColor}; color: ${buttonInk};`);
@@ -404,6 +422,113 @@ export const buildThemeOverrideCss = (theme, options = {}) => {
 	rule(`.${trackListCss.trackRow}:focus`, `background: ${buttonFocused}; border-color: ${focusColor};`);
 	rule(`.${trackListCss.trackTitle}, .${trackListCss.discHeading}`, `color: ${onBackground};`);
 
+	// Music library, Quick Access and Immersive. A focused song row fills and inverts its ink, and
+	// a focused hero button fills.
+	rule(`.${musicCss.eyebrow}, .${musicCss.favoriteOn}`, `color: ${accent};`);
+	rule(`.${musicCss.primaryBtn}`, `background: ${accent}; color: ${onAccent};`);
+	rule(`.${musicCss.heroBtn}:focus`, `background: ${buttonFocused}; border-color: ${focusColor}; color: ${buttonInk};`);
+	rule(`.${musicCss.sectionTitle}, .${musicCss.trackTitle}`, `color: ${onSurface};`);
+	rule(`.${musicCss.seeAll}`, `color: ${os(0.7)};`);
+	rule(`.${musicCss.railItem}`, `color: ${os(0.86)};`);
+	rule(`.${musicCss.railSelected}`, `background: ${accentA(0.16)}; color: ${accent};`);
+	rule(`.${musicCss.headerBtn}:focus, .${musicCss.seeAll}:focus, .${musicCss.genreTile}:focus, .${musicCss.railItem}:focus, .${musicCss.quickTile}:focus, .${musicCss.filterPill}:focus`, `box-shadow: 0 0 0 3px ${focusColor};`);
+	rule(`.${musicCss.trackNumber}, .${musicCss.trackSubtitle}, .${musicCss.trackLength}`, `color: ${os(0.65)};`);
+	rule(`.${musicCss.trackActive}`, `background: ${accentA(0.16)};`);
+	rule(`.${musicCss.trackActive} .${musicCss.trackNumber}`, `color: ${accent};`);
+	rule(`.${musicCss.track}:focus`, `background: ${buttonFocused}; border-color: ${accentA(0.72)};`);
+	rule(`.${musicCss.track}:focus .${musicCss.trackTitle}`, `color: ${invertedStrong};`);
+	rule(`.${musicCss.track}:focus .${musicCss.trackNumber}, .${musicCss.track}:focus .${musicCss.trackSubtitle}, .${musicCss.track}:focus .${musicCss.trackLength}`, `color: ${invertedSoft};`);
+	rule(`.${musicCss.trackRank}`, `color: ${accent};`);
+
+	// The music category screens. The genre stations and the mix cards other than Everything keep
+	// their own palette with white text.
+	const ms = musicScreensCss;
+	rule(`.${ms.page}`, `background: ${background}; color: ${onSurface};`);
+	rule(`.${ms.stripName}, .${ms.title}, .${ms.panelTitle}, .${ms.detailTitle}, .${ms.playlistRow}`, `color: ${onSurface};`);
+	rule(`.${ms.count}, .${ms.subMeta}`, `color: ${os(0.65)};`);
+	rule(`.${ms.meta}`, `color: ${os(0.75)};`);
+	rule(`.${ms.empty}, .${ms.loading}, .${ms.artPlaceholder}`, `color: ${os(0.5)};`);
+	rule(`.${ms.eyebrow}, .${ms.letter}`, `color: ${accent};`);
+	rule(`.${ms.pill}`, `background: ${os(0.08)}; color: ${onSurface};`);
+	rule(`.${ms.pillPrimary}`, `background: ${accent}; color: ${onAccent};`);
+	rule(`.${ms.pill}:focus`, `background: ${buttonFocused}; border-color: ${focusColor}; color: ${buttonInk};`);
+	rule(`.${ms.pill} .${ms.accentIcon}`, `fill: ${accent};`);
+	rule(`.${ms.rail}`, `background: ${os(0.05)};`);
+	rule(`.${ms.railLetter}`, `color: ${os(0.7)};`);
+	rule(`.${ms.railLetter}.${ms.railCurrent}`, `color: ${accent};`);
+	rule(`.${ms.railLetter}:focus, .${ms.mix}:focus, .${ms.station}:focus`, `box-shadow: 0 0 0 3px ${focusColor};`);
+	rule(`.${ms.albumPanel}, .${ms.shelfPlaceholder}, .${ms.playlistArt}, .${ms.detailArt}`, `background: ${os(0.06)};`);
+	rule(`.${ms.caret}`, `border-bottom-color: ${os(0.06)};`);
+	rule(`.${ms.mixAccent}`, `background: ${accent}; color: ${onAccent};`);
+	rule(`.${ms.playlistShown}`, `background: ${accentA(0.16)};`);
+	rule(`.${ms.playlistRow}:focus`, `background: ${os(0.12)}; box-shadow: inset 0 0 0 3px ${focusColor};`);
+	// Classic's chips over a category screen. The Classic overview's own chips are left as they are.
+	const chip = musicChipsCss.chip;
+	rule(`.${ms.screenChips} .${chip}`, `background: ${os(0.09)}; color: ${os(0.8)};`);
+	rule(`.${ms.screenChips} .${ms.chipCurrent}:not(:focus)`, `background: ${accentA(0.16)}; color: ${accent};`);
+	rule(`.${ms.screenChips} .${chip}:focus`, `background: ${accent}; border-color: ${accent}; color: ${onAccent}; box-shadow: 0 0 14px 1px ${accentA(0.45)};`);
+
+	// The music Sort & Filter panel and the Albums genre list, which share its rows.
+	const mf = musicFilterCss;
+	rule(`.${mf.overlay}`, `background: ${scrim(0.45)};`);
+	rule(`.${mf.panel}`, `background: ${surfaceA(0.92)}; border-color: ${os(0.08)};`);
+	rule(`.${mf.title}, .${mf.optionActive}`, `color: ${onSurface};`);
+	rule(`.${mf.option}`, `color: ${os(0.8)};`);
+	rule(`.${mf.option}:focus`, `background: ${os(0.1)}; border-color: ${focusColor}; color: ${onSurface};`);
+	rule(`.${mf.radio}, .${mf.check}`, `border-color: ${os(0.35)};`);
+	rule(`.${mf.optionActive} .${mf.radio}`, `border-color: ${accent};`);
+	rule(`.${mf.optionActive} .${mf.check}`, `border-color: ${accent}; background: ${accent};`);
+	rule(`.${mf.radioFill}`, `background: ${accent};`);
+
+	// The book library screens. They share the music screens' header, pills, panels and lists above,
+	// and only the genre stations keep their own palette with white text.
+	const bs = bookScreensCss;
+	const bc = bookCardCss;
+	const br = bookRailCss;
+	rule(`.${classicBooksCss.page}, .${readingRoomCss.page}, .${br.page}`, `background: ${background};`);
+	rule(`.${bs.sectionTitle}, .${bs.seriesName}, .${bs.statValue}, .${bs.cardName}, .${bs.panelHeading}, .${bs.portraitName}`, `color: ${onSurface};`);
+	rule(`.${bs.overviewText}, .${bs.detailOverview}`, `color: ${os(0.75)};`);
+	rule(`.${bs.progressLine}, .${bs.statLabel}, .${bs.panelCount}`, `color: ${os(0.65)};`);
+	rule(`.${bs.track}`, `background: ${os(0.18)};`);
+	rule(`.${bs.trackFill}`, `background: ${accent};`);
+	rule(`.${bs.panel}, .${bs.stat}, .${bs.collectionCard}, .${bs.boardPanel}, .${bs.hero}`, `background: ${os(0.06)};`);
+	rule(`.${bs.stripCover}, .${bs.heroCover}, .${bs.tag}`, `background: ${os(0.08)};`);
+	rule(`.${bs.tag}`, `color: ${os(0.8)};`);
+	rule(`.${bs.collectionCard}:focus`, `border-color: ${focusColor}; box-shadow: ${glowOr('none')};`);
+	rule(`.${bs.portrait}:focus .${bs.face}`, `box-shadow: 0 0 0 4px ${focusColor};`);
+	rule(`.${bs.search}`, `background: ${os(0.08)}; color: ${onSurface};`);
+	rule(`.${bs.search}:focus`, `border-color: ${focusColor};`);
+	rule(`.${bs.detailPanel}`, `background: ${surface};`);
+	rule(`.${bs.subjects} .${chip}`, `background: ${os(0.09)}; color: ${os(0.8)};`);
+	rule(`.${bs.subjects} .${ms.chipCurrent}:not(:focus)`, `background: ${accentA(0.16)}; color: ${accent};`);
+	rule(`.${bs.subjects} .${chip}:focus`, `background: ${accent}; border-color: ${accent}; color: ${onAccent}; box-shadow: 0 0 14px 1px ${accentA(0.45)};`);
+	rule(`.${bc.cover}`, `background: ${os(0.08)}; border-radius: ${cardRadius};`);
+	rule(`.${bc.card}:focus .${bc.cover}`, `border-color: ${focusColor}; box-shadow: ${glowOr('none')};`);
+	rule(`.${bc.title}`, `color: ${os(0.9)};`);
+	rule(`.${bc.card}:focus .${bc.title}`, `color: ${onSurface};`);
+	rule(`.${bc.subtitle}`, `color: ${os(0.6)};`);
+	rule(`.${bc.placeholderIcon}`, `fill: ${os(0.35)};`);
+	rule(`.${bc.progress}`, `background: ${accent};`);
+	rule(`.${bc.numberBadge}`, `background: ${accent}; color: ${onAccent};`);
+	rule(`.${br.rail}`, `border-right-color: ${os(0.06)};`);
+	rule(`.${br.railTitle}, .${br.railRow}, .${br.continueTitle}`, `color: ${onSurface};`);
+	rule(`.${br.railSubtitle}`, `color: ${os(0.6)};`);
+	rule(`.${br.railHeader}`, `color: ${os(0.5)};`);
+	rule(`.${br.railRow} svg`, `fill: ${os(0.8)};`);
+	rule(`.${br.railRow}:focus`, `box-shadow: 0 0 0 3px ${focusColor};`);
+	rule(`.${br.railCount}, .${br.continueSubtitle}`, `color: ${os(0.62)};`);
+	rule(`.${br.railSelected}`, `background: ${accentA(0.16)};`);
+	rule(`.${br.railSelected} svg`, `fill: ${accent};`);
+	rule(`.${br.railSelected} .${br.railCount}`, `color: ${accent};`);
+	rule(`.${br.continueTile}`, `background: ${os(0.06)};`);
+	rule(`.${br.continueTile}:focus`, `box-shadow: 0 0 0 3px ${focusColor};`);
+	rule(`.${br.continueCover}, .${br.continueCoverAudio}`, `background: ${surfaceVariant};`);
+	rule(`.${br.continuePlaceholder}`, `fill: ${os(0.4)};`);
+	rule(`.${br.continueProgress}`, `background: ${os(0.14)};`);
+	rule(`.${br.continueProgress} div, .${br.continuePlay}`, `background: ${accent};`);
+	rule(`.${br.continuePlay} svg`, `fill: ${onAccent};`);
+	rule(`.${br.continueMeta}`, `color: ${os(0.68)};`);
+
 	// Detail screens, nouveau layout
 	rule(`.${nouveauCardsCss.card}:focus, .${nouveauCardsCss.landscapeDetails}:focus, .${nouveauCardsCss.person}:focus .${nouveauCardsCss.avatar}`, `border-color: ${focusColor};`);
 	rule(`.${nouveauCardsCss.progressFill}, .${nouveauCardsCss.nextUp}`, `background: ${accent};`);
@@ -416,6 +541,7 @@ export const buildThemeOverrideCss = (theme, options = {}) => {
 	rule(`.${itemMenuCss.panel}`, `background: ${surfaceA(0.97)}; border-color: ${os(0.12)};`);
 	rule(`.${itemMenuCss.title}, .${itemMenuCss.row}, .${itemMenuCss.button}`, `color: ${onBackground};`);
 	rule(`.${itemMenuCss.row}:focus, .${itemMenuCss.button}:focus`, `background: ${os(0.1)}; border-color: ${focusColor};`);
+	rule(`.${playbackInfoCss.panel}`, `background-color: ${surfaceA(0.9)};`);
 	rule(`.${tabBarCss.tab}`, `color: ${os(0.75)};`);
 	rule(`.${tabBarCss.tabActive}`, `background: ${accent}; color: ${onAccent};`);
 	rule(`.${tabBarCss.tab}:focus`, `border-color: ${focusColor};`);
@@ -430,7 +556,6 @@ export const buildThemeOverrideCss = (theme, options = {}) => {
 	rule(`.${browseCss.ayaIndicator}`, `background: ${os(0.3)};`);
 	rule(`.${browseCss.ayaIndicatorActive}`, `background: ${onSurface};`);
 	rule(`.${backdropCss.globalBackdropOverlay}`, `background: ${toCssColor(c.scrim)};`);
-	rule(`.${browseCss.featuredGradient}`, `background: -webkit-linear-gradient(top, ${scrim(0.3)} 0%, ${scrim(0.1)} 40%, ${scrim(0.8)} 100%); background: linear-gradient(to bottom, ${scrim(0.3)} 0%, ${scrim(0.1)} 40%, ${scrim(0.8)} 100%);`);
 	rule(`.${browseCss.detailPlaceholder} p, .${browseCss.empty}`, `color: ${os(0.7)};`);
 	// The card takes the media bar's own overlay color at three quarters of its
 	// opacity, outlined with the theme's card border.
@@ -467,17 +592,25 @@ export const buildThemeOverrideCss = (theme, options = {}) => {
 	rule(`.${browseCss.bannerDotActive}`, `background: ${onBackground};`);
 
 	// The classic info band above the rows
-	rule(`.${browseCss.detailTitle}`, `color: ${onBackground};`);
+	rule(`.${browseCss.detailTitle}, .${browseCss.infoLead}`, `color: ${onBackground};`);
 	rule(`.${browseCss.infoText}`, `color: ${os(0.8)};`);
 	rule(`.${browseCss.infoDot}`, `color: ${os(0.5)};`);
-	rule(`.${browseCss.infoBadge}`, `background: ${chipBackground}; border: ${chipBorder}; border-radius: ${chipRadius}; color: ${os(0.8)};`);
+	rule(`.${browseCss.infoBadge}`, `background: ${chipBackground}; border: ${chipBorder}; border-radius: ${chipRadius}; color: ${os(0.85)};`);
 	rule(`.${browseCss.detailSummary}`, `color: ${os(0.85)};`);
 
 	// Cards, both row styles
 	for (const cardCss of [mediaCardCss, modernCardCss]) {
 		rule(`.${cardCss.image}, .${cardCss.placeholder}, .${cardCss.imageContainer}, .${cardCss.genreOverlay}`, `border-radius: ${cardRadius};`);
+		// Artists stay round whatever corners the theme gives the other cards.
+		if (cardCss.circle) rule(`.${cardCss.circle} .${cardCss.image}, .${cardCss.circle} .${cardCss.placeholder}, .${cardCss.circle} .${cardCss.imageContainer}`, 'border-radius: 50%;');
 		rule(`.${cardCss.image}, .${cardCss.placeholder}`, `border: ${b.cardBorder.width}px solid ${toCssColor(b.cardBorder.color)};`);
-		rule(`.${cardCss.card}:focus .${cardCss.image}`, `border-color: ${focusColor}; border-width: 4px; box-shadow: ${glowOr('0 8px 24px rgba(0, 0, 0, 0.6)')};`);
+		rule(`.${cardCss.card}:focus .${cardCss.image}, .${cardCss.card}:focus .${cardCss.placeholder}`, `border-color: ${focusColor}; border-width: 4px; box-shadow: ${glowOr('0 8px 24px rgba(0, 0, 0, 0.6)')};`);
+		rule(`.${cardCss.previewFrame}`, `border-radius: ${cardRadius};`);
+		rule(`.${cardCss.previewRing}`, `border-color: ${focusColor}; border-radius: ${cardRadius}; box-shadow: ${glowOr('0 8px 24px rgba(0, 0, 0, 0.6)')};`);
+		// The Fire TV WebView only shows a video it can put on its own hardware plane and a
+		// rounded clip keeps it off one, so the stylesheet squares the frame, the ring and the
+		// container around them while a preview is up, which this sheet would otherwise round back
+		rules.push(`${prefix}.vega .${cardCss.previewFrame}, ${prefix}.vega .${cardCss.previewRing}, ${prefix}.vega .${cardCss.imageContainer}.${cardCss.previewHost} { border-radius: 0; }`);
 		rule(`.${cardCss.placeholder}`, `background: linear-gradient(135deg, ${accentA(0.25)} 0%, ${accentA(0.05)} 50%, transparent 100%), ${surfaceVariant};`);
 		rule(`.${cardCss.placeholderTitle}`, `color: ${onSurface};`);
 		rule(`.${cardCss.title}`, `color: ${theme.id === 'neon_pulse' ? accent : onSurface};`);
@@ -498,9 +631,11 @@ export const buildThemeOverrideCss = (theme, options = {}) => {
 	}
 	rule(`.${mediaCardCss.seriesName}`, `color: ${onSurface};`);
 	rule(`.${mediaCardCss.episodeInfo}, .${modernCardCss.secondaryTitle}`, `color: ${theme.id === 'neon_pulse' ? onSurface : os(0.6)};`);
+	rule(`.${mediaCardCss.homeText} .${mediaCardCss.episodeInfo}`, `color: ${theme.id === 'neon_pulse' ? onSurface : os(0.65)};`);
 	rule(`.${modernCardCss.placeholderIcon}`, `color: ${os(0.45)};`);
 	rule(`.${modernCardCss.overview}`, `color: ${theme.id === 'neon_pulse' ? onSurface : os(0.7)};`);
 	rule(`.${modernCardCss.platformWebos} .${modernCardCss.image}`, `border-radius: ${bumpRadius(b.cardRadius, 2)};`);
+	rule(`.${modernCardCss.platformWebos} .${modernCardCss.previewFrame}, .${modernCardCss.platformWebos} .${modernCardCss.previewRing}`, `border-radius: ${bumpRadius(b.cardRadius, 2)};`);
 
 	// Row shells
 	rule(`.${mediaRowCss.title}, .${modernRowCss.title}`, `color: ${onSurface}; text-shadow: ${textGlow};`);

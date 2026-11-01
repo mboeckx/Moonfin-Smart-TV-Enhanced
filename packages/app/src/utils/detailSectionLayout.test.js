@@ -28,7 +28,7 @@ describe('detailSectionLayout', () => {
 	it('gives every Seerr piece a switch of its own', () => {
 		const seerr = DETAIL_SECTIONS.filter((section) => section.group === 'seerr').map((section) => section.id);
 		expect(seerr).toEqual(expect.arrayContaining([
-			'seerrGenresTags', 'seerrStats', 'seerrRecommendations', 'seerrSimilar',
+			'seerrGenresTags', 'seerrStats', 'seerrStreaming', 'seerrRecommendations', 'seerrSimilar',
 			'seerrCollection', 'seerrPersonAppearances', 'seerrPersonCrew'
 		]));
 	});
@@ -38,6 +38,9 @@ describe('detailSectionLayout', () => {
 		expect(isAvailableIn(byId('poster'), 'v2')).toBe(false);
 		expect(isAvailableIn(byId('mediaInfo'), 'v1')).toBe(false);
 		expect(isAvailableIn(byId('mediaInfo'), 'v4')).toBe(true);
+		expect(isAvailableIn(byId('mediaInfo'), 'v3')).toBe(true);
+		expect(isAvailableIn(byId('versionBadge'), 'v3')).toBe(true);
+		expect(isAvailableIn(byId('versionBadge'), 'v1')).toBe(false);
 	});
 
 	it('lists for Minimalist whatever Spotlight draws for the pages it hands over', () => {

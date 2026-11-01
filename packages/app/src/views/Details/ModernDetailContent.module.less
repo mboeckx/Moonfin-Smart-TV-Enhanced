@@ -27,8 +27,9 @@
 	object-position: center right;
 }
 
-.backdrop::after {
-	content: '';
+// ModernDetailContent.js bakes these layers, and the person ones below, into an image and sets it
+// inline, so its copy of the stops has to match. The gradients here only paint if that fails.
+.scrim {
 	position: absolute;
 	top: 0;
 	right: 0;
@@ -78,8 +79,8 @@
 	background-color: rgba(0, 0, 0, var(--opacity-alpha));
 }
 
-.backdropPerson::after {
-	// Static pass first, see .backdrop::after above.
+.backdropPerson .scrim {
+	// Static pass first, see .scrim above.
 	background-image: linear-gradient(to top,
 		rgba(11, 13, 16, 1) 0%,
 		rgba(11, 13, 16, 0.6) 50%,
@@ -598,6 +599,10 @@
 	transform: scale(1.01);
 }
 
+.currentEpisode {
+	box-shadow: inset 0 0 0 2px rgba(var(--theme-accent-rgb, 0, 164, 220), 0.7);
+}
+
 .episodeThumb {
 	position: relative;
 	flex: 0 0 260px;
@@ -637,6 +642,16 @@
 .episodeMeta {
 	font-size: 20px;
 	opacity: 0.6;
+}
+
+// The runtime with the Incomplete badge beside it. With neither, it takes no room.
+.episodeMetaRow {
+	display: flex;
+	align-items: center;
+
+	&:empty {
+		display: none;
+	}
 }
 
 .episodeOverview {
@@ -762,10 +777,20 @@
 	font-size: 20px;
 }
 
+.tracksContainer {
+	display: flex;
+	flex-direction: column;
+	max-width: 900px;
+}
+
 .trackList {
 	display: flex;
 	flex-direction: column;
 	max-width: 900px;
+}
+
+.collectionLoading {
+	height: 160px;
 }
 
 .trackRow {
@@ -873,8 +898,10 @@
 .episodeList          { .flex-col-gap(16px); }
 .episodeRow           { .flex-row-gap(24px); }
 .episodeBody          { .flex-col-gap(8px); }
+.episodeMetaRow       { .flex-row-gap(10px); }
 .castCard             { .flex-col-gap(10px); }
 .chapterCard          { .flex-col-gap(8px); }
+.tracksContainer      { .flex-col-gap(16px); }
 .trackList            { .flex-col-gap(4px); }
 .trackRow             { .flex-row-gap(20px); }
 .studioCard           { .flex-col-gap(12px); }

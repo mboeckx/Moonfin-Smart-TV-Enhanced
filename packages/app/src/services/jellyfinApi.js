@@ -8,6 +8,8 @@ import {getPlatform} from '../platform';
 import {makeUserRoutes, trimQuerySeparator, legacyAuthHeader, buildUserImageUrl} from '../utils/serverRoutes';
 import * as userDataSync from './userDataSync';
 import {SUPPORTED_COMMANDS} from './remoteControl';
+import {createPlexApi, withEveryMethod} from './plexApi';
+import {isPlexServer, registerPlexServer} from '../utils/plexUrls';
 const APP_VERSION = packageJson.version;
 
 const PLATFORM_IDENTITY = {
@@ -40,13 +42,19 @@ export const setServer = (serverUrl) => {
 };
 
 export const setServerType = (type) => {
-	serverType = type === 'emby' ? 'emby' : 'jellyfin';
+	serverType = type === 'emby' || type === 'plex' ? type : 'jellyfin';
+	// eslint-disable-next-line no-use-before-define
+	applyServerType();
 };
 
 export const getServerType = () => serverType;
 
 // Jellyfin 12 drops the lowercase api_key param while Emby still requires it
-export const getTokenParam = (type) => ((type || serverType) === 'emby' ? 'api_key' : 'ApiKey');
+export const getTokenParam = (type) => {
+	const kind = type || serverType;
+	if (kind === 'plex') return 'X-Plex-Token';
+	return kind === 'emby' ? 'api_key' : 'ApiKey';
+};
 
 // Exported for the callers that build a raw URL instead of going through request().
 export const userRoutes = makeUserRoutes(() => serverType, () => currentUser);
@@ -63,11 +71,24 @@ const withoutHiddenViews = async (views, user) => {
 export const getUserImageUrl = (serverUrl, userId, imageTag, type) =>
 	buildUserImageUrl(serverUrl, userId, imageTag, type || serverType);
 
+// Who wants to know when the signed-in server refuses a request. A user whose access schedule
+// has just ended is refused everything, which nothing else would tell the app.
+const forbiddenListeners = new Set();
+export const onForbidden = (listener) => {
+	forbiddenListeners.add(listener);
+	return () => forbiddenListeners.delete(listener);
+};
+
+// Parents the server refused are remembered so they aren't asked for again, which has to be
+// forgotten when the refusal might have been about the hour and not the parent.
+export const clearAccessDenied = () => accessDeniedParentIds.clear();
+
 export const setAuth = (userId, token) => {
 	currentUser = userId;
 	accessToken = token;
 	accessDeniedParentIds.clear();
 	libraryIndex = null;
+	if (serverType === 'plex') registerPlexServer(currentServer, token);
 	if (token) reportCapabilities();
 };
 
@@ -129,6 +150,8 @@ const PLAYBACK_TIMEOUT_MS = 120000;
 // Some servers answer a people search far slower than everything else, so it
 // gets a limit of its own rather than holding the other results back.
 const PEOPLE_SEARCH_TIMEOUT_MS = 10000;
+// The playback information dialog waits on this, so it gives up quickly and goes without.
+const OWN_SESSION_TIMEOUT_MS = 1500;
 export const HOME_ROW_ITEM_FIELDS = 'DateCreated,PremiereDate,PrimaryImageAspectRatio,OfficialRating,Overview,Genres,GenreItems,ProductionYear,RunTimeTicks,CommunityRating,CriticRating,ProviderIds,ImageTags,BackdropImageTags,ParentBackdropImageTags,ParentBackdropItemId,ParentThumbItemId,ParentLogoItemId,ParentLogoImageTag,SeriesPrimaryImageTag,ParentPrimaryImageTag,SeriesName,SeriesId,ParentIndexNumber,IndexNumber,UserData,AlbumArtist,AlbumId,AlbumPrimaryImageTag';
 
 // The home Next Up row asks the server for a window instead of the whole watch
@@ -218,6 +241,7 @@ const request = async (endpoint, options = {}) => {
 		if ((response.status === 401 || response.status === 403) && parentId) {
 			accessDeniedParentIds.add(parentId);
 		}
+		if (response.status === 403) forbiddenListeners.forEach((listener) => listener());
 		const error = new Error('API Error: ' + response.status);
 		error.status = response.status;
 		error.connectionType = classifyError(error);
@@ -233,8 +257,34 @@ const request = async (endpoint, options = {}) => {
 	return JSON.parse(text);
 };
 
-export function reportCapabilities() {
-	if (!currentServer || !accessToken) return;
+let userRead = null;
+
+// Several callers read the user as the app starts, so a read still on its way, or one answered
+// in the last few seconds, is shared.
+const readCurrentUser = () => {
+	const session = `${currentServer}|${currentUser}|${accessToken}`;
+	if (userRead && userRead.session === session && (!userRead.at || Date.now() - userRead.at < 5000)) {
+		return userRead.promise;
+	}
+	const entry = {session, at: 0, promise: request(`/Users/${currentUser}`)};
+	userRead = entry;
+	entry.promise.then(() => {
+		entry.at = Date.now();
+	}, () => {
+		if (userRead === entry) userRead = null;
+	});
+	return entry.promise;
+};
+
+let capabilitiesSent = null;
+
+// Signing in reports what this session can do and the socket opening a moment later would send it
+// again, so the socket skips a report made for the same session in the last few seconds.
+export function reportCapabilities({unlessRecent = false} = {}) {
+	if (!currentServer || !accessToken || serverType === 'plex') return;
+	const session = `${currentServer}|${accessToken}`;
+	if (unlessRecent && capabilitiesSent?.session === session && Date.now() - capabilitiesSent.at < 10000) return;
+	capabilitiesSent = {session, at: Date.now()};
 	request('/Sessions/Capabilities/Full', {
 		method: 'POST',
 		body: {
@@ -287,12 +337,18 @@ const matchOnEmby = async (wanted) => {
 const INDEX_PAGE = 1000;
 const INDEX_TTL_MS = 30 * 60 * 1000;
 
+// On Plex the api object asks for the same page in Plex's own terms.
+const indexPage = (start) => (serverType === 'plex'
+	// eslint-disable-next-line no-use-before-define
+	? api.getItems({IncludeItemTypes: 'Movie,Series', Fields: 'ProviderIds', StartIndex: start, Limit: INDEX_PAGE})
+	: request(`${userRoutes.items()}Recursive=true&${OWNED_TYPES}&Fields=ProviderIds&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=false&StartIndex=${start}&Limit=${INDEX_PAGE}`));
+
 const loadLibraryIndex = async () => {
 	const index = {};
 	let start = 0;
 	let pageFull = true;
 	while (pageFull) {
-		const res = await request(`${userRoutes.items()}Recursive=true&${OWNED_TYPES}&Fields=ProviderIds&EnableImages=false&EnableUserData=false&EnableTotalRecordCount=false&StartIndex=${start}&Limit=${INDEX_PAGE}`);
+		const res = await indexPage(start);
 		const page = res?.Items || [];
 		for (const item of page) addToIndex(index, item, item.Id);
 		pageFull = page.length === INDEX_PAGE;
@@ -329,7 +385,10 @@ const matchOnJellyfin = async (wanted) => {
 	const found = {};
 	for (let i = 0; i < ids.length; i += MATCH_CHUNK) {
 		const chunk = ids.slice(i, i + MATCH_CHUNK);
-		const res = await request(`${userRoutes.items()}Ids=${chunk.join(',')}&Fields=${HOME_ROW_ITEM_FIELDS}`);
+		const res = serverType === 'plex'
+			// eslint-disable-next-line no-use-before-define
+			? await api.getItems({Ids: chunk.join(',')})
+			: await request(`${userRoutes.items()}Ids=${chunk.join(',')}&Fields=${HOME_ROW_ITEM_FIELDS}`);
 		for (const item of (res?.Items || [])) addToIndex(found, item, item);
 	}
 	return found;
@@ -399,6 +458,15 @@ const collectionItemsVia = (send, method) => async (collectionId, itemIds) => {
 	}
 	return send(path, {method, body: {Ids: itemIds}});
 };
+
+// Jellyfin makes a new playlist public unless told otherwise, and Emby fails on
+// Ids sent as an array, so it gets them as a comma list.
+const createPlaylistVia = (send, type, userId) => (name, itemIds = []) => send('/Playlists', {
+	method: 'POST',
+	body: type() === 'emby'
+		? {Name: name, Ids: itemIds.join(','), UserId: userId()}
+		: {Name: name, Ids: itemIds, UserId: userId(), IsPublic: false}
+});
 
 // The casing the remote search endpoint wants in its path.
 const REMOTE_SEARCH_TYPES = {
@@ -509,12 +577,17 @@ export const api = {
 
 	getMediaSegments: (itemId) => request(`/MediaSegments/${itemId}`),
 
-	getUserConfiguration: () => request(`/Users/${currentUser}`),
+	getUserConfiguration: () => readCurrentUser(),
 
-	updateUserConfiguration: (config) => request(userRoutes.configuration(), {
-		method: 'POST',
-		body: config
-	}),
+	getCurrentUser: () => request('/Users/Me'),
+
+	updateUserConfiguration: (config) => {
+		userRead = null;
+		return request(userRoutes.configuration(), {
+			method: 'POST',
+			body: config
+		});
+	},
 
 	getLatest: (libraryId, limit = 20) =>
 		request(`${userRoutes.latest()}ParentId=${libraryId}&Limit=${limit}&Fields=${encodeURIComponent(HOME_ROW_ITEM_FIELDS)}&ImageTypeLimit=1&GroupItems=true`),
@@ -577,9 +650,18 @@ export const api = {
 		body: data
 	}),
 
+	getOwnSessions: () => request(`/Sessions?DeviceId=${encodeURIComponent(deviceId)}`, {timeoutMs: OWN_SESSION_TIMEOUT_MS}),
+
 	closeLiveStream: (liveStreamId) => request(`/LiveStreams/Close?LiveStreamId=${encodeURIComponent(liveStreamId)}`, {
 		method: 'POST'
 	}),
+
+	// Tears down a transcode that was started by URL alone, with no playback session
+	// behind it, so the server stops encoding the moment the card lets go of it.
+	stopActiveEncodings: (playSessionId) =>
+		request(`/Videos/ActiveEncodings?deviceId=${encodeURIComponent(deviceId)}&playSessionId=${encodeURIComponent(playSessionId)}`, {
+			method: 'DELETE'
+		}),
 
 	search: (query, limit = 240) =>
 		request(`${userRoutes.items()}searchTerm=${encodeURIComponent(query)}&Limit=${limit}&Recursive=true&IncludeItemTypes=Book,Movie,Series,Season,Episode,Video,MusicVideo,Trailer,Program,Playlist,MusicArtist,MusicAlbum,Audio,PhotoAlbum,Photo,BoxSet,Folder&Fields=PrimaryImageAspectRatio,ProductionYear,AlbumArtist,SeriesName,ParentIndexNumber,IndexNumber,ProviderIds,UserData,OfficialRating`),
@@ -611,13 +693,19 @@ export const api = {
 	getStudioCompanies: (tmdbId, mediaType) =>
 		request(`/Moonfin/Tmdb/ProductionCompanies?tmdbId=${encodeURIComponent(tmdbId)}&type=${mediaType === 'tv' ? 'tv' : 'movie'}`),
 
-	// A collection has no order of its own on the server, so the plugin keeps one: a plain list of
-	// item ids. Absent plugin, absent order, and the caller falls back to release order.
+	getTmdbReviews: (tmdbId, mediaType, language) =>
+		request(`/Moonfin/Tmdb/Reviews?tmdbId=${encodeURIComponent(tmdbId)}&type=${mediaType === 'tv' ? 'tv' : 'movie'}&language=${encodeURIComponent(language || 'en-US')}`),
+
+	// The plugin keeps a collection's hand-arranged order as a plain list of item ids. Without the
+	// plugin or a saved order, the caller falls back to the server's order.
 	getCollectionOrder: (collectionId) =>
 		request(`/Moonfin/Collections/${collectionId}/Order`),
 
 	saveCollectionOrder: (collectionId, itemIds) =>
 		request(`/Moonfin/Collections/${collectionId}/Order`, {method: 'POST', body: itemIds}),
+
+	// Every rating the viewer gave through the plugin, as {Items: [{ItemId, Rating}]}.
+	getMyUserRatings: () => request('/Moonfin/UserRatings/Mine'),
 
 	getMusicGenres: (params = {}) => {
 		const merged = {UserId: currentUser, SortBy: 'SortName', SortOrder: 'Ascending', Recursive: 'true'};
@@ -634,7 +722,7 @@ export const api = {
 	// Episodes and music videos get their own rows on a person, and the newest
 	// work is the part worth opening on.
 	getItemsByPerson: (personId, limit = 100) =>
-		request(`${userRoutes.items()}PersonIds=${personId}&Recursive=true&IncludeItemTypes=Movie,Series,MusicVideo,Episode&SortBy=PremiereDate&SortOrder=Descending&Limit=${limit}&Fields=PrimaryImageAspectRatio,ProductionYear,OfficialRating,BasicSyncInfo`),
+		request(`${userRoutes.items()}PersonIds=${personId}&Recursive=true&IncludeItemTypes=Movie,Series,MusicVideo,Episode&SortBy=PremiereDate&SortOrder=Descending&Limit=${limit}&Fields=PrimaryImageAspectRatio,ProductionYear,OfficialRating,BasicSyncInfo,People`),
 
 	getFavorites: (limit = 50) =>
 		request(`${userRoutes.items()}IsFavorite=true&Recursive=true&Limit=${limit}&Fields=PrimaryImageAspectRatio,ProductionYear,OfficialRating`),
@@ -682,6 +770,13 @@ export const api = {
 	setWatched: (itemId, watched) => request(userRoutes.played(itemId), {
 		method: watched ? 'POST' : 'DELETE'
 	}).then(publishUserData(itemId, playedUserData(watched))),
+
+	hideFromResume: (itemId) => request(`${userRoutes.hideFromResume(itemId)}Hide=true`, {method: 'POST'}),
+
+	setPlaybackPosition: (itemId, ticks) => request(userRoutes.userData(itemId), {
+		method: 'POST',
+		body: {PlaybackPositionTicks: ticks, LastPlayedDate: new Date().toISOString()}
+	}).then(publishUserData(itemId, {PlaybackPositionTicks: ticks})),
 
 	// A thumb rating goes through the dedicated endpoint, which stores the liked
 	// flag and a score of its own choosing.
@@ -762,6 +857,9 @@ export const api = {
 	getLiveTvProgram: (programId) =>
 		request(`/LiveTv/Programs/${programId}?UserId=${currentUser}`),
 
+	getLiveTvAiringPrograms: (limit) =>
+		request(`/LiveTv/Programs/Recommended?UserId=${currentUser}&IsAiring=true&Limit=${limit}`),
+
 	// The recordings screen asks for one category per call, mirroring moonfin-core's
 	// categorized rails. Without options this stays the plain full listing.
 	getLiveTvRecordings: (options = {}) => {
@@ -807,11 +905,18 @@ export const api = {
 
 	// No bare id fallback here, a series timer is only valid as a fully
 	// populated dto and the defaults call is the only thing that produces one.
-	createLiveTvSeriesTimer: async (programId) => {
-		const payload = {...(await api.getLiveTvTimerDefaults(programId))};
+	// The flags pick which episodes it records on top of those defaults.
+	createLiveTvSeriesTimer: async (programId, flags) => {
+		const payload = {...(await api.getLiveTvTimerDefaults(programId)), ...flags};
 		if (payload.ProgramId == null) payload.ProgramId = programId;
 		return request(`/LiveTv/SeriesTimers`, {method: 'POST', body: payload});
 	},
+
+	getLiveTvSeriesTimer: (seriesTimerId) =>
+		request(`/LiveTv/SeriesTimers/${seriesTimerId}`),
+
+	updateLiveTvSeriesTimer: (seriesTimerId, rule) =>
+		request(`/LiveTv/SeriesTimers/${seriesTimerId}`, {method: 'POST', body: rule}),
 
 	cancelLiveTvSeriesTimer: (seriesTimerId) =>
 		request(`/LiveTv/SeriesTimers/${seriesTimerId}`, {
@@ -875,9 +980,9 @@ export const api = {
 	getInstantMix: (itemId, limit = 50) =>
 		request(`/Items/${itemId}/InstantMix?UserId=${currentUser}&Limit=${limit}&Fields=PrimaryImageAspectRatio,ProductionYear,AlbumArtist`),
 
-	// Patched: a larger page and the fields the playlist screen sorts on.
-	getPlaylistItems: (playlistId, limit = 2000) =>
-		request(`/Playlists/${playlistId}/Items?UserId=${currentUser}&Limit=${limit}&Fields=PrimaryImageAspectRatio,ProductionYear,AlbumArtist,SortName,DateCreated,PremiereDate,CommunityRating`),
+	// Patched: also the fields the playlist screen's poster view and sorts read.
+	getPlaylistItems: (playlistId, limit = 300, startIndex = 0) =>
+		request(`/Playlists/${playlistId}/Items?UserId=${currentUser}&StartIndex=${startIndex}&Limit=${limit}&Fields=PrimaryImageAspectRatio,ProductionYear,AlbumArtist,DateCreated,SortName,PremiereDate,CommunityRating`),
 
 	movePlaylistItem: (playlistId, itemId, newIndex) =>
 		request(`/Playlists/${playlistId}/Items/${itemId}/Move/${newIndex}`, {
@@ -887,15 +992,7 @@ export const api = {
 	getPlaylists: (sortBy = 'SortName', sortOrder = 'Ascending') =>
 		request(`${userRoutes.items()}IncludeItemTypes=Playlist&Recursive=true&SortBy=${sortBy}&SortOrder=${sortOrder}`),
 
-	createPlaylist: (name, itemIds = []) =>
-		request('/Playlists', {
-			method: 'POST',
-			body: {
-				Name: name,
-				Ids: itemIds,
-				UserId: currentUser
-			}
-		}),
+	createPlaylist: createPlaylistVia(request, () => serverType, () => currentUser),
 
 	addToPlaylist: (playlistId, itemIds) =>
 		request(`/Playlists/${playlistId}/Items?Ids=${itemIds.join(',')}`, {
@@ -941,6 +1038,44 @@ export const api = {
 	})
 };
 
+// The name a Plex account was saved under, since a Plex server has no route that says who's signed in.
+const savedUserName = async (serverUrl, userId) => {
+	const {getAllServersArray} = await import('./multiServerManager');
+	const wanted = normalizeServerUrl(serverUrl);
+	const entry = (await getAllServersArray()).find((s) => s.userId === userId && normalizeServerUrl(s.url) === wanted);
+	return entry?.username || null;
+};
+
+const jellyfinMethods = {...api};
+const methodNames = Object.keys(jellyfinMethods);
+
+const plexApiFor = (readUrl, readToken, readUserId) => withEveryMethod(createPlexApi({
+	getBaseUrl: readUrl,
+	getToken: readToken,
+	getUserId: readUserId,
+	getDeviceInfo,
+	getUserName: () => savedUserName(readUrl(), readUserId())
+}), methodNames);
+
+const plexMethods = plexApiFor(() => currentServer, () => accessToken, () => currentUser);
+
+let plexActive = false;
+
+// The api object everything imports stays the same object, with its methods swapped for the kind of server signed in.
+const applyServerType = () => {
+	const wantPlex = serverType === 'plex';
+	if (wantPlex) registerPlexServer(currentServer, accessToken);
+	if (wantPlex === plexActive) return;
+	plexActive = wantPlex;
+	// Plex adds methods Jellyfin doesn't have, and those have to go again.
+	if (!wantPlex) {
+		Object.keys(api).forEach((name) => {
+			if (!Object.prototype.hasOwnProperty.call(jellyfinMethods, name)) delete api[name];
+		});
+	}
+	Object.assign(api, wantPlex ? plexMethods : jellyfinMethods);
+};
+
 /**
  * Create an API instance for a specific server
  * Used for cross-server content aggregation
@@ -957,6 +1092,11 @@ export const createApiForServer = (serverUrl, token, userId, serverTypeOverride 
 		if (!/^https?:\/\//i.test(url)) {
 			url = 'http://' + url;
 		}
+	}
+
+	if (serverTypeOverride === 'plex' || isPlexServer(url)) {
+		registerPlexServer(url, token);
+		return plexApiFor(() => url, () => token, () => userId);
 	}
 
 	const getServerAuthHeader = () => buildAuthHeader(serverTypeOverride, token);
@@ -1034,7 +1174,7 @@ export const createApiForServer = (serverUrl, token, userId, serverTypeOverride 
 		getPerson: (itemId) => serverRequest(serverUserRoutes.item(itemId)),
 
 		getItemsByPerson: (personId, limit = 100) =>
-			serverRequest(`${serverUserRoutes.items()}PersonIds=${personId}&Recursive=true&IncludeItemTypes=Movie,Series,MusicVideo,Episode&SortBy=PremiereDate&SortOrder=Descending&Limit=${limit}&Fields=PrimaryImageAspectRatio,ProductionYear,OfficialRating,BasicSyncInfo`),
+			serverRequest(`${serverUserRoutes.items()}PersonIds=${personId}&Recursive=true&IncludeItemTypes=Movie,Series,MusicVideo,Episode&SortBy=PremiereDate&SortOrder=Descending&Limit=${limit}&Fields=PrimaryImageAspectRatio,ProductionYear,OfficialRating,BasicSyncInfo,People`),
 
 		getItems: (params = {}) => {
 			// Manually build query string to match main api.getItems behavior
@@ -1133,11 +1273,16 @@ export const createApiForServer = (serverUrl, token, userId, serverTypeOverride 
 		getStudioCompanies: (tmdbId, mediaType) =>
 			serverRequest(`/Moonfin/Tmdb/ProductionCompanies?tmdbId=${encodeURIComponent(tmdbId)}&type=${mediaType === 'tv' ? 'tv' : 'movie'}`),
 
+		getTmdbReviews: (tmdbId, mediaType, language) =>
+			serverRequest(`/Moonfin/Tmdb/Reviews?tmdbId=${encodeURIComponent(tmdbId)}&type=${mediaType === 'tv' ? 'tv' : 'movie'}&language=${encodeURIComponent(language || 'en-US')}`),
+
 		getCollectionOrder: (collectionId) =>
 			serverRequest(`/Moonfin/Collections/${collectionId}/Order`),
 
 		saveCollectionOrder: (collectionId, itemIds) =>
 			serverRequest(`/Moonfin/Collections/${collectionId}/Order`, {method: 'POST', body: itemIds}),
+
+		getMyUserRatings: () => serverRequest('/Moonfin/UserRatings/Mine'),
 
 		searchRemoteSubtitles: (itemId, language = 'eng', isPerfectMatch = null) => {
 			const query = isPerfectMatch === null ? '' : `?IsPerfectMatch=${isPerfectMatch}`;
@@ -1164,6 +1309,14 @@ export const createApiForServer = (serverUrl, token, userId, serverTypeOverride 
 			body: data
 		}),
 
+		// The preview URL carries this app's device id whichever server it goes to.
+		stopActiveEncodings: (playSessionId) =>
+			serverRequest(`/Videos/ActiveEncodings?deviceId=${encodeURIComponent(deviceId)}&playSessionId=${encodeURIComponent(playSessionId)}`, {
+				method: 'DELETE'
+			}),
+
+		getOwnSessions: () => serverRequest(`/Sessions?DeviceId=${encodeURIComponent(deviceId)}`, {timeoutMs: OWN_SESSION_TIMEOUT_MS}),
+
 		closeLiveStream: (liveStreamId) => serverRequest(`/LiveStreams/Close?LiveStreamId=${encodeURIComponent(liveStreamId)}`, {
 			method: 'POST'
 		}),
@@ -1175,6 +1328,13 @@ export const createApiForServer = (serverUrl, token, userId, serverTypeOverride 
 		setWatched: (itemId, watched) => serverRequest(serverUserRoutes.played(itemId), {
 			method: watched ? 'POST' : 'DELETE'
 		}).then(publishUserData(itemId, playedUserData(watched))),
+
+		hideFromResume: (itemId) => serverRequest(`${serverUserRoutes.hideFromResume(itemId)}Hide=true`, {method: 'POST'}),
+
+		setPlaybackPosition: (itemId, ticks) => serverRequest(serverUserRoutes.userData(itemId), {
+			method: 'POST',
+			body: {PlaybackPositionTicks: ticks, LastPlayedDate: new Date().toISOString()}
+		}).then(publishUserData(itemId, {PlaybackPositionTicks: ticks})),
 
 		setRating: (itemId, likes) => serverRequest(`/UserItems/${itemId}/Rating?Likes=${likes}`, {
 			method: 'POST'
@@ -1219,8 +1379,8 @@ export const createApiForServer = (serverUrl, token, userId, serverTypeOverride 
 		getInstantMix: (itemId, limit = 50) =>
 			serverRequest(`/Items/${itemId}/InstantMix?UserId=${userId}&Limit=${limit}&Fields=PrimaryImageAspectRatio,ProductionYear,AlbumArtist`),
 
-		getPlaylistItems: (playlistId, limit = 2000) =>
-			serverRequest(`/Playlists/${playlistId}/Items?UserId=${userId}&Limit=${limit}&Fields=PrimaryImageAspectRatio,ProductionYear,AlbumArtist,SortName,DateCreated,PremiereDate,CommunityRating`),
+		getPlaylistItems: (playlistId, limit = 300, startIndex = 0) =>
+			serverRequest(`/Playlists/${playlistId}/Items?UserId=${userId}&StartIndex=${startIndex}&Limit=${limit}&Fields=PrimaryImageAspectRatio,ProductionYear,AlbumArtist,DateCreated,SortName,PremiereDate,CommunityRating`),
 
 		movePlaylistItem: (playlistId, itemId, newIndex) =>
 			serverRequest(`/Playlists/${playlistId}/Items/${itemId}/Move/${newIndex}`, {
@@ -1230,15 +1390,7 @@ export const createApiForServer = (serverUrl, token, userId, serverTypeOverride 
 		getPlaylists: (sortBy = 'SortName', sortOrder = 'Ascending') =>
 			serverRequest(`${serverUserRoutes.items()}IncludeItemTypes=Playlist&Recursive=true&SortBy=${sortBy}&SortOrder=${sortOrder}`),
 
-		createPlaylist: (name, itemIds = []) =>
-			serverRequest('/Playlists', {
-				method: 'POST',
-				body: {
-					Name: name,
-					Ids: itemIds,
-					UserId: userId
-				}
-			}),
+		createPlaylist: createPlaylistVia(serverRequest, () => serverTypeOverride, () => userId),
 
 		addToPlaylist: (playlistId, itemIds) =>
 			serverRequest(`/Playlists/${playlistId}/Items?Ids=${itemIds.join(',')}`, {
@@ -1256,6 +1408,9 @@ export const createApiForServer = (serverUrl, token, userId, serverTypeOverride 
 
 		getSpecialFeatures: (itemId) =>
 			serverRequest(serverUserRoutes.extras(itemId, 'SpecialFeatures')),
+
+		getAdditionalParts: (itemId) =>
+			serverRequest(`/Videos/${itemId}/AdditionalParts?UserId=${userId}`),
 
 		getAncestors: (itemId) =>
 			serverRequest(`/Items/${itemId}/Ancestors?UserId=${userId}`),

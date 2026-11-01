@@ -22,6 +22,9 @@ export const makeUserRoutes = (readType, readUserId) => {
 			: `/Items/${itemId}/${kind}?userId=${uid()}&`),
 		favorite: (itemId) => (legacy() ? `/Users/${uid()}/FavoriteItems/${itemId}?` : `/UserFavoriteItems/${itemId}?userId=${uid()}&`),
 		played: (itemId) => (legacy() ? `/Users/${uid()}/PlayedItems/${itemId}?` : `/UserPlayedItems/${itemId}?userId=${uid()}&`),
+		userData: (itemId) => (legacy() ? `/Users/${uid()}/Items/${itemId}/UserData?` : `/UserItems/${itemId}/UserData?userId=${uid()}&`),
+		// Only Emby has this one.
+		hideFromResume: (itemId) => `/Users/${uid()}/Items/${itemId}/HideFromResume?`,
 		views: () => (legacy() ? `/Users/${uid()}/Views?` : `/UserViews?userId=${uid()}&`),
 		configuration: () => (legacy() ? `/Users/${uid()}/Configuration?` : `/Users/Configuration?userId=${uid()}&`)
 	};
@@ -38,6 +41,8 @@ export const legacyAuthHeader = (type, authHeader) =>
 // Jellyfin 12 serves the avatar from /UserImage and discards the sizing hints on
 // both spellings of the route, so only Emby is still sent them.
 export const buildUserImageUrl = (serverUrl, userId, imageTag, type) => {
+	// Plex keeps every account's avatar on plex.tv, under its uuid.
+	if (type === 'plex') return `https://plex.tv/users/${encodeURIComponent(userId)}/avatar`;
 	const tag = imageTag ? `&tag=${encodeURIComponent(imageTag)}` : '';
 	if (type === 'emby') {
 		return `${serverUrl}/Users/${userId}/Images/Primary?quality=90&maxHeight=150${tag}`;

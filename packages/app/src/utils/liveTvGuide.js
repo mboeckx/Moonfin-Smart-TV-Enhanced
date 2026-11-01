@@ -13,6 +13,8 @@ export const TV_CANVAS_SCALE = 1.45;
 
 // How fast a long program description scrolls, 55 ms per canvas point.
 export const DESCRIPTION_MS_PER_PIXEL = 55 / TV_CANVAS_SCALE;
+// The quick channel changer's description scrolls half as fast.
+export const CAROUSEL_DESCRIPTION_MS_PER_PIXEL = 110 / TV_CANVAS_SCALE;
 
 // ---------------------------------------------------------------------------
 // Channels
@@ -92,15 +94,38 @@ export const seasonEpisodeLabel = (program) => {
 };
 
 // The episode title and its (S1:E5) numbering, each on its own when the listing carries only one
-// of them. Empty when there's nothing to show.
+// of them. A title that only repeats the program name is left out. Empty when there's nothing to show.
 export const episodeLine = (program) => {
 	const title = episodeTitleOf(program).trim();
 	const label = seasonEpisodeLabel(program);
-	return [title, label ? `(${label})` : ''].filter(Boolean).join(' ');
+	return [title !== (program?.Name || '').trim() && title, label ? `(${label})` : ''].filter(Boolean).join(' ');
 };
 
 export const hasTimer = (program) => program?.TimerId != null;
 export const hasSeriesTimer = (program) => program?.SeriesTimerId != null;
+
+// 'record' for a one off, 'series' when a series rule will record this showing and 'skipped' when
+// the rule passes it over. A string rather than an object, so a memoized cell can compare it.
+export const recordingMark = (program) => {
+	if (hasSeriesTimer(program)) return hasTimer(program) ? 'series' : 'skipped';
+	return hasTimer(program) ? 'record' : null;
+};
+
+// The choices a series recording can make, as the two flags the server's series rule reads.
+export const SERIES_EPISODE_CHOICES = [
+	{key: 'all', label: 'All Episodes', detail: 'Every showing, including repeats', flags: {RecordNewOnly: false, SkipEpisodesInLibrary: false}},
+	{key: 'notRecorded', label: 'Episodes Not Already Recorded', detail: 'Skips episodes already in your library and records each episode once', flags: {RecordNewOnly: false, SkipEpisodesInLibrary: true}},
+	{key: 'newOnly', label: 'New Episodes Only', detail: 'First airings only, no repeats', flags: {RecordNewOnly: true, SkipEpisodesInLibrary: true}}
+];
+
+export const DEFAULT_SERIES_CHOICE = 'notRecorded';
+
+export const seriesChoiceOf = (rule) => {
+	if (rule?.RecordNewOnly) return 'newOnly';
+	return rule?.SkipEpisodesInLibrary ? 'notRecorded' : 'all';
+};
+
+export const seriesChoiceFlags = (key) => SERIES_EPISODE_CHOICES.find((choice) => choice.key === key).flags;
 
 export const isLiveAt = (program, now) => now > programStart(program) && now < programEnd(program);
 

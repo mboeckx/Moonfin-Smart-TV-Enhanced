@@ -3,13 +3,16 @@ import $L from '@enact/i18n/$L';
 
 import MediaCard from '../../../components/MediaCard';
 import DetailTrackList from '../../../components/DetailTrackList';
-import {SeerrChips, SeerrFacts, SeerrCollectionBanner} from '../../../components/seerr/SeerrSections';
+import LoadingSpinner from '../../../components/LoadingSpinner';
+import {SeerrChips, SeerrFacts, SeerrStreaming, SeerrCollectionBanner} from '../../../components/seerr/SeerrSections';
 import {getImageUrl} from '../../../utils/helpers';
 import {formatPlaybackDuration} from '../../../utils/playbackTimeLabels';
 import {castPhotoUrl} from '../detailsMedia';
 import {SpottableDiv, RowContainer} from '../detailsSpottables';
 import {DETAIL_ICON_PATHS} from '../detailIcons';
 import {iconViewBox} from '../../../components/icons/iconViewBox';
+import ModernFileInformation from '../ModernFileInformation';
+import {ReviewCards} from '../ReviewCard';
 
 import css from './SpotlightGrids.module.less';
 
@@ -21,7 +24,7 @@ const Icon = ({path}) => (
 	</svg>
 );
 
-const MediaGrid = ({items, serverUrl, aspect, seasonStatus, onSelect, firstSpotlightId, menuOptions}) => (
+const MediaGrid = ({items, serverUrl, aspect, seasonStatus, currentId, onSelect, firstSpotlightId, menuOptions}) => (
 	<RowContainer className={css.grid}>
 		{items.map((item, index) => (
 			<MediaCard
@@ -30,6 +33,7 @@ const MediaGrid = ({items, serverUrl, aspect, seasonStatus, onSelect, firstSpotl
 				serverUrl={serverUrl}
 				cardType={CARD_TYPE[aspect] || 'portrait'}
 				seerrSeasonStatus={item.Type === 'Season' ? seasonStatus?.get(item.IndexNumber) : null}
+				current={currentId != null && item.Id === currentId}
 				onSelect={onSelect}
 				spotlightId={index === 0 ? firstSpotlightId : undefined}
 				menuOptions={menuOptions}
@@ -152,7 +156,7 @@ const ChaptersGrid = ({item, serverUrl, onSelect, firstSpotlightId}) => {
 const SpotlightSection = ({section, serverUrl, actions, seerr, firstSpotlightId}) => {
 	switch (section.kind) {
 		case 'media':
-			return <MediaGrid items={section.items} serverUrl={serverUrl} aspect={section.aspect} seasonStatus={section.seasonStatus} onSelect={actions.openItem} firstSpotlightId={firstSpotlightId} menuOptions={section.collectionMembers ? actions.collectionMenu : undefined} />;
+			return <MediaGrid items={section.items} serverUrl={serverUrl} aspect={section.aspect} seasonStatus={section.seasonStatus} currentId={section.currentId} onSelect={actions.openItem} firstSpotlightId={firstSpotlightId} menuOptions={section.collectionMembers ? actions.collectionMenu : undefined} />;
 		case 'seerr':
 			return <SeerrGrid items={section.items} serverUrl={serverUrl} showCredit={section.showCredit} onSelect={actions.openSeerrItem} firstSpotlightId={firstSpotlightId} />;
 		case 'people':
@@ -161,7 +165,14 @@ const SpotlightSection = ({section, serverUrl, actions, seerr, firstSpotlightId}
 			return <StudiosGrid studios={section.studios} onSelect={actions.openStudio} firstSpotlightId={firstSpotlightId} />;
 		case 'chapters':
 			return <ChaptersGrid item={section.item} serverUrl={serverUrl} onSelect={actions.playFromChapter} firstSpotlightId={firstSpotlightId} />;
+		case 'reviews':
+			return (
+				<RowContainer className={css.grid}>
+					<ReviewCards reviews={section.reviews} onSelect={actions.openReview} firstSpotlightId={firstSpotlightId} />
+				</RowContainer>
+			);
 		case 'tracks':
+			if (section.loading) return <div className={css.tracksLoading}><LoadingSpinner /></div>;
 			return (
 				<DetailTrackList
 					tracks={section.tracks}
@@ -171,7 +182,7 @@ const SpotlightSection = ({section, serverUrl, actions, seerr, firstSpotlightId}
 					showAlbum={section.showAlbum}
 					manage={section.manage}
 					menuOptions={section.isPlaylist ? actions.playlistMenu : null}
-					onPlayTrack={actions.playTrack}
+					onPlayTrack={section.opensItems ? actions.openItem : actions.playTrack}
 					onReorder={actions.reorderTrack}
 					onRemove={actions.removeTrack}
 					firstSpotlightId={firstSpotlightId}
@@ -189,11 +200,30 @@ const SpotlightSection = ({section, serverUrl, actions, seerr, firstSpotlightId}
 					<SeerrFacts details={seerr?.details} mediaType={seerr?.mediaType} />
 				</div>
 			);
+		case 'seerrStreaming':
+			return (
+				<div className={css.factsRow}>
+					<SeerrStreaming providers={seerr?.streaming} />
+				</div>
+			);
 		case 'seerrCollection':
 			return (
 				<div className={css.factsRow}>
 					<SeerrCollectionBanner collection={seerr?.collection} onOpen={seerr?.nav?.onSelectItem} />
 				</div>
+			);
+		case 'fileInfo':
+			return (
+				<ModernFileInformation
+					item={section.item}
+					mediaSource={section.mediaSource}
+					effectiveApi={actions.effectiveApi}
+					selectedAudioIndex={actions.selectedAudioIndex}
+					selectedSubtitleIndex={actions.selectedSubtitleIndex}
+					settings={actions.settings}
+					firstSpotlightId={firstSpotlightId}
+					showTitle={false}
+				/>
 			);
 		default:
 			return null;

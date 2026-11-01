@@ -1,12 +1,15 @@
-import {Fragment, useCallback, useState, useEffect, useMemo, useRef} from 'react';
+import {Fragment, useCallback, useState, useEffect, useLayoutEffect, useMemo, useRef} from 'react';
 import {
-	hashPin, pinMatches, lockoutRemaining, registerFailedAttempt, clearedLockout, tooManyAttempts,
-	SIGN_IN_PIN, KIDS_PIN
+	hashPin, isPinShaped, pinMatches, lockoutRemaining, registerFailedAttempt, clearedLockout, tooManyAttempts, KIDS_PIN
 } from '../../utils/pinLockout';
+import {
+	PIN_ACCEPTED, dropSignInPin, isSignInPinEnabled, refreshSignInPin, signInPinMessage, storeSignInPin, verifySignInPin
+} from '../../utils/signInPin';
 import $L from '@enact/i18n/$L';
 import Spotlight from '@enact/spotlight';
 import {useAuth} from '../../context/AuthContext';
 import {useSettings, defaultSettings, flushSettingsPush} from '../../context/SettingsContext';
+import {RATING_SETTING_KEYS, ratingKey} from '../../utils/ratingSources';
 import {useSeerr} from '../../context/SeerrContext';
 import {useAchievements} from '../../context/AchievementsContext';
 import {useDeviceInfo} from '../../hooks/useDeviceInfo';
@@ -18,7 +21,8 @@ import ScreensaverPreview from '../../components/Screensaver/ScreensaverPreview'
 import TrickplaySettingsPreview from '../../components/TrickplayPreview/TrickplaySettingsPreview';
 import {LoadingAnimationPreview} from '../../components/LoadingAnimation';
 import {clearAllStorage} from '../../services/storage';
-import {clearCapabilitiesCache} from '../../services/deviceProfile';
+import {clearCapabilitiesCache, getDeviceProfile} from '../../services/deviceProfile';
+import {canTranscodeAudioCodecAway} from '../../utils/deviceProfileTuning';
 import {clearImageCache} from '../../services/imageProxy';
 import {clearProxiedImageCache} from '../../hooks/useProxiedImage';
 import {detectCustomSource, validateCustomRow, buildManualCustomSource, sourceKeyForRow} from '../../utils/externalHomeRows';
@@ -27,11 +31,12 @@ import {checkForUpdatesDetailed} from '../../services/versionChecker';
 import QrLinkView from './QrLinkView';
 import {formatPlaybackTimeSlot} from '../../utils/playbackTimeLabels';
 import {getSubtitleOverlayStyle, getSubtitleTextStyle} from '../../utils/subtitleConstants';
-import {getImageTypeOptions, getLabel} from './settingsOptions';
+import {getImageTypeOptions, getLabel, getSubtitleLanguageOptions, getTranscodeAudioCodecOptions} from './settingsOptions';
+import {MAX_SUBTITLE_DOWNLOAD_LANGUAGES} from '../Player/remoteSubtitleUtils';
 import {SCHEMA_BY_KEY, SETTINGS_SCHEMA, resolve, spotlightIdOf} from './settingsSchema';
 import {MIN_QUERY_LENGTH, buildSettingsIndex, matchSettings, resultSpotlightId} from './settingsSearch';
-import {PLUGIN_SECTION_RENDER_STEP} from './homeSectionsModel';
 import useSeerrAccount from './useSeerrAccount';
+import useRommAccount from './useRommAccount';
 import useProfileSync from './useProfileSync';
 import useThemeStore from './useThemeStore';
 import useHomeRowsEditor from './useHomeRowsEditor';
@@ -51,12 +56,14 @@ import FriendsScreens, {FRIENDS_VIEWS} from './friends/FriendsScreens';
 import {isConfirmSpendOpen} from './achievements/ConfirmSpendDialog';
 import {kidsModeNeedsPin} from '../../utils/kidsMode';
 import {sortRatingsBySeverity} from '../../utils/parentalFilter';
+import {isPickedRow, isSeerrSliderRow} from '../../utils/pickedRows';
 import {readServerRatings} from './serverRatings';
 import {getBlockedRatings, setBlockedRatings} from '../../services/parentalControls';
 import useParentalFilter from '../../hooks/useParentalFilter';
+import useSignInPin from '../../hooks/useSignInPin';
 import {SeerrHomeRowsView, ImdbListsView} from './HomeRowToggleViews';
 import {ExternalTmdbListsView, ExternalCalendarsView, ExternalCustomRowsView, SeasonalRowView} from './ExternalRowViews';
-import {RatingSourcesView, ExcludedGenresView, PinCodeView, BlockedRatingsView, RowImageTypesView} from './PickerViews';
+import {RatingSourcesView, ExcludedGenresView, PinCodeView, BlockedRatingsView, RowImageTypesView, CheckListView} from './PickerViews';
 import {KidsModeSetView, KidsModeExitView} from './KidsModeViews';
 import HomeRowsView from './HomeRowsView';
 import ButtonLayoutView from './ButtonLayoutView';
@@ -65,7 +72,9 @@ import DiagnosticsView from './DiagnosticsView';
 import LibrariesView from './LibrariesView';
 import LibraryOrderView from './LibraryOrderView';
 import MediaBarSourceView from './MediaBarSourceView';
+import {mediaBarExternalListOptions} from '../Browse/featuredExternal';
 import SeerrAccountPanel from './SeerrAccountPanel';
+import RommAccountPanel from './RommAccountPanel';
 import MoonbasePanel from './MoonbasePanel';
 import {LOG_RENDER_STEP} from './useDiagnosticsLog';
 import {DETAIL_SECTIONS_HIDDEN_KEY, toggleHiddenSection} from '../../utils/detailSectionLayout';
@@ -104,8 +113,14 @@ const FIRST_ROW_VIEWS = {
 	ratingSources: 'rating-sources-view'
 };
 
-const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, panelMode, initialView }) => {
-	const { api, serverUrl, accessToken, hasMultipleServers, logoutAll, activeServerInfo, user, serverType } = useAuth();
+// With [liveCategory] set, the stack starts at that category's page instead of the category
+// list, [onRootBack] takes Back at that root, and [onPreviewTry] hears which option a picker
+// has in focus. [liveSearchQuery] comes from the search field beside the pill, and
+// [onLiveSearchClear] empties that field. [onLiveBack] gets the first say on Back and returns
+// true when it took it. The live preview layout drives all of them, and draws the previews
+// a few screens otherwise carry in their lists.
+const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, panelMode, initialView, hasLiveTv, liveCategory, onRootBack, onPreviewTry, onSchemaContext, liveSearchQuery, onLiveSearchClear, onLiveBack }) => {
+	const { api, serverUrl, servers, accessToken, hasMultipleServers, logoutAll, activeServerInfo, user, serverType } = useAuth();
 	const {
 		settings, updateSetting, updateSettings, resetSettings, restoreSyncedDefaults, applyServerProfile, selectSyncProfile,
 		availableThemes, activeThemeId, selectThemeById, saveStoreTheme, deleteStoreTheme
@@ -113,8 +128,13 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 	const { capabilities } = useDeviceInfo();
 	const seerr = useSeerr();
 	const achievements = useAchievements();
+	const romm = useRommAccount({serverUrl, accessToken});
 	const isSeerr = seerr.isMoonfin && seerr.variant === 'seerr';
 	const bootLocaleRef = useRef(settings.uiLanguage);
+	const onLiveSearchClearRef = useRef(onLiveSearchClear);
+	onLiveSearchClearRef.current = onLiveSearchClear;
+	const onLiveBackRef = useRef(onLiveBack);
+	onLiveBackRef.current = onLiveBack;
 	useEffect(() => {
 		if (settings.uiLanguage !== bootLocaleRef.current &&
 			typeof window !== 'undefined' && window.location) {
@@ -144,7 +164,10 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 
 	// Opened on a screen of its own when the shell asked for one, with the categories under it
 	// so BACK still walks out the usual way.
-	const [navStack, setNavStack] = useState(() => (initialView ? [{view: 'categories'}, {view: initialView}] : [{view: 'categories'}]));
+	const [navStack, setNavStack] = useState(() => {
+		if (liveCategory) return [{view: 'category', id: liveCategory}];
+		return initialView ? [{view: 'categories'}, {view: initialView}] : [{view: 'categories'}];
+	});
 	const currentView = navStack[navStack.length - 1];
 	const pendingFocusRef = useRef(null);
 	const navStackRef = useRef(navStack);
@@ -167,14 +190,14 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 		}
 		setNavStack((prev) => {
 			if (prev.length <= 1) {
-				onBack?.();
+				(onRootBack || onBack)?.();
 				return prev;
 			}
 			const popped = prev[prev.length - 1];
 			pendingFocusRef.current = popped.returnFocusTo || null;
 			return prev.slice(0, -1);
 		});
-	}, [onBack]);
+	}, [onBack, onRootBack]);
 
 	const [serverVersion, setServerVersion] = useState(null);
 	const [clearDataDialogOpen, setClearDataDialogOpen] = useState(false);
@@ -191,6 +214,8 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 	const [ratingsResetArmed, setRatingsResetArmed] = useState(false);
 	const [tempRatingSources, setTempRatingSources] = useState([]);
 	const openedRatingSourcesRef = useRef('');
+	// Which surface's list the sources screen is editing, empty for the plain one.
+	const [ratingSourcesSurface, setRatingSourcesSurface] = useState('');
 	const [tempExcludedGenresText, setTempExcludedGenresText] = useState('');
 	const [customRowUrl, setCustomRowUrl] = useState('');
 	const [customRowName, setCustomRowName] = useState('');
@@ -205,13 +230,20 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 	const [customRowSortOrder, setCustomRowSortOrder] = useState('desc');
 	const [customRowShowUserRatings, setCustomRowShowUserRatings] = useState(true);
 	const [editingCustomRowId, setEditingCustomRowId] = useState(null);
-	const [tempPinCode, setTempPinCode] = useState('0000');
+	const [tempPinCode, setTempPinCode] = useState('');
+	// What the PIN screen is for, and whether it's asking for the current PIN or a new one.
+	const [pinFlow, setPinFlow] = useState(null);
+	const [pinBusy, setPinBusy] = useState(false);
 	const [tempKidsPin, setTempKidsPin] = useState('');
 	const [kidsPinError, setKidsPinError] = useState('');
 	const [pinCodeError, setPinCodeError] = useState('');
 
 	const focusViewDefault = useCallback((cv) => {
 			if (cv.view === 'categories') {
+				if (cv.searchOnly && !searchQueryRef.current) {
+					Spotlight.focus('settings-search-input');
+					return;
+				}
 				// With a query up the categories are not mounted, so the first result is
 				// the only thing there is to land on.
 				const results = searchResultsRef.current;
@@ -226,7 +258,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 				const subcats = getSubcategories(cv.id); // eslint-disable-line no-use-before-define
 				Spotlight.focus(subcats.length > 0 ? `subcat-${subcats[0].id}` : 'category-view');
 			} else if (cv.view === 'options') {
-				const idx = cv.options?.findIndex((o) => o.value === settings[cv.settingKey]);
+				const idx = cv.options?.findIndex((o) => o.value === cv.value);
 				Spotlight.focus(idx >= 0 ? `opt-${idx}` : 'opt-0');
 			} else if (cv.view === 'themes') {
 				const selectedId = availableThemes.find((t) => t.id === activeThemeId)?.id;
@@ -252,6 +284,10 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 				Spotlight.focus('library-order-view');
 			} else if (cv.view === 'blockedRatings') {
 				Spotlight.focus('blocked-ratings-view');
+			} else if (cv.view === 'subtitleDownloadLanguages') {
+				Spotlight.focus('subtitle-download-languages-view');
+			} else if (cv.view === 'transcodeAudioCodecs') {
+				Spotlight.focus('transcode-audio-codecs-view');
 			} else if (cv.view === 'qrLink') {
 				Spotlight.focus('qr-link-close');
 			} else if (cv.view === 'rowImageTypes') {
@@ -264,6 +300,8 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 				Spotlight.focus('media-bar-libraries-view');
 			} else if (cv.view === 'mediaBarCollections') {
 				Spotlight.focus('media-bar-collections-view');
+			} else if (cv.view === 'mediaBarExternalLists') {
+				Spotlight.focus('media-bar-external-lists-view');
 			} else if (cv.view === 'screensaverLibraries') {
 				Spotlight.focus('screensaver-libraries-view');
 			} else if (cv.view === 'screensaverCollections') {
@@ -280,6 +318,9 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 	}, [categories, settings, availableThemes, activeThemeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	useEffect(() => {
+		// A category's own page under the live preview leaves focus where the pill put it,
+		// unless Back is returning to the row that opened a screen.
+		if (liveCategory && navStack.length === 1 && !pendingFocusRef.current) return undefined;
 		let retry = null;
 		const timer = setTimeout(() => {
 			const cv = navStack[navStack.length - 1];
@@ -311,6 +352,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			if (isConfirmSpendOpen()) return;
 			e.preventDefault();
 			e.stopPropagation();
+			if (onLiveBackRef.current && onLiveBackRef.current()) return;
 			// App.js stops back keys propagating before React sees them, so SpottableInput
 			// never gets to close itself. Stepping out of the field is handled here
 			// instead, which covers every input on these screens.
@@ -325,6 +367,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			if (navStackRef.current.length === 1 && searchQueryRef.current) {
 				setSearchQuery('');
 				setDebouncedQuery('');
+				if (onLiveSearchClearRef.current) onLiveSearchClearRef.current();
 				Spotlight.focus('settings-search-input');
 				return;
 			}
@@ -335,7 +378,10 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 	}, [popView]);
 
 	useEffect(() => {
-		if (serverUrl && accessToken) {
+		// Plex has no /System/Info, so its version comes from the identity call.
+		if (serverUrl && serverType === 'plex') {
+			api.getPublicInfo().then((info) => info?.Version && setServerVersion(info.Version)).catch(() => {});
+		} else if (serverUrl && accessToken) {
 			fetch(`${serverUrl}/System/Info`, {
 				headers: { Authorization: `MediaBrowser Token="${accessToken}"` }
 			})
@@ -345,7 +391,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 				})
 				.catch(() => {});
 		}
-	}, [serverUrl, accessToken]);
+	}, [serverUrl, accessToken, serverType, api]);
 
 	const toggleSetting = useCallback(
 		(key) => {
@@ -462,12 +508,43 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			: [...current, rating]);
 	}, []);
 
-	const openRatingSources = useCallback(() => {
-		const sources = Array.isArray(settings.mdblistRatingSources) ? [...settings.mdblistRatingSources] : [];
+	const openSubtitleDownloadLanguages = useCallback(() => {
+		pushView({view: 'subtitleDownloadLanguages', returnFocusTo: 'setting-subtitleDownloadLanguages'});
+	}, [pushView]);
+
+	const toggleSubtitleDownloadLanguage = useCallback((language) => {
+		const picked = settings.subtitleDownloadLanguages || [];
+		if (picked.includes(language)) {
+			updateSetting('subtitleDownloadLanguages', picked.filter((value) => value !== language));
+		} else if (picked.length < MAX_SUBTITLE_DOWNLOAD_LANGUAGES) {
+			updateSetting('subtitleDownloadLanguages', [...picked, language]);
+		}
+	}, [settings.subtitleDownloadLanguages, updateSetting]);
+
+	// Only the codecs this device's transcode can turn into something else are offered, and
+	// the list is settled before the screen opens since it orders its rows once.
+	const [transcodeAudioOptions, setTranscodeAudioOptions] = useState([]);
+	const openTranscodeAudioCodecs = useCallback(async () => {
+		const profile = await getDeviceProfile(serverType, {}, api).catch(() => null);
+		setTranscodeAudioOptions(getTranscodeAudioCodecOptions().filter(({value}) => !profile || canTranscodeAudioCodecAway(profile, value)));
+		pushView({view: 'transcodeAudioCodecs', returnFocusTo: 'setting-transcodeAudioCodecs'});
+	}, [serverType, api, pushView]);
+
+	const toggleTranscodeAudioCodec = useCallback((codec) => {
+		const picked = settings.transcodeAudioCodecs || [];
+		updateSetting('transcodeAudioCodecs', picked.includes(codec)
+			? picked.filter((value) => value !== codec)
+			: [...picked, codec]);
+	}, [settings.transcodeAudioCodecs, updateSetting]);
+
+	const openRatingSources = useCallback((surface = '') => {
+		const stored = settings[ratingKey(surface, 'mdblistRatingSources')];
+		const sources = Array.isArray(stored) ? [...stored] : [];
 		openedRatingSourcesRef.current = sources.join(',');
+		setRatingSourcesSurface(surface);
 		setTempRatingSources(sources);
-		pushView({view: 'ratingSources', returnFocusTo: 'setting-ratingSources'});
-	}, [settings.mdblistRatingSources, pushView]);
+		pushView({view: 'ratingSources', returnFocusTo: `setting-${ratingKey(surface, 'ratingSources')}`});
+	}, [settings, pushView]);
 
 	const toggleRatingSource = useCallback((sourceValue) => {
 		setTempRatingSources((prev) => {
@@ -492,25 +569,24 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 	}, []);
 
 	const resetRatingSources = useCallback(() => {
-		setTempRatingSources([...defaultSettings.mdblistRatingSources]);
-	}, []);
+		setTempRatingSources([...defaultSettings[ratingKey(ratingSourcesSurface, 'mdblistRatingSources')]]);
+	}, [ratingSourcesSurface]);
 
 	// Covers every ratings setting, not just the source list, so one action puts the
 	// whole integration back the way it shipped. Asks for a second press the same way
-	// the profile reset does.
-	const resetRatingsSettings = useCallback(() => {
+	// the profile reset does. Home rows and the media bar reset only their own copy.
+	const resetRatingsSettings = useCallback((surface = '') => {
 		if (!ratingsResetArmed) {
 			setRatingsResetArmed(true);
 			return;
 		}
 		setRatingsResetArmed(false);
-		updateSettings({
-			mdblistEnabled: defaultSettings.mdblistEnabled,
-			mdblistRatingSources: [...defaultSettings.mdblistRatingSources],
-			tmdbEpisodeRatingsEnabled: defaultSettings.tmdbEpisodeRatingsEnabled,
-			showRatingLabels: defaultSettings.showRatingLabels,
-			showRatingBadges: defaultSettings.showRatingBadges
-		});
+		const reset = {};
+		for (const name of RATING_SETTING_KEYS) {
+			const key = ratingKey(surface, name);
+			if (key in defaultSettings) reset[key] = Array.isArray(defaultSettings[key]) ? [...defaultSettings[key]] : defaultSettings[key];
+		}
+		updateSettings(reset);
 	}, [ratingsResetArmed, updateSettings]);
 
 	// An armed reset left behind shouldnt fire from a later visit
@@ -522,8 +598,8 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 	const commitRatingSources = useCallback(() => {
 		if (tempRatingSources.join(',') === openedRatingSourcesRef.current) return;
 		openedRatingSourcesRef.current = tempRatingSources.join(',');
-		updateSetting('mdblistRatingSources', tempRatingSources);
-	}, [tempRatingSources, updateSetting]);
+		updateSetting(ratingKey(ratingSourcesSurface, 'mdblistRatingSources'), tempRatingSources);
+	}, [tempRatingSources, ratingSourcesSurface, updateSetting]);
 
 	const openExcludedGenres = useCallback(() => {
 		const excluded = Array.isArray(settings.excludedGenres) ? settings.excludedGenres : [];
@@ -541,27 +617,90 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 		popView();
 	}, [tempExcludedGenresText, updateSetting, popView]);
 
-	const openPinCode = useCallback(() => {
+	const {userId, record: signInPin, account: pinAccount, latest: latestSignInPin, save: saveSignInPin} = useSignInPin();
+
+	const openPinFlow = useCallback((purpose, returnFocusTo) => {
 		setTempPinCode('');
 		setPinCodeError('');
-		pushView({view: 'pinCode', returnFocusTo: 'setting-pinCode'});
+		setPinFlow({purpose, verify: purpose !== 'enable'});
+		pushView({view: 'pinCode', returnFocusTo});
 	}, [pushView]);
 
-	const savePinCode = useCallback(() => {
-		if (!/^\d{4}$/.test(tempPinCode)) {
+	// Turning the PIN off, changing it and removing it all take the current one first.
+	const toggleSignInPin = useCallback(() => {
+		openPinFlow(isSignInPinEnabled(signInPin) ? 'disable' : 'enable', 'setting-pinCodeProtection');
+	}, [openPinFlow, signInPin]);
+	const changeSignInPin = useCallback(() => openPinFlow('change', 'setting-pinCode'), [openPinFlow]);
+	const removeSignInPin = useCallback(() => openPinFlow('remove', 'setting-removePin'), [openPinFlow]);
+
+	// The PIN may have been set or removed on another device since.
+	const showingPinScreen = currentView.view === 'subcategory' && currentView.subcategoryId === 'pinCode';
+	useEffect(() => {
+		if (!showingPinScreen || !userId) return undefined;
+		let cancelled = false;
+		const before = latestSignInPin();
+		refreshSignInPin(before, pinAccount).then((next) => {
+			if (!cancelled && next !== before) saveSignInPin(next);
+		});
+		return () => { cancelled = true; };
+	}, [showingPinScreen, userId, pinAccount, latestSignInPin, saveSignInPin]);
+
+	const failPinStep = useCallback((message) => {
+		setTempPinCode('');
+		setPinCodeError(message);
+	}, []);
+
+	const submitPinCode = useCallback(async () => {
+		if (pinBusy || !pinFlow) return;
+		const entered = tempPinCode;
+		if (!isPinShaped(entered)) {
 			setPinCodeError($L('PIN must be exactly 4 digits.'));
 			return;
 		}
-		// Stored as a hash, and the plain one it replaces is cleared out. Choosing a PIN forgets the
-		// guesses that came before it.
-		updateSettings({
-			pinCodeHash: hashPin(tempPinCode),
-			pinCode: '',
-			...clearedLockout(SIGN_IN_PIN)
-		});
-		setPinCodeError('');
-		popView();
-	}, [tempPinCode, updateSettings, popView]);
+		const record = latestSignInPin();
+		setPinBusy(true);
+		try {
+			if (!pinFlow.verify) {
+				const stored = await storeSignInPin(record, entered, pinAccount, pinFlow.current);
+				if (stored.refused) {
+					failPinStep(stored.refused);
+					return;
+				}
+				saveSignInPin(stored.record);
+				popView();
+				return;
+			}
+
+			const checked = await verifySignInPin(record, entered, pinAccount);
+			if (checked.record !== record) saveSignInPin(checked.record);
+			if (checked.outcome !== PIN_ACCEPTED) {
+				failPinStep(signInPinMessage(checked));
+				return;
+			}
+			if (pinFlow.purpose === 'change') {
+				// The server wants the current PIN again to replace it.
+				setPinFlow({purpose: 'change', verify: false, current: entered});
+				setTempPinCode('');
+				setPinCodeError('');
+				return;
+			}
+			// A PIN the server holds has no off switch, only removal.
+			if (pinFlow.purpose === 'disable' && !checked.record.server) {
+				saveSignInPin({...checked.record, enabled: false});
+				popView();
+				return;
+			}
+			const dropped = await dropSignInPin(checked.record, pinAccount, entered);
+			if (dropped.refused) {
+				failPinStep(dropped.refused);
+				return;
+			}
+			saveSignInPin(dropped.record);
+			popView();
+		} finally {
+			setPinBusy(false);
+		}
+	}, [pinBusy, pinFlow, tempPinCode, pinAccount, latestSignInPin, saveSignInPin, failPinStep, popView]);
 
 	const openKidsMode = useCallback(() => {
 		setTempKidsPin('');
@@ -638,6 +777,8 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 		pushView({view: 'externalCustomRows', returnFocusTo: 'setting-externalCustomRows'});
 	}, [pushView]);
 
+	const openOptionsDialog = useCallback((picker) => pushView({view: 'options', ...picker}), [pushView]);
+
 	// Lets a row on one screen open a screen that lives elsewhere in the schema, the
 	// way Progress Bar Time is reached from Video Playback Preferences.
 	const openScreen = useCallback((categoryId, subcategoryId, returnFocusTo) => {
@@ -689,15 +830,15 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 	});
 
 	const {
-		tempHomeRows, tempPluginSections, pluginSectionRenderLimit, setPluginSectionRenderLimit,
-		toggleHomeRowEnabled, toggleSeerrHomeRow, openHomeRows, commitHomeRows, resetHomeRows,
-		toggleHomeRow, moveHomeRow, togglePluginSection, movePluginSection
-	} = useHomeRowsEditor({api, settings, updateSetting, updateSettings, pushView});
+		tempHomeRows, loading: homeRowsLoading, serverHasLiveTv,
+		toggleHomeRowEnabled, toggleSeerrHomeRow, toggleSeerrSlider, openHomeRows, commitHomeRows, resetHomeRows,
+		toggleHomeRow, moveHomeRow
+	} = useHomeRowsEditor({api, serverUrl, servers, settings, updateSetting, updateSettings, pushView});
 
 	const {
 		tempButtons, buttonLayoutKind, openDetailButtons, openOsdButtons, openDetailMetadata,
 		commitButtonLayout, resetButtonLayout, toggleLayoutButton, moveLayoutButton
-	} = useButtonLayoutEditor({settings, updateSettings, pushView});
+	} = useButtonLayoutEditor({settings, updateSettings, pushView, hasLiveTv});
 
 	const {
 		allLibraries, hiddenLibraries, libraryLoading, librarySaving,
@@ -718,9 +859,10 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 	}, [hiddenDetailSections, updateSetting]);
 
 	const {
-		mediaBarLibraries, mediaBarCollections, tempMediaBarLibraryIds, tempMediaBarCollectionIds,
-		mediaBarSourcesLoading, openMediaBarLibraries, openMediaBarCollections,
-		toggleMediaBarLibrary, toggleMediaBarCollection, saveMediaBarLibraries, saveMediaBarCollections
+		mediaBarLibraries, mediaBarCollections, tempMediaBarLibraryIds, tempMediaBarCollectionIds, tempMediaBarExternalLists,
+		mediaBarSourcesLoading, openMediaBarLibraries, openMediaBarCollections, openMediaBarExternalLists,
+		toggleMediaBarLibrary, toggleMediaBarCollection, toggleMediaBarExternalList,
+		saveMediaBarLibraries, saveMediaBarCollections, saveMediaBarExternalLists
 	} = useMediaBarSources({api, settings, updateSettings, pushView, popView});
 
 	const {
@@ -843,7 +985,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 		await Promise.all(enabledRows.map(async (row) => {
 			try {
 				// forceRefresh also asks the plugin to rebuild its own cache.
-				await fetchCustomRow(row, {forceRefresh: true});
+				await fetchCustomRow(row, {forceRefresh: true, language: settings.uiLanguage});
 				refreshed += 1;
 			} catch (e) {
 				void e;
@@ -855,7 +997,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 				.replace('{done}', String(refreshed))
 				.replace('{total}', String(enabledRows.length))
 		);
-	}, [settings.customHomeRows, customRowsRefreshing]);
+	}, [settings.customHomeRows, settings.uiLanguage, customRowsRefreshing]);
 
 	const resetCustomRowForm = useCallback(() => {
 		setCustomRowUrl('');
@@ -893,7 +1035,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 		};
 		if (detected.source === 'letterboxd') row.showUserRatings = customRowShowUserRatings;
 		setCustomRowSaving(true);
-		const result = await validateCustomRow(row);
+		const result = await validateCustomRow(row, {language: settings.uiLanguage});
 		setCustomRowSaving(false);
 		if (result.error) {
 			setCustomRowError(result.error);
@@ -906,7 +1048,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 		resetCustomRowForm();
 	}, [customRowMode, customRowUrl, customRowSourceKey, customRowParamA, customRowParamB,
 		customRowName, customRowSortBy, customRowSortOrder, customRowShowUserRatings,
-		editingCustomRowId, settings.customHomeRows, updateSetting, resetCustomRowForm]);
+		editingCustomRowId, settings.customHomeRows, settings.uiLanguage, updateSetting, resetCustomRowForm]);
 
 	// Loads a stored row into the manual form so its ids and sorting can change
 	// without removing and re-adding it.
@@ -960,8 +1102,11 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 		capabilities,
 		seerr,
 		achievements,
+		romm,
 		seerrLabel,
 		isSeerr,
+		hasLiveTv,
+		serverType,
 		isWebOS: isWebOS(),
 		isTizen: isTizen(),
 		isVega: isVega(),
@@ -971,6 +1116,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 		availableThemes,
 		activeThemeId,
 		ratingsResetArmed,
+		signInPin,
 		actions: {
 			openThemes,
 			openThemeStore,
@@ -980,17 +1126,22 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			openDetailMetadata,
 			openDetailSections,
 			openDiagnostics,
-			openPinCode,
+			toggleSignInPin,
+			changeSignInPin,
+			removeSignInPin,
 			openKidsMode,
 			openLibraries,
 			openLibraryOrder,
 			openParentalControls,
+			openSubtitleDownloadLanguages,
+			openTranscodeAudioCodecs,
 			openQrLink,
 			openRatingSources,
 			openRowImageTypes,
 			openExcludedGenres,
 			openMediaBarLibraries,
 			openMediaBarCollections,
+			openMediaBarExternalLists,
 			openScreensaverLibraries,
 			openScreensaverCollections,
 			openScreensaverGenres,
@@ -1004,6 +1155,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			resetRatingsSettings,
 			toggleExperimentalTruehd,
 			setSetting: updateSetting,
+			setSettings: updateSettings,
 			refreshPlugin,
 			runSetupAgain: onRunSetupWizard,
 			// The probe page ships with the Xbox build, and its report goes to the server
@@ -1011,16 +1163,22 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			openDeviceProbe: canProbeDevice ? openDeviceProbe : null
 		}
 	}), [
-		settings, capabilities, seerr, achievements, seerrLabel, isSeerr, serverUrl, ratingsResetArmed, resetRatingsSettings, toggleExperimentalTruehd, updateSetting, refreshPlugin,
+		settings, capabilities, seerr, achievements, romm, seerrLabel, isSeerr, hasLiveTv, serverType, serverUrl, ratingsResetArmed, resetRatingsSettings, toggleExperimentalTruehd, updateSetting, updateSettings, refreshPlugin,
 		serverVersion, availableThemes, activeThemeId, openThemes, openThemeStore, openHomeRows,
 		openDetailButtons, openOsdButtons, openDetailMetadata, openDetailSections, openDiagnostics,
-		openPinCode, openKidsMode, openLibraries, openLibraryOrder, openParentalControls, openQrLink, openRatingSources, openRowImageTypes, openExcludedGenres, openMediaBarLibraries,
-		openMediaBarCollections, openScreensaverLibraries, openScreensaverCollections, openScreensaverGenres,
+		signInPin, toggleSignInPin, changeSignInPin, removeSignInPin, openKidsMode, openLibraries, openLibraryOrder, openParentalControls, openSubtitleDownloadLanguages, openTranscodeAudioCodecs, openQrLink, openRatingSources, openRowImageTypes, openExcludedGenres, openMediaBarLibraries,
+		openMediaBarCollections, openMediaBarExternalLists, openScreensaverLibraries, openScreensaverCollections, openScreensaverGenres,
 		openImdbLists, openSeasonalRow, openExternalTmdbLists, openExternalCalendars,
 		openExternalCustomRows, openSeerrHomeRows, openScreen, onRunSetupWizard, canProbeDevice
 	]);
 
-	const openCategory = useCallback((id) => {
+	// The live preview's inspector names rows with the same context the list draws them with.
+	useEffect(() => {
+		if (onSchemaContext) onSchemaContext(settingsCtx);
+	}, [onSchemaContext, settingsCtx]);
+
+	// The page a category opens on.
+	const rootViewFor = useCallback((id) => {
 		// A category holding a single screen opens it directly, unless it always lists its screens
 		const category = SETTINGS_SCHEMA.find((c) => c.id === id);
 		const visible = (category?.subcategories || [])
@@ -1028,24 +1186,50 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 		if (visible.length === 1 && !category.alwaysMenu) {
 			// A subcategory that is really a screen of its own opens that screen, the same way it
 			// would if it had been reached through the subcategory list.
-			pushView(visible[0].opensView
-				? {
-					view: visible[0].opensView,
-					label: resolve(visible[0].label, settingsCtx),
-					returnFocusTo: `cat-${id}`
-				}
-				: {
-					view: 'subcategory',
-					categoryId: id,
-					subcategoryId: visible[0].id,
-					label: resolve(visible[0].label, settingsCtx),
-					returnFocusTo: `cat-${id}`
-				});
-			return;
+			const only = visible[0];
+			const label = resolve(only.label, settingsCtx);
+			return only.opensView
+				? {view: only.opensView, label}
+				: {view: 'subcategory', categoryId: id, subcategoryId: only.id, label};
 		}
-		pushView({view: 'category', id, returnFocusTo: `cat-${id}`});
-	}, [pushView, settingsCtx]);
+		return {view: 'category', id};
+	}, [settingsCtx]);
 
+	const openCategory = useCallback((id) => {
+		pushView({...rootViewFor(id), returnFocusTo: `cat-${id}`});
+	}, [pushView, rootViewFor]);
+
+
+	const rootViewForRef = useRef(rootViewFor);
+	rootViewForRef.current = rootViewFor;
+
+	// A query in the field beside the pill swaps the page for the results, and clearing it
+	// brings the category back.
+	const liveSearching = !!(liveCategory && liveSearchQuery && liveSearchQuery.trim());
+	useLayoutEffect(() => {
+		if (!liveCategory) return;
+		navActionRef.current = 'none';
+		setNavStack([liveSearching ? {view: 'categories', searchOnly: true} : rootViewForRef.current(liveCategory)]);
+	}, [liveCategory, liveSearching]);
+
+	useEffect(() => {
+		if (liveCategory) setSearchQuery(liveSearchQuery || '');
+	}, [liveCategory, liveSearchQuery]);
+
+	// Tells the live preview which option the picker has in focus, and that it closed.
+	const handleOptionFocus = useCallback((ev) => {
+		if (!onPreviewTry || !currentView.settingKey || !currentView.options) return;
+		const host = ev.target.closest ? ev.target.closest('[data-spotlight-id]') : null;
+		const match = /^opt-(\d+)$/.exec(host ? host.getAttribute('data-spotlight-id') : '');
+		if (!match) return;
+		const index = Number(match[1]);
+		const option = currentView.options[index];
+		if (option) onPreviewTry(currentView.settingKey, option.value, index);
+	}, [onPreviewTry, currentView]);
+
+	useEffect(() => {
+		if (onPreviewTry && currentView.view !== 'options') onPreviewTry(null);
+	}, [onPreviewTry, currentView]);
 
 	const openSubcategory = useCallback((sub) => {
 		// An entry that is a screen in its own right rather than a list of settings rows opens
@@ -1062,12 +1246,13 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 	}, [pushView, currentView.id]);
 
 	const selectOptionValue = useCallback((value) => {
+		if (currentView.onSelect) {
+			currentView.onSelect(value);
+			popView();
+			return;
+		}
 		handleOptionSelect(currentView.settingKey, value);
-	}, [handleOptionSelect, currentView.settingKey]);
-
-	const showMorePluginSections = useCallback(() => {
-		setPluginSectionRenderLimit((prev) => Math.min(tempPluginSections.length, prev + PLUGIN_SECTION_RENDER_STEP));
-	}, [setPluginSectionRenderLimit, tempPluginSections.length]);
+	}, [handleOptionSelect, popView, currentView]);
 
 	const showMoreLogs = useCallback(() => {
 		setLogRenderLimit((prev) => prev + LOG_RENDER_STEP);
@@ -1123,15 +1308,16 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 				onLogout={handleSeerrLogout}
 			/>
 		),
+		rommPanel: () => <RommAccountPanel romm={romm} />,
 		aboutHeader: renderAboutHeader,
 		aboutDataActions: renderAboutDataActions,
 		imageCacheActions: renderImageCacheActions,
 		checkForUpdates: renderCheckForUpdates,
 		playbackTimePreview: renderPlaybackTimePreview,
-		subtitlePreview: renderSubtitlePreview,
-		screensaverPreview: renderScreensaverPreview,
-		loadingAnimationPreview: () => <LoadingAnimationPreview />,
-		trickplayPreview: () => <TrickplaySettingsPreview />
+		subtitlePreview: liveCategory ? null : renderSubtitlePreview,
+		screensaverPreview: liveCategory ? null : renderScreensaverPreview,
+		loadingAnimationPreview: liveCategory ? null : () => <LoadingAnimationPreview />,
+		trickplayPreview: liveCategory ? null : () => <TrickplaySettingsPreview />
 	};
 
 	const rowDeps = {settings, updateSetting, toggleSetting, pushView, customRenderers};
@@ -1247,12 +1433,12 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			<Fragment key={viewKey}>
 			{viewName === 'categories' && (
 				<CategoriesView
-					categories={categories}
+					categories={baseView.searchOnly ? [] : categories}
 					searchQuery={searchQuery}
 					onSearchChange={handleSearchChange}
 					onSearchKeyDown={handleSearchKeyDown}
 					showSearchResults={showSearchResults}
-					hideSearch={settings.kidsModeEnabled}
+					hideSearch={settings.kidsModeEnabled || !!liveCategory}
 					searchResults={searchResults}
 					onOpenResult={openSearchResult}
 					onResultKeyDown={handleResultKeyDown}
@@ -1314,14 +1500,13 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			{viewName === 'homeRows' && (
 				<HomeRowsView
 					settings={settings}
+					serverUrl={serverUrl}
+					servers={servers}
 					tempHomeRows={tempHomeRows}
-					tempPluginSections={tempPluginSections}
-					pluginSectionRenderLimit={pluginSectionRenderLimit}
-					onShowMoreSections={showMorePluginSections}
+					loading={homeRowsLoading}
+					serverHasLiveTv={serverHasLiveTv}
 					onToggleHomeRow={toggleHomeRow}
 					onMoveHomeRow={moveHomeRow}
-					onTogglePluginSection={togglePluginSection}
-					onMovePluginSection={movePluginSection}
 					onReset={resetHomeRows}
 					onLeave={commitHomeRows}
 				/>
@@ -1356,16 +1541,30 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 					seerrLabel={seerrLabel}
 					enabledMap={homeRowEnabledMap}
 					onToggleRow={toggleSeerrHomeRow}
+					homeRows={settings.homeRows}
+					serverUrl={serverUrl}
+					onToggleSlider={toggleSeerrSlider}
+					settings={settings}
+					onOpenOptions={openOptionsDialog}
 				/>
 			)}
 			{viewName === 'imdbLists' && (
-				<ImdbListsView settings={settings} onUpdateSettings={updateSettings} />
+				<ImdbListsView
+					settings={settings}
+					onUpdateSettings={updateSettings}
+					onOpenOptions={openOptionsDialog}
+				/>
 			)}
 			{viewName === 'seasonalRow' && (
 				<SeasonalRowView settings={settings} onUpdateSettings={updateSettings} />
 			)}
 			{viewName === 'externalTmdbLists' && (
-				<ExternalTmdbListsView enabledMap={homeRowEnabledMap} onToggleRow={toggleHomeRowEnabled} />
+				<ExternalTmdbListsView
+					enabledMap={homeRowEnabledMap}
+					onToggleRow={toggleHomeRowEnabled}
+					settings={settings}
+					onOpenOptions={openOptionsDialog}
+				/>
 			)}
 			{viewName === 'externalCalendars' && (
 				<ExternalCalendarsView
@@ -1420,7 +1619,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			)}
 			{viewName === 'rowImageTypes' && (
 				<RowImageTypesView
-					rows={(settings.homeRows || []).filter((row) => row.enabled && row.id !== 'librarybuttons')}
+					rows={(settings.homeRows || []).filter((row) => row.enabled && row.id !== 'librarybuttons' && !isPickedRow(row) && !isSeerrSliderRow(row))}
 					overrides={settings.homeRowImageTypes || {}}
 					globalLabel={getLabel(getImageTypeOptions(), settings.homeRowsImageType, $L('Poster'))}
 					onCycleRow={cycleRowImageType}
@@ -1428,6 +1627,29 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			)}
 			{viewName === 'qrLink' && (
 				<QrLinkView title={baseView.label} url={baseView.url} onClose={popView} />
+			)}
+			{viewName === 'subtitleDownloadLanguages' && (
+				<CheckListView
+					spotlightId='subtitle-download-languages-view'
+					rowIdPrefix='subtitle-download-language'
+					title={$L('Subtitle Download Languages')}
+					lead={$L('Languages to search when downloading subtitles, up to {max}. With none ticked, the default subtitle language is searched, or one language is picked from the video when that is not set.').replace('{max}', MAX_SUBTITLE_DOWNLOAD_LANGUAGES)}
+					options={getSubtitleLanguageOptions().filter((option) => option.value)}
+					picked={settings.subtitleDownloadLanguages || []}
+					max={MAX_SUBTITLE_DOWNLOAD_LANGUAGES}
+					onToggle={toggleSubtitleDownloadLanguage}
+				/>
+			)}
+			{viewName === 'transcodeAudioCodecs' && (
+				<CheckListView
+					spotlightId='transcode-audio-codecs-view'
+					rowIdPrefix='transcode-audio-codec'
+					title={$L('Transcode Audio Codecs')}
+					lead={$L('The server converts audio in these formats instead of sending it as is.')}
+					options={transcodeAudioOptions}
+					picked={settings.transcodeAudioCodecs || []}
+					onToggle={toggleTranscodeAudioCodec}
+				/>
 			)}
 			{viewName === 'blockedRatings' && (
 				<BlockedRatingsView
@@ -1468,9 +1690,10 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 				<PinCodeView
 					pin={tempPinCode}
 					error={pinCodeError}
+					verify={Boolean(pinFlow?.verify)}
 					onPinChange={changePinCode}
 					onCancel={popView}
-					onSave={savePinCode}
+					onSave={submitPinCode}
 				/>
 			)}
 			{viewName === 'libraries' && (
@@ -1539,6 +1762,24 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 					onSave={saveMediaBarCollections}
 				/>
 			)}
+			{viewName === 'mediaBarExternalLists' && (
+				<MediaBarSourceView
+					viewSpotlightId='media-bar-external-lists-view'
+					title={$L('External Lists')}
+					description={$L('Choose which IMDb, TMDB and custom lists the media bar also draws from.')}
+					loading={false}
+					items={mediaBarExternalListOptions(settings.customHomeRows, seerr.pluginInfo?.tmdbAvailable === true)}
+					itemIdKey='Id'
+					itemNameKey='Name'
+					selectedIds={tempMediaBarExternalLists}
+					itemSpotlightPrefix='media-bar-external-list'
+					cancelSpotlightId='media-bar-external-list-cancel'
+					saveSpotlightId='media-bar-external-list-save'
+					onToggleSelection={toggleMediaBarExternalList}
+					onCancel={popView}
+					onSave={saveMediaBarExternalLists}
+				/>
+			)}
 			{viewName === 'screensaverLibraries' && (
 				<MediaBarSourceView
 					viewSpotlightId='screensaver-libraries-view'
@@ -1600,12 +1841,14 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			</SettingsEnterContext.Provider>
 			</SettingsTitleContext.Provider>
 			{optionsOpen && (
-				<OptionsDialog
-					title={currentView.title}
-					options={currentView.options}
-					currentValue={currentView.settingKey === '__themeSelection' ? activeThemeId : settings[currentView.settingKey]}
-					onSelect={selectOptionValue}
-				/>
+				<div onFocus={handleOptionFocus}>
+					<OptionsDialog
+						title={currentView.title}
+						options={currentView.options}
+						currentValue={currentView.settingKey === '__themeSelection' ? activeThemeId : currentView.value}
+						onSelect={selectOptionValue}
+					/>
+				</div>
 			)}
 			<ClearDataDialog
 				open={clearDataDialogOpen}

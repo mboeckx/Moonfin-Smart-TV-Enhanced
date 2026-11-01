@@ -1,6 +1,8 @@
 import {memo, useCallback, useMemo, useState} from 'react';
 import $L from '@enact/i18n/$L';
+import Spotlight from '@enact/spotlight';
 import SpotlightContainerDecorator from '@enact/spotlight/SpotlightContainerDecorator';
+import {useAuth} from '../../context/AuthContext';
 import {useSettings} from '../../context/SettingsContext';
 import {useSeerr} from '../../context/SeerrContext';
 import {useSyncPlay} from '../../context/SyncPlayContext';
@@ -8,7 +10,7 @@ import {useServerMessages} from '../../context/ServerMessagesContext';
 import {useAchievements} from '../../context/AchievementsContext';
 import SeerrIcon from '../icons/SeerrIcon';
 import SyncPlayIcon from '../icons/SyncPlayIcon';
-import {FavoritesIcon, FriendsIcon, GenresIcon, HomeIcon, LiveTvIcon, MessagesIcon, SearchIcon, SettingsIcon, ShuffleIcon} from '../icons/navIcons';
+import {FavoritesIcon, FriendsIcon, GenresIcon, HomeIcon, LiveTvIcon, MessagesIcon, SearchIcon, SettingsIcon, ShuffleIcon, libraryNavIcon} from '../icons/navIcons';
 import useClock from '../../hooks/useClock';
 import {librariesForNav} from '../../utils/liveTvLibrary';
 import {isKidsMode} from '../../utils/kidsMode';
@@ -17,11 +19,19 @@ import {resolveOverlayColor} from '../../theme/overlayColors';
 import {CONTENT_FOCUS_TARGETS, focusFirstContentTarget} from '../../utils/navFocusTargets';
 import {pointerHover} from '../../utils/focusScroll';
 import {KEYS} from '../../utils/keys';
+import {NavMusicPill} from '../MiniMusicPlayer/MiniMusicPlayer';
 import NavLibraries from './NavLibraries';
 import NavPillButton from './NavPillButton';
 import NavUserButton from './NavUserButton';
 
 import css from './NavBar.module.less';
+
+// A library as a pill of its own, for Show Libraries Individually. It holds the library itself
+// rather than its id, since two servers, or two users of one server, can list the same id.
+const NavLibraryPill = ({library, slot, onSelectLibrary}) => {
+	const handleClick = useCallback(() => onSelectLibrary?.(library), [library, onSelectLibrary]);
+	return <NavPillButton Icon={libraryNavIcon(library)} slot={slot} label={library.Name} onClick={handleClick} />;
+};
 
 const NavContainer = SpotlightContainerDecorator({
 	enterTo: 'default-element',
@@ -45,11 +55,15 @@ const NavBar = ({
 	onUserMenu,
 	onSyncPlay,
 	onMessages,
-	onFriends
+	onFriends,
+	music,
+	onOpenMusic,
+	hideForTrailer
 }) => {
 	const {settings, activeTheme} = useSettings();
 	const {isEnabled: seerrEnabled, displayName} = useSeerr();
 	const {isInGroup} = useSyncPlay();
+	const {serverType} = useAuth();
 	const {messages, unreadCount} = useServerMessages();
 	const {socialAvailable, badgeCount: friendsBadge} = useAchievements();
 	const [libraryMenuOpen, setLibraryMenuOpen] = useState(false);
@@ -64,7 +78,8 @@ const NavBar = ({
 	const kidsMode = isKidsMode(settings);
 	const showLiveTv = !kidsMode && settings.showLiveTvButton !== false && hasLiveTv;
 	const showSeerr = !kidsMode && seerrEnabled && settings.showSeerrButton !== false;
-	const showSyncPlay = !kidsMode && settings.syncplayEnabled !== false && settings.showSyncPlayButton !== false;
+	// Plex has no SyncPlay.
+	const showSyncPlay = !kidsMode && serverType !== 'plex' && settings.syncplayEnabled !== false && settings.showSyncPlayButton !== false;
 	const navLibraries = librariesForNav(libraries, showLiveTv, {hideLiveTv: kidsMode});
 	const showLibraries = !kidsMode && settings.showLibrariesInToolbar !== false && navLibraries.length > 0;
 	// Only with something to show, so the menu never has a button that does nothing.
@@ -108,12 +123,14 @@ const NavBar = ({
 		e.target?.scrollIntoView?.({behavior: 'smooth', block: 'nearest', inline: 'nearest'});
 	}, []);
 
+	const hasMusic = Boolean(music);
 	const handleNavKeyDown = useCallback((e) => {
 		if (e.keyCode !== KEYS.DOWN) return;
 		e.preventDefault();
 		e.stopPropagation();
-		focusFirstContentTarget(CONTENT_FOCUS_TARGETS, 'down');
-	}, []);
+		if (hasMusic) Spotlight.focus('navbar-music-title');
+		else focusFirstContentTarget(CONTENT_FOCUS_TARGETS, 'down');
+	}, [hasMusic]);
 
 	// Slots hand out the theme's nav color cycle in the order pills actually
 	// render, so hiding a button never doubles a color on its neighbours.
@@ -125,7 +142,7 @@ const NavBar = ({
 
 	return (
 		<NavContainer
-			className={settings.navbarAlwaysExpanded ? `${css.topNav} ${css.alwaysExpanded}` : css.topNav}
+			className={`${css.topNav} ${settings.navbarAlwaysExpanded ? css.alwaysExpanded : ''} ${hideForTrailer ? css.trailerHidden : ''}`}
 			onKeyDown={handleNavKeyDown}
 			spotlightId="navbar"
 		>
@@ -162,7 +179,16 @@ const NavBar = ({
 						<NavPillButton Icon={SeerrIcon} slot={nextSlot()} label={displayName} onClick={onDiscover} spotlightId="navbar-discover" />
 					)}
 
-					{showLibraries && (
+					{showLibraries && (settings.showLibrariesIndividually === true ? (
+						navLibraries.map((library) => (
+							<NavLibraryPill
+								key={`${library._serverId || ''}:${library._serverUserId || ''}:${library.Id}`}
+								library={library}
+								slot={nextSlot()}
+								onSelectLibrary={onSelectLibrary}
+							/>
+						))
+					) : (
 						<NavLibraries
 							libraries={navLibraries}
 							slot={nextSlot()}
@@ -171,7 +197,7 @@ const NavBar = ({
 							leftTargetId={librariesLeftTargetId}
 							onMenuOpen={setLibraryMenuOpen}
 						/>
-					)}
+					))}
 
 					{showMessages && (
 						<NavPillButton Icon={MessagesIcon} slot={nextSlot()} label={$L('Messages')} onClick={onMessages} spotlightId="navbar-messages" badge={unreadCount} />
@@ -188,6 +214,15 @@ const NavBar = ({
 			<div className={css.navRight}>
 				{showClock && <div className={css.clock}>{clock}</div>}
 			</div>
+
+			{music && (
+				<NavMusicPill
+					item={music.item}
+					paused={music.paused}
+					onOpen={onOpenMusic}
+					style={{background: navPillStyle.background, color: navPillStyle.color}}
+				/>
+			)}
 		</NavContainer>
 	);
 };

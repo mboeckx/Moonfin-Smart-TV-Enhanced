@@ -13,6 +13,8 @@ import * as remoteControl from '../services/remoteControl';
 
 import {clearProxiedImageCache} from '../hooks/useProxiedImage';
 import {parseUrl} from '../utils/urlCompat';
+import {noteProvedSignIn} from '../utils/signInPin';
+import {bestPlexAddress} from '../services/plexTv';
 
 const REVALIDATE_INTERVAL = 5 * 60 * 1000;
 const BACKOFF_DELAYS = [5000, 10000, 20000];
@@ -86,6 +88,12 @@ export const AuthProvider = ({children}) => {
 		}
 	}, []);
 
+	// A Plex server can move between its addresses, so a saved one is checked for the best before it's used, and the
+	// saved servers are read again once a better one is stored.
+	const addressFor = useCallback((entry) => (entry?.serverType === 'plex'
+		? bestPlexAddress(entry, (best) => multiServerManager.updateServer(entry.serverId, {url: best}).then(loadServers))
+		: Promise.resolve(entry?.url)), [loadServers]);
+
 	useEffect(() => {
 		const init = async () => {
 			try {
@@ -118,6 +126,7 @@ export const AuthProvider = ({children}) => {
 						if (restoreTarget !== active) {
 							await multiServerManager.setActiveServer(restoreTarget.serverId, restoreTarget.userId);
 						}
+						restoreTarget = {...restoreTarget, url: await addressFor(restoreTarget)};
 						jellyfinApi.setServer(restoreTarget.url);
 						jellyfinApi.setServerType(restoreTarget.serverType || 'jellyfin');
 						jellyfinApi.setAuth(restoreTarget.userId, restoreTarget.accessToken);
@@ -171,7 +180,7 @@ export const AuthProvider = ({children}) => {
 			}
 		};
 		init();
-	}, [loadServers]);
+	}, [loadServers, addressFor]);
 
 	const login = useCallback(async (server, username, password, options = {}) => {
 		const {serverName: sName, serverType: sType = 'jellyfin', serverVersion: sVersion = null, isAddingNewServer = false, switchToNewUser = true} = options;
@@ -182,6 +191,7 @@ export const AuthProvider = ({children}) => {
 		const result = await jellyfinApi.api.authenticateByName(username, password);
 
 		jellyfinApi.setAuth(result.User.Id, result.AccessToken);
+		if (password) noteProvedSignIn(server, result.User.Id);
 
 		// Use provided server name or extract from URL
 		let finalServerName = sName;
@@ -237,7 +247,10 @@ export const AuthProvider = ({children}) => {
 	}, [loadServers]);
 
 	const loginWithToken = useCallback(async (server, authResult, options = {}) => {
-		const {serverName: sName, serverType: sType = 'jellyfin', serverVersion: sVersion = null, isAddingNewServer = false, switchToNewUser = true} = options;
+		const {
+			serverName: sName, serverType: sType = 'jellyfin', serverVersion: sVersion = null, isAddingNewServer = false, switchToNewUser = true,
+			serverFields = null, userFields = null
+		} = options;
 
 		jellyfinApi.setServer(server);
 		jellyfinApi.setServerType(sType);
@@ -264,6 +277,7 @@ export const AuthProvider = ({children}) => {
 			sType,
 			sVersion
 		);
+		if (serverFields || userFields) await multiServerManager.updateServer(serverResult.serverId, serverFields, authResult.User.Id, userFields);
 
 		// Always switch to the newly logged in user
 		const shouldSwitch = switchToNewUser || !isAddingNewServer;
@@ -299,12 +313,16 @@ export const AuthProvider = ({children}) => {
 	 * Switch to a different server/user
 	 */
 	const switchUser = useCallback(async (serverId, userId) => {
+		// Music left playing behind the screens is the leaving user's, so it stops while their
+		// sign in can still report it.
+		await remoteControl.runPlayerCommand('stop');
 		try {
 			const success = await multiServerManager.setActiveServer(serverId, userId);
 			if (!success) return false;
 
-			const active = await multiServerManager.getActiveServer();
-			if (!active) return false;
+			const saved = await multiServerManager.getActiveServer();
+			if (!saved) return false;
+			const active = {...saved, url: await addressFor(saved)};
 
 			// Update API
 			jellyfinApi.setServer(active.url);
@@ -349,7 +367,7 @@ export const AuthProvider = ({children}) => {
 			console.error('[AUTH] Error switching user:', error);
 			return false;
 		}
-	}, [loadServers]);
+	}, [loadServers, addressFor]);
 
 	/**
 	 * Remove a server/user
@@ -424,6 +442,7 @@ export const AuthProvider = ({children}) => {
 	}, []);
 
 	const logout = useCallback(async () => {
+		await remoteControl.runPlayerCommand('stop');
 		if (activeServerInfo) {
 			await multiServerManager.removeServer(activeServerInfo.serverId, activeServerInfo.userId);
 		}
@@ -455,6 +474,7 @@ export const AuthProvider = ({children}) => {
 	 * Full logout - remove all servers and users
 	 */
 	const logoutAll = useCallback(async () => {
+		await remoteControl.runPlayerCommand('stop');
 		// Clear all caches first
 		clearAllCaches();
 
@@ -516,6 +536,17 @@ export const AuthProvider = ({children}) => {
 		}
 	}, [isAuthenticated]);
 
+	/**
+	 * Leave the signed-in user without forgetting them: their saved sign-in stays, so they are
+	 * on the picker to be chosen again. For when the account can't be used for now.
+	 */
+	const leaveSession = useCallback(() => {
+		jellyfinApi.setAuth(null, null);
+		setAccessToken(null);
+		setUser(null);
+		setIsAuthenticated(false);
+	}, []);
+
 	// The session socket, and the watched state and remote control it carries, belong to whoever
 	// is signed in, so all of it starts over when the account or the server changes. A server that
 	// restarts forgets what this session can do, so it's told again on every connect.
@@ -525,7 +556,7 @@ export const AuthProvider = ({children}) => {
 		userDataSync.bindTo(serverSocket.onMessage, jellyfinApi.getUserId());
 		remoteControl.bindTo(serverSocket.onMessage);
 		const stopReporting = serverSocket.onConnectionChange((open) => {
-			if (open) jellyfinApi.reportCapabilities();
+			if (open) jellyfinApi.reportCapabilities({unlessRecent: true});
 		});
 		return () => {
 			stopReporting();
@@ -608,6 +639,7 @@ export const AuthProvider = ({children}) => {
 		loginWithToken,
 		logout,
 		logoutAll,
+		leaveSession,
 		switchUser,
 		removeUser,
 		removeServerEntry,
@@ -643,6 +675,7 @@ export const AuthProvider = ({children}) => {
 		loginWithToken,
 		logout,
 		logoutAll,
+		leaveSession,
 		switchUser,
 		removeUser,
 		removeServerEntry,

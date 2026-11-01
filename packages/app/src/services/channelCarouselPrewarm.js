@@ -19,6 +19,8 @@ export const createChannelCarouselPrewarm = (api, {sortBy} = {}) => {
 	let warmPending = false;
 	let hourlyPending = false;
 	let disposed = false;
+	// Counts the recording changes the player reports, so a load can tell one landed while it ran.
+	let recordingRevision = 0;
 	// Assigned below. The pending queue reaches back to them once a fetch finishes.
 	let warm = null;
 	let refreshHourly = null;
@@ -92,7 +94,13 @@ export const createChannelCarouselPrewarm = (api, {sortBy} = {}) => {
 	warm = async () => {
 		if (disposed || !channels.length) return;
 		const ids = Array.from(new Set(channels.map((channel) => channel.Id)));
-		await runExclusive(() => warmPrograms(ids));
+		const wasCold = !isWarm();
+		await runExclusive(async () => {
+			const revision = recordingRevision;
+			await warmPrograms(ids);
+			// A recording changed during the first load was ignored, since nothing was warm yet to refresh.
+			if (wasCold && isWarm() && revision !== recordingRevision) await store.refreshRecordings();
+		});
 		if (disposed) return;
 		store.scheduleBoundaryRefresh();
 		if (hourlyDueAt == null) armHourly();
@@ -123,6 +131,11 @@ export const createChannelCarouselPrewarm = (api, {sortBy} = {}) => {
 			if (disposed || inFlight) return;
 			await runExclusive(() => store.ensureProgramsForChannels(ids));
 			if (!disposed) store.scheduleBoundaryRefresh();
+		},
+
+		refresh: () => {
+			recordingRevision++;
+			if (!disposed && isWarm()) refreshHourly();
 		},
 
 		ensureReady: async () => {

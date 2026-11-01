@@ -1,5 +1,6 @@
 import {useEffect, useRef, memo} from 'react';
 import {getPerfTier} from '../../utils/perfTier';
+import {serverBlurredUrl} from '../../utils/serverBlur';
 
 import css from './BackdropLayer.module.less';
 
@@ -12,7 +13,11 @@ const clampBlur = (amount) => {
 	return Math.min(amount || 0, cap);
 };
 
-const BackdropLayer = memo(({targetUrl, blurAmount, overlayOpacity}) => {
+const FADE_CLASS = {corner: css.cornerFadeDown, top: css.topFade};
+
+const BackdropLayer = memo(({targetUrl: requestedUrl, blurAmount, overlayOpacity, placement}) => {
+	const blurredUrl = serverBlurredUrl(requestedUrl, blurAmount);
+	const targetUrl = blurredUrl || requestedUrl;
 	const layerARef = useRef(null);
 	const layerBRef = useRef(null);
 	const activeLayerRef = useRef('a');
@@ -69,9 +74,11 @@ const BackdropLayer = memo(({targetUrl, blurAmount, overlayOpacity}) => {
 		}, BACKDROP_DEBOUNCE_MS);
 	}, [targetUrl]);
 
-	const effectiveBlur = clampBlur(blurAmount);
-	const layerStyle = effectiveBlur > 0
-		? {WebkitFilter: `blur(${effectiveBlur}px)`, filter: `blur(${effectiveBlur}px)`}
+	const effectiveBlur = blurredUrl ? 0 : clampBlur(blurAmount);
+	const filter = effectiveBlur > 0 ? `blur(${effectiveBlur}px)` : 'none';
+	// A server blur darkens the edges like a CSS one, so both keep the oversize that hides them.
+	const layerStyle = blurredUrl || effectiveBlur > 0
+		? {WebkitFilter: filter, filter}
 		: {WebkitFilter: 'none', filter: 'none', top: 0, left: 0, width: '100%', height: '100%'};
 
 	// How much picture shows through is the screen's own call, since a page laying
@@ -81,16 +88,21 @@ const BackdropLayer = memo(({targetUrl, blurAmount, overlayOpacity}) => {
 
 	return (
 		<div className={css.globalBackdrop}>
-			<div
-				ref={layerARef}
-				className={css.globalBackdropImage}
-				style={layerStyle}
-			/>
-			<div
-				ref={layerBRef}
-				className={css.globalBackdropImage}
-				style={layerStyle}
-			/>
+			{/* The frames stay mounted either way, so the layers keep the picture they hold */}
+			<div className={placement === 'corner' ? css.cornerFadeLeft : css.fill}>
+				<div className={FADE_CLASS[placement] || css.fill}>
+					<div
+						ref={layerARef}
+						className={css.globalBackdropImage}
+						style={layerStyle}
+					/>
+					<div
+						ref={layerBRef}
+						className={css.globalBackdropImage}
+						style={layerStyle}
+					/>
+				</div>
+			</div>
 			<div className={css.globalBackdropOverlay} style={overlayStyle} />
 		</div>
 	);

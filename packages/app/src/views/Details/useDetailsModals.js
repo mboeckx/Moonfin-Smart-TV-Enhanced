@@ -4,7 +4,7 @@ import Spotlight from '@enact/spotlight';
 // Every overlay the detail screen can raise, and the BACK handling that closes them in the
 // right order. The track pickers share one activeModal slot because only one of them is ever
 // up at a time, while the dialogs that own their own component get a flag each.
-const useDetailsModals = ({backHandlerRef, onArtworkClosed, seerrBackRef, overviewBackRef, spotlightBackRef, trailerBackRef}) => {
+const useDetailsModals = ({backHandlerRef, onArtworkClosed, seerrBackRef, overviewBackRef, spotlightBackRef, trailerBackRef, reviewBackRef}) => {
 	const [activeModal, setActiveModal] = useState(null);
 	const [showPlaylistModal, setShowPlaylistModal] = useState(false);
 	const [showCollectionModal, setShowCollectionModal] = useState(false);
@@ -12,6 +12,7 @@ const useDetailsModals = ({backHandlerRef, onArtworkClosed, seerrBackRef, overvi
 	const [showRatingDialog, setShowRatingDialog] = useState(false);
 	const [showArtworkModal, setShowArtworkModal] = useState(false);
 	const [showIdentifyModal, setShowIdentifyModal] = useState(false);
+	const [showPersonDisplayModal, setShowPersonDisplayModal] = useState(false);
 
 	const lastFocusedElementRef = useRef(null);
 	const artworkModalBackRef = useRef(null);
@@ -116,15 +117,25 @@ const useDetailsModals = ({backHandlerRef, onArtworkClosed, seerrBackRef, overvi
 		window.requestAnimationFrame(() => Spotlight.focus('details-action-buttons'));
 	}, [onArtworkClosed]);
 
+	const handleOpenPersonDisplayModal = useCallback(() => {
+		setShowPersonDisplayModal(true);
+	}, []);
+
+	const handleClosePersonDisplayModal = useCallback(() => {
+		setShowPersonDisplayModal(false);
+	}, []);
+
 	// BACK closes the innermost overlay. The artwork modal browses within itself, so it gets
 	// first refusal before the whole thing is dismissed. The Seerr popups and the expanded
 	// overview run off their own state, so they answer through refs rather than flags of ours.
 	// A Seerr popup floats over everything the detail styles draw, their own menus and section
-	// modals included, so it answers before them, and a playing trailer covers the lot.
+	// modals included, so it answers before them, and a playing trailer covers the lot. A review
+	// opens over a Spotlight card's modal, so it closes first.
 	useEffect(() => {
 		if (!backHandlerRef) return;
 		const handler = () => {
 			if (trailerBackRef?.current?.()) return true;
+			if (reviewBackRef?.current?.()) return true;
 			if (seerrBackRef?.current?.()) return true;
 			if (spotlightBackRef?.current?.()) return true;
 			if (showArtworkModal) {
@@ -133,6 +144,7 @@ const useDetailsModals = ({backHandlerRef, onArtworkClosed, seerrBackRef, overvi
 				return true;
 			}
 			if (showIdentifyModal) { handleCloseIdentifyModal(); return true; }
+			if (showPersonDisplayModal) { handleClosePersonDisplayModal(); return true; }
 			if (showDeleteDialog) { handleCloseDeleteDialog(); return true; }
 			if (showRatingDialog) { handleCloseRatingDialog(); return true; }
 			if (showPlaylistModal) { handleClosePlaylistModal(); return true; }
@@ -143,7 +155,7 @@ const useDetailsModals = ({backHandlerRef, onArtworkClosed, seerrBackRef, overvi
 		};
 		backHandlerRef.current = handler;
 		return () => { if (backHandlerRef.current === handler) backHandlerRef.current = null; };
-	}, [backHandlerRef, seerrBackRef, overviewBackRef, spotlightBackRef, trailerBackRef, activeModal, showPlaylistModal, showCollectionModal, showDeleteDialog, showRatingDialog, showArtworkModal, showIdentifyModal, closeModal, handleClosePlaylistModal, handleCloseCollectionModal, handleCloseDeleteDialog, handleCloseRatingDialog, handleCloseArtworkModal, handleCloseIdentifyModal]);
+	}, [backHandlerRef, seerrBackRef, overviewBackRef, spotlightBackRef, trailerBackRef, reviewBackRef, activeModal, showPlaylistModal, showCollectionModal, showDeleteDialog, showRatingDialog, showArtworkModal, showIdentifyModal, showPersonDisplayModal, closeModal, handleClosePlaylistModal, handleCloseCollectionModal, handleCloseDeleteDialog, handleCloseRatingDialog, handleCloseArtworkModal, handleCloseIdentifyModal, handleClosePersonDisplayModal]);
 
 	return {
 		activeModal,
@@ -169,6 +181,9 @@ const useDetailsModals = ({backHandlerRef, onArtworkClosed, seerrBackRef, overvi
 		showIdentifyModal,
 		handleOpenIdentifyModal,
 		handleCloseIdentifyModal,
+		showPersonDisplayModal,
+		handleOpenPersonDisplayModal,
+		handleClosePersonDisplayModal,
 		handleOpenAudioModal,
 		handleOpenSubtitleModal,
 		handleOpenVersionModal,

@@ -1,9 +1,11 @@
 import {spotlightCardsFor, spotlightCardFor, spotlightRuntimeLabel, dedupePeople} from './spotlightCards';
+import {spotlightLandscapeImageUrl} from './spotlightImages';
 
 const SERVER = 'https://tv.example';
 
 const state = (over) => ({item: {Id: 'item-1', Type: 'Movie', Name: 'Thing'}, serverUrl: SERVER, settings: {}, ...over});
 const child = (Id, Type = 'Movie', over = {}) => ({Id, Name: Id, Type, ...over});
+const backdrop = (url) => ({_externalBackdropUrl: url});
 const ids = (cards) => cards.map((card) => card.id);
 const titles = (card) => card.sections.map((section) => section.title);
 
@@ -120,6 +122,28 @@ describe('spotlightCardsFor', () => {
 		expect(titles(card)).toEqual(['Specials', 'Season 1']);
 	});
 
+	it('puts an episode of the whole run with no season number under the specials', () => {
+		const card = spotlightCardsFor(state({
+			item: {Id: 'ep-s1-1', Type: 'Episode', ParentIndexNumber: 1},
+			seriesEpisodes: [
+				child('ep-s1-1', 'Episode', {Name: 'S1E1', ParentIndexNumber: 1, IndexNumber: 1}),
+				child('ep-spec-1', 'Episode', {Name: 'Special 1', IndexNumber: 1})
+			]
+		}))[0];
+		expect(titles(card)).toEqual(['Specials', 'Season 1']);
+	});
+
+	it('orders episodes that share a number by title, ignoring case', () => {
+		const card = spotlightCardsFor(state({
+			item: {Id: 'b', Type: 'Episode', ParentIndexNumber: 1},
+			seriesEpisodes: [
+				child('b', 'Episode', {Name: 'Beta', ParentIndexNumber: 1, IndexNumber: 1}),
+				child('a', 'Episode', {Name: 'alpha', ParentIndexNumber: 1, IndexNumber: 1})
+			]
+		}))[0];
+		expect(card.sections[0].items.map((i) => i.Id)).toEqual(['a', 'b']);
+	});
+
 	it('gives a music album a track list with its total runtime', () => {
 		const cards = spotlightCardsFor(state({
 			item: {Id: 'item-1', Type: 'MusicAlbum'},
@@ -141,14 +165,43 @@ describe('spotlightCardsFor', () => {
 		expect(titles(cards[0])).toEqual(['Movies', 'TV Shows']);
 	});
 
-	it('keeps a person their seerr credits sections', () => {
-		const card = spotlightCardsFor(state({
+	it('gives a person separate cards for filmography, appearances, and crew', () => {
+		const cards = spotlightCardsFor(state({
 			item: {Id: 'item-1', Type: 'Person'},
 			personMovies: [child('m1')],
 			seerrAppearances: [child('a1')],
 			seerrCrewCredits: [child('c1')]
-		}))[0];
-		expect(titles(card)).toEqual(['Movies', 'Appearances (Seerr)', 'Crew Contributions (Seerr)']);
+		}));
+		expect(ids(cards)).toEqual(['filmography', 'appearances', 'crew']);
+		expect(titles(cards[0])).toEqual(['Movies']);
+		expect(titles(cards[1])).toEqual(['Appearances (Seerr)']);
+		expect(titles(cards[2])).toEqual(['Crew Contributions (Seerr)']);
+	});
+
+	it('gives each of a person\'s cards its own backdrop where there are enough to go round', () => {
+		const cards = spotlightCardsFor(state({
+			item: {Id: 'item-1', Type: 'Person'},
+			personMovies: [child('m1', 'Movie', {BackdropImageTags: ['b1']})],
+			seerrAppearances: [child('a1', 'Movie', backdrop('https://img/shared.jpg')), child('a2', 'Movie', backdrop('https://img/a2.jpg'))],
+			seerrCrewCredits: [child('c1', 'Movie', backdrop('https://img/shared.jpg'))]
+		}));
+		const art = cards.map((card) => card.imageUrl);
+		expect(art[0]).toContain('/Items/m1/Images/Backdrop');
+		expect(art.slice(1)).toEqual(['https://img/shared.jpg', 'https://img/a2.jpg']);
+	});
+
+	it('saves a backdrop for the cards that show, not for a filmography card that has nothing', () => {
+		const cards = spotlightCardsFor(state({
+			item: {Id: 'item-1', Type: 'Person'},
+			seerrAppearances: [child('a1', 'Movie', backdrop('https://img/a1.jpg'))],
+			seerrCrewCredits: [child('c1', 'Movie', backdrop('https://img/c1.jpg'))]
+		}));
+		expect(cards.map((card) => card.imageUrl)).toEqual(['https://img/a1.jpg', 'https://img/c1.jpg']);
+	});
+
+	it('leaves the filmography card off a person the library has nothing for', () => {
+		const cards = spotlightCardsFor(state({item: {Id: 'item-1', Type: 'Person'}, seerrAppearances: [child('a1')]}));
+		expect(ids(cards)).toEqual(['appearances']);
 	});
 
 	it('joins seerr recommendations onto the similar card', () => {
@@ -177,6 +230,18 @@ describe('spotlightCardsFor', () => {
 		expect(ids(cards)).toEqual(['seerr_details', 'people']);
 		expect(cards[0].subtitle).toBe('2 facts · 4 tags');
 		expect(cards[0].sections.map((s) => s.kind)).toEqual(['seerrChips', 'seerrFacts', 'seerrCollection']);
+	});
+
+	it("puts streaming after the facts and never first, since it can't take the opening focus", () => {
+		const details = (seerr) => spotlightCardsFor(state({seerrOnly: true, seerr}))[0].sections.map((s) => s.kind);
+		expect(details({factCount: 2, streamingCount: 3, collection: {id: 9}})).toEqual(['seerrFacts', 'seerrStreaming', 'seerrCollection']);
+		expect(details({streamingCount: 3, collection: {id: 9}})).toEqual(['seerrCollection', 'seerrStreaming']);
+		expect(spotlightCardsFor(state({seerrOnly: true, seerr: {streamingCount: 3}}))).toEqual([]);
+
+		const similar = (seerr) => spotlightCardsFor(state({similar: [child('s1')], seerr}))
+			.find((c) => c.id === 'similar').sections.map((s) => s.kind);
+		expect(similar({chipCount: 2, streamingCount: 1})).toEqual(['seerrChips', 'seerrStreaming', 'media']);
+		expect(similar({streamingCount: 1})).toEqual(['media', 'seerrStreaming']);
 	});
 
 	it('leaves the details card out when seerr has nothing to say', () => {
@@ -266,6 +331,36 @@ describe('spotlightCardsFor', () => {
 		expect(cards[1].subtitle).toBe('2 items');
 	});
 
+	it('gives the playlist order card different art from the movies and shows card beside it', () => {
+		const m1 = child('m1', 'Movie', {BackdropImageTags: ['b1']});
+		const m2 = child('m2', 'Movie', {BackdropImageTags: ['b2']});
+		const cards = spotlightCardsFor(state({
+			item: {Id: 'box', Type: 'BoxSet'},
+			fallbackImageUrl: spotlightLandscapeImageUrl(SERVER, m1),
+			collectionItems: [m1, m2],
+			playlistItems: [m1, m2]
+		}));
+		const art = (id) => cards.find((c) => c.id === id).imageUrl;
+		expect(art('boxset_items')).toBe(spotlightLandscapeImageUrl(SERVER, m1));
+		expect(art('playlist_order')).toBe(spotlightLandscapeImageUrl(SERVER, m2));
+	});
+
+	it('shows a collection\'s own titles until its playlist is in, opening them rather than playing', () => {
+		const playlistSort = {label: 'Server Order', open: () => {}, loading: false};
+		const boxSet = {Id: 'box', Type: 'BoxSet'};
+		const before = spotlightCardFor('playlist_order', state({item: boxSet, collectionItems: [child('m1'), child('s1', 'Series')], playlistSort}));
+		expect(before.headerAction.label).toBe('Server Order');
+		expect(before.sections[0].tracks.map((t) => t.Id)).toEqual(['m1']);
+		expect(before.sections[0].opensItems).toBe(true);
+
+		const loading = spotlightCardFor('playlist_order', state({item: boxSet, collectionItems: [child('m1')], playlistSort: {...playlistSort, loading: true}}));
+		expect(loading.sections[0].loading).toBe(true);
+
+		const after = spotlightCardFor('playlist_order', state({item: boxSet, collectionItems: [child('m1')], playlistItems: [child('m1'), child('e1', 'Episode')], playlistSort}));
+		expect(after.sections[0].opensItems).toBe(false);
+		expect(after.sections[0].loading).toBe(false);
+	});
+
 	it('offers a seerr only title just what seerr can fill', () => {
 		const cards = spotlightCardsFor(state({
 			seerrOnly: true,
@@ -286,10 +381,80 @@ describe('spotlightCardsFor', () => {
 		expect(spotlightCardsFor(state({...base}))[0].sections[0].manage).toBe(false);
 		expect(spotlightCardsFor(state({...base, canManagePlaylist: true}))[0].sections[0].manage).toBe(true);
 	});
+
+	it('a movie with media sources produces a file details card', () => {
+		const source = {
+			Id: 'src-1',
+			Container: 'mkv',
+			Size: 5583457484,
+			MediaStreams: [{Type: 'Video', Codec: 'hevc'}]
+		};
+		const cards = spotlightCardsFor(state({
+			item: {Id: 'm1', Type: 'Movie', MediaSources: [source]}
+		}));
+		const card = cards.find((c) => c.id === 'file_details');
+		expect(card).toBeDefined();
+		expect(card.title).toBe('File Details');
+		expect(card.modalTitle).toBe('File Information');
+		expect(card.subtitle).toContain('MKV');
+		expect(card.sections[0]).toMatchObject({kind: 'fileInfo', mediaSource: source});
+	});
+
+	it('an episode with media sources produces a file details card', () => {
+		const source = {
+			Id: 'src-ep',
+			Container: 'mp4',
+			Size: 1048576000,
+			MediaStreams: [{Type: 'Video', Codec: 'h264'}]
+		};
+		const cards = spotlightCardsFor(state({
+			item: {Id: 'ep-1', Type: 'Episode', MediaSources: [source]}
+		}));
+		const card = cards.find((c) => c.id === 'file_details');
+		expect(card).toBeDefined();
+		expect(card.title).toBe('File Details');
+	});
+
+	it('file details card respects selected mediaSource from state', () => {
+		const source1 = {Id: 'src-1', Container: 'mkv', Size: 5000000000, MediaStreams: [{Type: 'Video'}]};
+		const source2 = {Id: 'src-2', Container: 'mp4', Size: 2000000000, MediaStreams: [{Type: 'Video'}]};
+		const cards = spotlightCardsFor(state({
+			item: {Id: 'm1', Type: 'Movie', MediaSources: [source1, source2]},
+			mediaSource: source2
+		}));
+		const card = cards.find((c) => c.id === 'file_details');
+		expect(card.subtitle).toContain('MP4');
+		expect(card.sections[0].mediaSource).toBe(source2);
+	});
+
+	it('file details card picks distinct backdrop tag when available', () => {
+		const source = {Id: 'src-1', Container: 'mkv', Size: 1000, MediaStreams: [{Type: 'Video'}]};
+		const withThree = spotlightCardsFor(state({
+			item: {Id: 'm1', Type: 'Movie', BackdropImageTags: ['b0', 'b1', 'b2'], MediaSources: [source]}
+		})).find((c) => c.id === 'file_details');
+		expect(withThree.imageUrl).toContain('/Items/m1/Images/Backdrop/2');
+		expect(withThree.imageUrl).toContain('tag=b2');
+
+		const withSeerr = spotlightCardsFor(state({
+			item: {Id: 'm1', Type: 'Movie', BackdropImageTags: ['b0'], MediaSources: [source]},
+			seerr: {details: {backdrop_path: '/tmdb_backdrop.jpg'}},
+			fallbackImageUrl: 'fallback.jpg'
+		})).find((c) => c.id === 'file_details');
+		expect(withSeerr.imageUrl).toContain('https://image.tmdb.org/t/p/w780/tmdb_backdrop.jpg');
+	});
 });
 
 describe('hidden sections', () => {
 	const hiding = (...hidden) => (id) => !hidden.includes(id);
+
+	it('leaves the file details card out with media info hidden', () => {
+		const source = {Id: 'src-1', Container: 'mkv', MediaStreams: [{Type: 'Video'}]};
+		const cards = spotlightCardsFor(state({
+			item: {Id: 'm1', Type: 'Movie', MediaSources: [source]},
+			showsSection: hiding('mediaInfo')
+		}));
+		expect(ids(cards)).not.toContain('file_details');
+	});
 
 	it('leaves a card out once every section of it is hidden', () => {
 		const cards = spotlightCardsFor(state({
@@ -318,15 +483,17 @@ describe('hidden sections', () => {
 		expect(ids(cards)).not.toContain('episodes');
 	});
 
-	it('lets the person seerr sections follow their own switches', () => {
-		const card = spotlightCardsFor(state({
+	it('lets the person seerr cards follow their own switches', () => {
+		const cards = spotlightCardsFor(state({
 			item: {Id: 'item-1', Type: 'Person'},
 			personMovies: [child('m1')],
 			seerrAppearances: [child('a1')],
 			seerrCrewCredits: [child('c1')],
 			showsSection: hiding('seerrPersonCrew')
-		}))[0];
-		expect(titles(card)).toEqual(['Movies', 'Appearances (Seerr)']);
+		}));
+		expect(ids(cards)).toEqual(['filmography', 'appearances']);
+		expect(titles(cards[0])).toEqual(['Movies']);
+		expect(titles(cards[1])).toEqual(['Appearances (Seerr)']);
 	});
 
 	it('drops the hidden people from a box set', () => {

@@ -17,7 +17,8 @@
 		transform: scale(1.05) translateZ(0);
 		z-index: 10;
 
-		.image {
+		.image,
+		.placeholder {
 			border-color: var(--theme-focus-border-color, #ffffff);
 			box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
 			border-width: 4px;
@@ -29,9 +30,15 @@
 		}
 	}
 
-	&.noZoom:focus {
+	&.noZoom:focus,
+	&.previewing:focus {
 		transform: translateZ(0);
 	}
+}
+
+.current .image,
+.current .placeholder {
+	border-color: rgba(var(--theme-accent-rgb, 0, 164, 220), 0.7);
 }
 
 /* Portrait cards (default 2:3 aspect ratio) */
@@ -198,6 +205,31 @@
 	text-overflow: ellipsis;
 }
 
+// Classic home rows draw two left aligned lines under the art, the name and then its
+// detail, with the line heights set so every row comes out the same height.
+.homeText {
+	text-align: left;
+
+	.info {
+		padding: 16px 0 0;
+	}
+
+	.title,
+	.seriesName {
+		font-size: 22px;
+		font-weight: 600;
+		line-height: 30px;
+		margin: 0;
+	}
+
+	.episodeInfo {
+		font-size: 20px;
+		font-weight: 400;
+		line-height: 28px;
+		color: rgba(255, 255, 255, 0.65);
+	}
+}
+
 .progressBar {
 	position: absolute;
 	bottom: 6px;
@@ -345,4 +377,21 @@
 	text-transform: uppercase;
 	pointer-events: none;
 	word-break: break-word;
+}
+
+.previewFrame {
+	.media-preview-frame();
+}
+
+.previewVisible {
+	opacity: 1;
+}
+
+.previewRing {
+	.media-preview-ring();
+}
+
+// The container's own corners come off on the Fire TV too, for the same reason as the frame's
+:global(.vega) .imageContainer.previewHost {
+	border-radius: 0;
 }

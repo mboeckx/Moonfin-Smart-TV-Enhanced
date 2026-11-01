@@ -1,6 +1,6 @@
 // The Seerr side of a detail screen. A library title is matched to Seerr by its TMDB id, and
 // anything that doesn't resolve leaves the overlay idle, so the screen renders exactly as it
-// did before.
+// did before. A season or episode goes through its series and only gets the Seerr actions.
 
 import {useCallback, useEffect, useMemo, useState} from 'react';
 
@@ -9,20 +9,52 @@ import seerrApi from '../../services/seerrApi';
 import {hasSeerrChips} from '../../components/seerr/SeerrSections';
 import {hasMediaFacts} from '../../utils/seerrMediaFacts';
 import {normalizeMediaItem} from '../../utils/seerrHomeRows';
-import {IDLE, bestSearchMatch, seerrTargetFor} from '../../utils/seerrTarget';
+import {streamingProviders as providersFor} from '../../utils/seerrStreaming';
+import {IDLE, bestSearchMatch, isSeriesPart, seerrTargetFor, seriesTargetFrom} from '../../utils/seerrTarget';
 import useSeerrDetailsData from './useSeerrDetailsData';
 import useSeerrRequests from './useSeerrRequests';
 import useSeerrWatchlist from './useSeerrWatchlist';
 
+// A season or episode page only carries the actions. The chips, facts, pills and rows all describe
+// the series and stay on its own page.
+const SERIES_PART_HIDES = {
+	details: null,
+	statusPills: [],
+	seasonMarkers: new Map(),
+	similarCards: [],
+	recommendationCards: [],
+	streamingProviders: [],
+	pieces: {chips: false, facts: false, streaming: false, recommendations: false, similar: false, collection: false},
+	hasTabContent: false
+};
+
 // `showsSection` is the viewer's detail sections setting. A piece switched off reads as one
 // Seerr had nothing for, so every style draws and focuses the same set.
-const useSeerrOverlay = ({item, seerrOnly, showsSection}) => {
+const useSeerrOverlay = ({item, seerrOnly, showsSection, api}) => {
 	const {isEnabled, isAuthenticated, user, displayName} = useSeerr();
+	const ready = isEnabled && isAuthenticated;
 
-	const rawTarget = useMemo(
-		() => (isEnabled && isAuthenticated ? seerrTargetFor(item) : IDLE),
-		[isEnabled, isAuthenticated, item]
-	);
+	const seriesPart = !seerrOnly && isSeriesPart(item);
+	const seriesId = seriesPart ? item.SeriesId : null;
+	const [seriesTarget, setSeriesTarget] = useState(IDLE);
+	useEffect(() => {
+		setSeriesTarget(IDLE);
+		if (!ready || !seriesId || !api) return undefined;
+		let cancelled = false;
+		api.getItem(seriesId).then((series) => {
+			if (!cancelled) setSeriesTarget(seriesTargetFrom(series));
+		}).catch((e) => {
+			void e;
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [ready, seriesId, api]);
+
+	const rawTarget = useMemo(() => {
+		if (!ready) return IDLE;
+		return seriesPart ? seriesTarget : seerrTargetFor(item);
+	}, [ready, seriesPart, seriesTarget, item]);
 
 	// A title known only by IMDb id has to become a TMDB id before Seerr can say anything
 	// about it. The id is searched first since it names exactly one title, and the title
@@ -107,12 +139,18 @@ const useSeerrOverlay = ({item, seerrOnly, showsSection}) => {
 		[data.recommendations, showsRecommendations]
 	);
 
+	const streamingProviders = useMemo(
+		() => providersFor(data.details, data.streamingRegion),
+		[data.details, data.streamingRegion]
+	);
+
 	const isActive = Boolean(target.mediaId && data.details);
 
 	// The parts of the Seerr block with something to show that the viewer left on.
 	const pieces = {
 		chips: isActive && showsSection('seerrGenresTags') && hasSeerrChips(data.details),
 		facts: isActive && showsSection('seerrStats') && hasMediaFacts(data.details, target.mediaType),
+		streaming: isActive && showsSection('seerrStreaming') && streamingProviders.length > 0,
 		recommendations: isActive && recommendationCards.length > 0,
 		similar: isActive && similarCards.length > 0,
 		collection: isActive && showsSection('seerrCollection') && Boolean(data.details.collection)
@@ -120,7 +158,7 @@ const useSeerrOverlay = ({item, seerrOnly, showsSection}) => {
 
 	// A title Seerr knows of but has nothing to say about would otherwise offer
 	// an empty tab.
-	const hasTabContent = pieces.chips || pieces.facts || pieces.recommendations || pieces.similar || pieces.collection;
+	const hasTabContent = pieces.chips || pieces.facts || pieces.streaming || pieces.recommendations || pieces.similar || pieces.collection;
 
 	const offersRequest = seerrOnly
 		? requests.canRequestHd || requests.canRequest4k
@@ -141,6 +179,7 @@ const useSeerrOverlay = ({item, seerrOnly, showsSection}) => {
 		loading: data.loading || resolvingImdb,
 		similarCards,
 		recommendationCards,
+		streamingProviders,
 		displayName,
 		mediaType: target.mediaType,
 		isActive,
@@ -151,8 +190,8 @@ const useSeerrOverlay = ({item, seerrOnly, showsSection}) => {
 		onCancel4k,
 		actionError,
 		clearActionError,
-		// With nothing owned, one control covers both tracks and asks which
-		// quality first when the viewer holds both permissions. A library title
+		// With nothing owned, one control covers both tracks, and its sheet
+		// carries a quality switch when the viewer can ask for both. A library title
 		// gets a button per track instead, since there the 4K one asks for the
 		// track that is missing. Worked out once so the two button rows agree
 		// without restating the rules.
@@ -168,7 +207,10 @@ const useSeerrOverlay = ({item, seerrOnly, showsSection}) => {
 		showsManage: isActive && requests.canManage && requests.pendingRequests.length > 0,
 		showsWatchlist: isActive,
 		onWatchlist: watchlist.onWatchlist,
-		toggleWatchlist: watchlist.toggleWatchlist
+		toggleWatchlist: watchlist.toggleWatchlist,
+		// What the request and report dialogs read, which a season or episode page still needs
+		sheetDetails: data.details,
+		...(seriesPart ? SERIES_PART_HIDES : null)
 	};
 };
 

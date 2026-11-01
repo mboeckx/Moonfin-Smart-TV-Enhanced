@@ -16,19 +16,19 @@ import NouveauPosterCard from './cards/NouveauPosterCard';
 import NouveauLandscapeCard from './cards/NouveauLandscapeCard';
 import DetailsTabBar from '../../../components/DetailsTabBar';
 import NouveauSortDialog from './sections/NouveauSortDialog';
+import PersonDisplayDialog from '../PersonDisplayDialog';
 import NouveauDetailsFooter from './footer/NouveauDetailsFooter';
 import {buildDiscoveryRails} from './nouveauDiscovery';
 import {buildPersonRails} from './nouveauPersonRails';
 import {splitFilmography} from '../../../utils/personCredits';
-import {loadSeerrPersonCredits} from '../seerrPersonCredits';
+import {loadSeerrPersonCredits, seerrPersonCards} from '../seerrPersonCredits';
 import {useSeerr} from '../../../context/SeerrContext';
 import {
 	HERO, buildNouveauChain, clampNouveauNode, nextNouveauNode, spotlightIdForNouveauNode
 } from './nouveauFocusChain';
 import {effectiveSeason, groupEpisodesBySeason, seasonOptions} from './nouveauSeasons';
-import {
-	DEFAULT_SORT, SORT_CUSTOM, applyCollectionSort, collectionSortOptions, sortLabel
-} from './nouveauCollectionSort';
+import {sortLabel} from './nouveauCollectionSort';
+import useCollectionSort from '../useCollectionSort';
 import {chapterDisplayName, collectionSubtitle, extraSubtitle} from './nouveauLabels';
 import {
 	RAIL_GAP, SECTION_INSET, TOP_BAR_CLEARANCE, TV_RAIL_GAP, discoveryCardWidth, discoveryPosterHeight,
@@ -38,8 +38,12 @@ import {
 } from './nouveauMetrics';
 import {
 	SECTION_CHAPTERS, SECTION_COLLECTION, SECTION_DETAILS, SECTION_DISCOVERY, SECTION_EPISODES,
-	SECTION_EXTRAS, SECTION_PEOPLE, nouveauSectionOrder, seerrDiscoveryExpected
+	SECTION_EXTRAS, SECTION_PARENT_COLLECTIONS, SECTION_PARTS, SECTION_PEOPLE, SECTION_REVIEWS, nouveauSectionOrder,
+	seerrDiscoveryExpected
 } from './nouveauSections';
+import {splitAdditionalParts} from '../extraCategories';
+import ReviewCard from '../ReviewCard';
+import {scrimStyle} from '../../../utils/scrimImage';
 
 import sectionsCss from './sections/NouveauSections.module.less';
 import css from './NouveauDetailContent.module.less';
@@ -50,31 +54,43 @@ import css from './NouveauDetailContent.module.less';
 // The room a docked sidebar takes, which the stylesheet pads the content by.
 const SIDEBAR_OFFSET = 120;
 
+// Same stops as .scrim in the stylesheet.
+const SCRIM = [
+	{at: [0.65, 0.45], rgb: '0, 0, 0', stops: [[0, 0], [0.58, 0], [0.82, 0.12], [1, 0.3]]},
+	{to: 'bottom', rgb: '0, 0, 0', stops: [[0, 0.28], [0.18, 0.08], [0.42, 0]]},
+	{to: 'top', rgb: '11, 13, 16', stops: [[0, 1], [0.18, 0.96], [0.38, 0.78], [0.58, 0.48], [0.76, 0.18], [0.94, 0]]},
+	{to: 'right', rgb: '11, 13, 16', stops: [[0, 0.96], [0.18, 0.86], [0.38, 0.58], [0.6, 0.22], [0.82, 0]]}
+];
+
 const HERO_UNDER_TOP_BAR = {paddingTop: rem(TOP_BAR_CLEARANCE)};
 
 // Older Tizen and webOS WebKit have no smooth scrolling, so they jump instead.
 const SMOOTH_SCROLL = typeof document !== 'undefined' && 'scrollBehavior' in document.documentElement.style;
 
 // Looking an item up in the list a card came from, which every rail's select handler needs.
-const findIn = (list, key) => list.find((candidate) => String(candidate.Id) === key);
+const findIn = (list, key) => list.find((candidate) => String(candidate.cardKey || candidate.Id) === key);
 
 // One value to reset to, so an item with no Seerr credits leaves the rails memo alone.
-const NO_PERSON_CREDITS = {appearances: [], crewCredits: []};
+const NO_PERSON_CREDITS = {cast: [], crew: []};
 
 const NouveauDetailContent = (props) => {
 	const {
 		item, settings, showsSection, seerr, seerrOnly, isPerson, effectiveServerUrl,
-		backdropUrl, similar = [], extras = [], cast = [], crew = [],
+		backdropUrl, similar = [], reviews = [], onSelectReview, extras = [], cast = [], crew = [],
 		similarLoaded = false, handleChapterSelect, handleExtraSelect, onSelectPerson,
 		onSelectItem, onSelectSeerrCard, handleEpisodePlay, isSeries,
 		episodes = [], seriesEpisodes = [], nextUp = [], seasons = [],
-		collectionItems = [], playlistItems = [], effectiveApi,
+		collectionItems = [], collectionSections = [], playlistItems = [], effectiveApi,
 		mediaSource, selectedAudioIndex, selectedSubtitleIndex,
-		spotlightBackRef, overviewBackRef, seerrNav, onSelectStudio, loadMoreCollectionItems, collectionMenu
+		spotlightBackRef, overviewBackRef, seerrNav, onSelectStudio, loadMoreCollectionItems, collectionMenu, collectionOrder
 	} = props;
 
 	const {isEnabled: seerrEnabled} = useSeerr();
+	const parentCollectionCount = collectionSections.length;
 	const [personCredits, setPersonCredits] = useState(NO_PERSON_CREDITS);
+	const [displayOpen, setDisplayOpen] = useState(false);
+	const openPersonDisplay = useCallback(() => setDisplayOpen(true), []);
+	const closePersonDisplay = useCallback(() => setDisplayOpen(false), []);
 
 	// Seerr is an extra on a person page, so a failure leaves the rails the library can fill.
 	// Neither list is asked for when the viewer hid both.
@@ -100,11 +116,11 @@ const NouveauDetailContent = (props) => {
 	// items, so it never gets a stop.
 	const personRails = useMemo(
 		() => (isPerson ? buildPersonRails({
-			filmography: splitFilmography(similar, showsSection),
-			appearances: showsSeerrAppearances ? personCredits.appearances : [],
-			crewCredits: showsSeerrCrew ? personCredits.crewCredits : []
+			filmography: splitFilmography(similar, showsSection, settings.personPageSortOption),
+			appearances: showsSeerrAppearances ? seerrPersonCards(personCredits.cast, false, settings) : [],
+			crewCredits: showsSeerrCrew ? seerrPersonCards(personCredits.crew, true, settings) : []
 		}) : []),
-		[isPerson, similar, personCredits, showsSection, showsSeerrAppearances, showsSeerrCrew]
+		[isPerson, similar, personCredits, showsSection, showsSeerrAppearances, showsSeerrCrew, settings]
 	);
 
 	const [windowWidth, setWindowWidth] = useState(
@@ -132,6 +148,7 @@ const NouveauDetailContent = (props) => {
 	};
 
 	const chapters = showsSection('chapters') ? item.Chapters : undefined;
+	const {parts: additionalParts, others: otherExtras} = useMemo(() => splitAdditionalParts(extras), [extras]);
 
 	const sections = useMemo(() => {
 		if (isPerson) return [...personRails.map((rail) => rail.id), SECTION_DETAILS];
@@ -140,12 +157,15 @@ const NouveauDetailContent = (props) => {
 		return nouveauSectionOrder({
 			type: item.Type,
 			chapterCount: chapters?.length || 0,
-			extraCount: extras.length,
+			partCount: additionalParts.length,
+			extraCount: otherExtras.length,
 			actorCount: cast.length,
 			// Directors and writers arrive as one crew list here, so the gate weighs two counts.
 			directorCount: crew.length,
 			similarLoaded,
 			similarCount: similar.length,
+			reviewCount: reviews.length,
+			parentCollectionCount,
 			// With both Seerr lists hidden there is nothing to hold the slot open for.
 			seerrExpected: (showsSection('seerrSimilar') || showsSection('seerrRecommendations')) && seerrDiscoveryExpected({
 				type: item.Type,
@@ -160,8 +180,8 @@ const NouveauDetailContent = (props) => {
 			seerrRecommendationCount: (seerrState.recommendationCards || []).length
 		});
 	}, [
-		item.Type, chapters, item.ProviderIds, isPerson, personRails, extras.length, cast.length,
-		crew.length, similarLoaded, similar.length, seerrOnly, seerr, showsSection
+		item.Type, chapters, item.ProviderIds, isPerson, personRails, additionalParts.length, otherExtras.length, cast.length,
+		crew.length, similarLoaded, similar.length, reviews.length, seerrOnly, seerr, showsSection, parentCollectionCount
 	]);
 
 	// A series arrives as one run of episodes and shows a season at a time, so the selector only
@@ -200,43 +220,7 @@ const NouveauDetailContent = (props) => {
 		if (episode) onSelectItem?.(episode);
 	}, [findEpisode, onSelectItem]);
 
-	// A collection has no order of its own on the server, so the plugin keeps one. Absent plugin,
-	// absent order, and the custom option is simply not offered.
-	const [sortOption, setSortOption] = useState(DEFAULT_SORT);
-	const [customOrder, setCustomOrder] = useState([]);
-	const [sortOpen, setSortOpen] = useState(false);
-
-	useEffect(() => {
-		let cancelled = false;
-		setCustomOrder([]);
-		setSortOption(DEFAULT_SORT);
-		if (!effectiveApi?.getCollectionOrder || !item.Id) return undefined;
-
-		effectiveApi.getCollectionOrder(item.Id)
-			.then((order) => {
-				if (cancelled || !Array.isArray(order) || !order.length) return;
-				setCustomOrder(order);
-				// A saved order means somebody arranged this one, so it opens the way they left it.
-				setSortOption(SORT_CUSTOM);
-			})
-			.catch(() => {});
-
-		return () => {
-			cancelled = true;
-		};
-	}, [effectiveApi, item.Id]);
-
-	const sortedPlaylist = useMemo(
-		() => applyCollectionSort(playlistItems, sortOption, customOrder),
-		[playlistItems, sortOption, customOrder]
-	);
-
-	const openSort = useCallback(() => setSortOpen(true), []);
-	const closeSort = useCallback(() => setSortOpen(false), []);
-	const chooseSort = useCallback((id) => {
-		setSortOption(id);
-		setSortOpen(false);
-	}, []);
+	const {sortOption, sortOptions, sortOpen, openSort, closeSort, chooseSort} = useCollectionSort(collectionOrder);
 
 	const discovery = useMemo(() => buildDiscoveryRails({
 		item,
@@ -271,14 +255,20 @@ const NouveauDetailContent = (props) => {
 		if (entry) onSelectItem?.(entry);
 	}, [collectionItems, onSelectItem]);
 
+	const parentCollectionItems = useMemo(() => collectionSections.flatMap((section) => section.items), [collectionSections]);
+	const onParentCollectionCard = useCallback((ev) => {
+		const entry = findIn(parentCollectionItems, ev.currentTarget.dataset.selectKey);
+		if (entry) onSelectItem?.(entry);
+	}, [parentCollectionItems, onSelectItem]);
+
 	const onPlaylistArtwork = useCallback((ev) => {
-		handleEpisodePlay?.(findIn(sortedPlaylist, ev.currentTarget.dataset.selectKey));
-	}, [sortedPlaylist, handleEpisodePlay]);
+		handleEpisodePlay?.(findIn(playlistItems, ev.currentTarget.dataset.selectKey));
+	}, [playlistItems, handleEpisodePlay]);
 
 	const onPlaylistDetails = useCallback((ev) => {
-		const entry = findIn(sortedPlaylist, ev.currentTarget.dataset.selectKey);
+		const entry = findIn(playlistItems, ev.currentTarget.dataset.selectKey);
 		if (entry) onSelectItem?.(entry);
-	}, [sortedPlaylist, onSelectItem]);
+	}, [playlistItems, onSelectItem]);
 
 	const onChapterCard = useCallback((ev) => {
 		handleChapterSelect?.(Number(ev.currentTarget.dataset.selectKey));
@@ -333,7 +323,11 @@ const NouveauDetailContent = (props) => {
 			if (id === SECTION_DETAILS) return;
 			if (id === SECTION_COLLECTION) {
 				ids.push(id);
-				if (sortedPlaylist.length > 0) ids.push(`${id}-playlist`);
+				if (playlistItems.length > 0) ids.push(`${id}-playlist`);
+				return;
+			}
+			if (id === SECTION_PARENT_COLLECTIONS) {
+				for (let index = 0; index < parentCollectionCount; index++) ids.push(`${id}-${index}`);
 				return;
 			}
 			// Two rails under one heading, so the section is two stops rather than one.
@@ -345,7 +339,7 @@ const NouveauDetailContent = (props) => {
 			ids.push(id);
 		});
 		return ids;
-	}, [sections, sortedPlaylist.length, discovery.related.length, discovery.recommendations.length]);
+	}, [sections, playlistItems.length, discovery.related.length, discovery.recommendations.length, parentCollectionCount]);
 
 	const chain = useMemo(() => buildNouveauChain({
 		hasOverview: Boolean(item.Overview) && (!isPerson || showsSection('biography')),
@@ -428,7 +422,11 @@ const NouveauDetailContent = (props) => {
 		const handler = () => {
 			if (menuBackRef.current?.()) return true;
 			if (sortOpen) {
-				setSortOpen(false);
+				closeSort();
+				return true;
+			}
+			if (displayOpen) {
+				closePersonDisplay();
 				return true;
 			}
 			if (overviewBackRef?.current?.()) return true;
@@ -449,7 +447,7 @@ const NouveauDetailContent = (props) => {
 		return () => {
 			if (spotlightBackRef.current === handler) spotlightBackRef.current = null;
 		};
-	}, [spotlightBackRef, overviewBackRef, sortOpen]);
+	}, [spotlightBackRef, overviewBackRef, sortOpen, closeSort, displayOpen, closePersonDisplay]);
 
 	const renderSection = (id) => {
 		if (id === SECTION_CHAPTERS) {
@@ -467,11 +465,11 @@ const NouveauDetailContent = (props) => {
 			);
 		}
 
-		if (id === SECTION_EXTRAS) {
+		if (id === SECTION_PARTS || id === SECTION_EXTRAS) {
 			return (
 				<NouveauRail
-					title={$L('Extras')}
-					items={extras}
+					title={id === SECTION_PARTS ? $L('Additional Parts') : $L('Extras')}
+					items={id === SECTION_PARTS ? additionalParts : otherExtras}
 					gap={RAIL_GAP}
 					spotlightId={`nouveau-rail-${id}`}
 					navbarPosition={settings.navbarPosition}
@@ -503,6 +501,22 @@ const NouveauDetailContent = (props) => {
 			);
 		}
 
+		if (id === SECTION_PARENT_COLLECTIONS) {
+			return collectionSections.map((section, index) => (
+				<NouveauRail
+					key={section.id}
+					title={section.name}
+					items={section.items}
+					gap={TV_RAIL_GAP}
+					spotlightId={`nouveau-rail-${id}-${index}`}
+					navbarPosition={settings.navbarPosition}
+					onNavigateUp={handleNavigateUp}
+					onNavigateDown={handleNavigateDown}
+					renderItem={renderParentCollectionCard}
+				/>
+			));
+		}
+
 		if (id === SECTION_COLLECTION) {
 			// The collection keeps the order the server gave it. Only the playable run below it is
 			// sorted, which is the one that gets watched through.
@@ -519,7 +533,7 @@ const NouveauDetailContent = (props) => {
 						renderItem={renderCollectionCard}
 						itemMenu={collectionMenu}
 					/>
-					{sortedPlaylist.length > 0 && (
+					{playlistItems.length > 0 && (
 						<>
 							<div className={sectionsCss.railHeader}>
 								<h2 className={sectionsCss.railTitle}>{$L('Playlist')}</h2>
@@ -528,7 +542,7 @@ const NouveauDetailContent = (props) => {
 								</SpottableDiv>
 							</div>
 							<NouveauRail
-								items={sortedPlaylist}
+								items={playlistItems}
 								gap={TV_RAIL_GAP}
 								spotlightId={`nouveau-rail-${id}-playlist`}
 								navbarPosition={settings.navbarPosition}
@@ -604,6 +618,21 @@ const NouveauDetailContent = (props) => {
 			);
 		}
 
+		if (id === SECTION_REVIEWS) {
+			return (
+				<NouveauRail
+					title={$L('Reviews')}
+					items={reviews}
+					gap={RAIL_GAP}
+					spotlightId={`nouveau-rail-${id}`}
+					navbarPosition={settings.navbarPosition}
+					onNavigateUp={handleNavigateUp}
+					onNavigateDown={handleNavigateDown}
+					renderItem={renderReview}
+				/>
+			);
+		}
+
 		if (id === SECTION_PEOPLE) {
 			// Named for what it actually holds, since an item can arrive with only one of the two.
 			const title = cast.length && crew.length ? $L('Cast & Crew')
@@ -656,6 +685,20 @@ const NouveauDetailContent = (props) => {
 		);
 	}
 
+	function renderParentCollectionCard (entry) {
+		return (
+			<NouveauPosterCard
+				imageUrl={spotlightItemImageUrl(effectiveServerUrl, entry)}
+				title={entry.Name}
+				subtitle={collectionSubtitle(entry)}
+				width={collectionWidth}
+				height={collectionHeight}
+				selectKey={entry.Id}
+				onSelect={onParentCollectionCard}
+			/>
+		);
+	}
+
 	function renderPlaylistCard (entry) {
 		const played = entry.UserData?.PlayedPercentage;
 		return (
@@ -696,10 +739,10 @@ const NouveauDetailContent = (props) => {
 			<NouveauPosterCard
 				imageUrl={spotlightItemImageUrl(effectiveServerUrl, entry)}
 				title={entry.Name}
-				subtitle={entry.ProductionYear ? String(entry.ProductionYear) : null}
+				subtitle={entry.Subtitle || (entry.ProductionYear ? String(entry.ProductionYear) : null)}
 				width={posterWidth}
 				height={posterHeight}
-				selectKey={entry.Id}
+				selectKey={entry.cardKey || entry.Id}
 				onSelect={onPosterCard}
 			/>
 		);
@@ -719,6 +762,10 @@ const NouveauDetailContent = (props) => {
 				onSelect={onPersonCard}
 			/>
 		);
+	}
+
+	function renderReview (review) {
+		return <ReviewCard review={review} onSelect={onSelectReview} />;
 	}
 
 	function renderChapter (chapter) {
@@ -757,6 +804,7 @@ const NouveauDetailContent = (props) => {
 				style={backdropStyle}
 			>
 				{backdropUrl && <img className={css.backdropImage} src={backdropUrl} alt="" />}
+				<div className={css.scrim} style={scrimStyle(SCRIM, backdropStyle['--gradient-scale'])} />
 			</div>
 			<div ref={scrollerRef} className={css.scroller}>
 				<div className={`${css.content} ${topBar ? '' : css.sidebarOffset}`}>
@@ -764,6 +812,7 @@ const NouveauDetailContent = (props) => {
 						<NouveauHero
 							{...props}
 							menuBackRef={menuBackRef}
+							onOpenPersonDisplay={isPerson ? openPersonDisplay : null}
 							onNavigateUp={handleNavigateUp}
 							onNavigateDown={handleNavigateDown}
 						/>
@@ -782,12 +831,13 @@ const NouveauDetailContent = (props) => {
 			</div>
 			{sortOpen && (
 				<NouveauSortDialog
-					options={collectionSortOptions(customOrder.length > 0)}
+					options={sortOptions}
 					active={sortOption}
 					onSelect={chooseSort}
 					onClose={closeSort}
 				/>
 			)}
+			{displayOpen && <PersonDisplayDialog onClose={closePersonDisplay} />}
 		</>
 	);
 };

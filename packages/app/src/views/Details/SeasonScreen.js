@@ -5,11 +5,10 @@ import RatingsRow from '../../components/RatingsRow';
 import {formatDuration, getImageUrl} from '../../utils/helpers';
 import {hidesMediaDescription} from './detailsMedia';
 import {isMdblistEnabled} from '../../services/mdblistApi';
-import {DETAIL_ICON_PATHS} from './detailIcons';
-import {SpottableDiv, HorizontalContainer} from './detailsSpottables';
-import {handleSeasonButtonKeyDown} from './detailsFocus';
+import {SpottableDiv} from './detailsSpottables';
 import {PosterBadges, WatchedCheckIcon, FavoriteHeartIcon} from './DetailBadges';
 import {AnimeEpisodePills} from '../../components/AnimeMarkerPills';
+import IncompleteBadge from '../../components/IncompleteBadge';
 import useItemMenuHold, {itemWithIdAt} from '../../hooks/useItemMenuHold';
 
 import css from './Details.module.less';
@@ -29,12 +28,8 @@ const SeasonScreen = ({
 	posterUrl,
 	episodes,
 	episodeRatings,
-	onPlay,
-	onShuffle,
-	onToggleWatched,
-	onToggleFavorite,
-	onEpisodeSelect,
-	onFocusRow
+	actionButtons,
+	onEpisodeSelect
 }) => (
 	<>
 		<div className={css.seasonDetailHeader}>
@@ -63,40 +58,7 @@ const SeasonScreen = ({
 			</div>
 		</div>
 
-		{episodes.length > 0 && (
-			<HorizontalContainer className={css.actionButtons} onKeyDown={handleSeasonButtonKeyDown} onFocus={onFocusRow}>
-				<SpottableDiv className={css.btnWrapper} onClick={onPlay} onFocus={onFocusRow} spotlightId="details-primary-btn">
-					<div className={css.btnAction}>
-						<span className={css.btnIcon}>▶</span>
-					</div>
-					<span className={css.btnLabel}>{$L('Play')}</span>
-				</SpottableDiv>
-				<SpottableDiv className={css.btnWrapper} onClick={onShuffle}>
-					<div className={css.btnAction}>
-						<svg className={css.btnIcon} viewBox="0 -960 960 960" fill="currentColor">
-							<path d={DETAIL_ICON_PATHS.shuffle}/>
-						</svg>
-					</div>
-					<span className={css.btnLabel}>{$L('Shuffle')}</span>
-				</SpottableDiv>
-				<SpottableDiv className={css.btnWrapper} onClick={onToggleWatched} spotlightId="season-watched-btn">
-					<div className={css.btnAction}>
-						<svg className={`${css.btnIcon} ${item.UserData?.Played ? css.watched : ''}`} viewBox="0 -960 960 960" fill="currentColor">
-							<path d={DETAIL_ICON_PATHS.watched}/>
-						</svg>
-					</div>
-					<span className={css.btnLabel}>{item.UserData?.Played ? $L('Watched') : $L('Unwatched')}</span>
-				</SpottableDiv>
-				<SpottableDiv className={css.btnWrapper} onClick={onToggleFavorite} spotlightId="season-favorite-btn">
-					<div className={css.btnAction}>
-						<svg className={`${css.btnIcon} ${item.UserData?.IsFavorite ? css.favorited : ''}`} viewBox="0 -960 960 960" fill="currentColor">
-							<path d={DETAIL_ICON_PATHS.favorite}/>
-						</svg>
-					</div>
-					<span className={css.btnLabel}>{item.UserData?.IsFavorite ? $L('Favorited') : $L('Favorite')}</span>
-				</SpottableDiv>
-			</HorizontalContainer>
-		)}
+		{episodes.length > 0 && actionButtons}
 
 		<EpisodeList episodes={episodes}>
 			{episodes.map(ep => {
@@ -145,6 +107,7 @@ const SeasonScreen = ({
 										</span>
 									)}
 									<AnimeEpisodePills episode={ep} serverUrl={serverUrl} compact />
+									<IncompleteBadge itemId={ep.Id} inline />
 								</span>
 							</div>
 							<span className={css.seasonEpTitle}>{ep.Name}</span>

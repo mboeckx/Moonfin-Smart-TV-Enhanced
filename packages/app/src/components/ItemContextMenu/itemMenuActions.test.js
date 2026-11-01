@@ -1,4 +1,4 @@
-import {itemMenuActions} from './itemMenuActions';
+import {hideFromResume, itemMenuActions} from './itemMenuActions';
 
 jest.mock('@enact/i18n/$L', () => ({__esModule: true, default: (str) => str}));
 
@@ -38,6 +38,13 @@ describe('itemMenuActions', () => {
 		expect(ids(movie(), {playlist: {canManage: true, first: true, last: false}})).not.toContain('moveUp');
 		expect(ids(movie(), {playlist: {canManage: true, first: false, last: true}})).not.toContain('moveDown');
 		expect(ids(movie(), {playlist: {canManage: false}})).toEqual(['play', 'viewDetails', 'watched', 'favorite', 'addToPlaylist']);
+		expect(ids(movie(), {playlist: {canManage: true, canMove: false, first: false, last: false}}))
+			.toEqual(['play', 'viewDetails', 'watched', 'favorite', 'addToPlaylist', 'removeFromPlaylist']);
+	});
+
+	test('lets a collection\'s play order move a row without offering to delete it', () => {
+		expect(ids(movie(), {playlist: {canManage: true, canRemove: false, first: false, last: false}}))
+			.toEqual(['play', 'viewDetails', 'watched', 'favorite', 'addToPlaylist', 'moveUp', 'moveDown']);
 	});
 
 	test('leaves View Details off a song, which has no page to open', () => {
@@ -68,5 +75,46 @@ describe('itemMenuActions', () => {
 		expect(ids({Id: 'p1', Type: 'Person'}, {isAdmin: true})).toEqual([]);
 		expect(ids({Id: 'c1', Type: 'TvChannel'})).toEqual([]);
 		expect(ids(null)).toEqual([]);
+	});
+
+	test('flips the top action to Go to Details when Continue Watching and Next Up play on select', () => {
+		const options = {isContinueWatchingOrNextUp: true, playImmediately: true};
+		expect(ids(movie(), options)).toEqual(['viewDetails', 'watched', 'favorite', 'addToPlaylist']);
+		expect(labelOf(movie(), 'viewDetails', options)).toBe('Go to Details');
+		expect(ids(episode(), options)).toEqual(['viewDetails', 'watched', 'hideNextUp', 'favorite', 'addToPlaylist', 'goToSeries']);
+		expect(labelOf(episode(), 'viewDetails', options)).toBe('Go to Details');
+	});
+
+	test('keeps Play first on Continue Watching and Next Up when they open Details on select', () => {
+		const options = {isContinueWatchingOrNextUp: true, playImmediately: false};
+		expect(ids(movie(), options)).toEqual(['play', 'watched', 'favorite', 'addToPlaylist']);
+		expect(labelOf(movie(), 'play', options)).toBe('Play');
+	});
+});
+
+describe('hideFromResume', () => {
+	const fakeApi = () => ({hideFromResume: jest.fn(() => Promise.resolve()), setWatched: jest.fn(() => Promise.resolve())});
+
+	test('keeps the progress on Emby and clears the play state on Jellyfin', async () => {
+		const emby = fakeApi();
+		await hideFromResume(emby, movie({PlaybackPositionTicks: 50}), 'emby');
+		expect(emby.hideFromResume).toHaveBeenCalledWith('m1');
+		expect(emby.setWatched).not.toHaveBeenCalled();
+
+		const jellyfin = fakeApi();
+		await hideFromResume(jellyfin, movie({PlaybackPositionTicks: 50}), 'jellyfin');
+		expect(jellyfin.hideFromResume).not.toHaveBeenCalled();
+		expect(jellyfin.setWatched).toHaveBeenCalledWith('m1', false);
+	});
+
+	test('always clears audio, and resets nothing when Emby refuses', async () => {
+		const audio = fakeApi();
+		await hideFromResume(audio, {Id: 'a1', Type: 'AudioBook'}, 'emby');
+		expect(audio.setWatched).toHaveBeenCalledWith('a1', false);
+
+		const refused = fakeApi();
+		refused.hideFromResume.mockReturnValue(Promise.reject(new Error('API Error: 500')));
+		await hideFromResume(refused, movie(), 'emby');
+		expect(refused.setWatched).not.toHaveBeenCalled();
 	});
 });

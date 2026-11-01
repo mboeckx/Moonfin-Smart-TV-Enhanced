@@ -31,9 +31,11 @@
 // below and keep this static one. Writing var(--x, fallback) instead does not work, since the
 // build resolves any var() that has a fallback ahead of time and would freeze the opacity
 // setting everywhere.
-.backdrop:after {
+//
+// SpotlightDetailContent.js bakes these layers into an image and sets it inline, so its copy of the
+// stops has to match. The gradients here only paint if that fails.
+.scrim {
 	bottom: 0;
-	content: '';
 	left: 0;
 	position: absolute;
 	right: 0;
@@ -90,10 +92,20 @@
 	position: absolute;
 	right: 0;
 	top: 0;
+	overflow-y: auto;
+	scrollbar-width: none;
+
+	&::-webkit-scrollbar {
+		display: none;
+	}
 }
 
 .sidebarOffset {
 	padding-left: 120px;
+}
+
+.topbarOffset {
+	padding-top: 135px;
 }
 
 .hero {
@@ -124,6 +136,33 @@
 	white-space: nowrap;
 }
 
+.logoRow {
+	display: inline-flex;
+	align-items: center;
+	max-width: 100%;
+}
+
+.seriesLabelRow {
+	display: inline-flex;
+	align-items: center;
+	max-width: 100%;
+}
+
+.versionBadge {
+	display: inline-flex;
+	align-items: center;
+	font-size: 16px;
+	font-weight: 700;
+	padding: 3px 8px;
+	border-radius: 4px;
+	background-color: rgba(110, 168, 254, 0.15);
+	border: 1px solid rgba(110, 168, 254, 0.5);
+	color: var(--theme-accent, #6ea8fe);
+	margin-left: 14px;
+	vertical-align: middle;
+	white-space: nowrap;
+}
+
 .logo {
 	max-height: 120px;
 	max-width: 480px;
@@ -149,12 +188,26 @@
 	letter-spacing: 1.2px;
 }
 
+.personHeader {
+	align-items: center;
+	display: flex;
+	flex-direction: row;
+	max-width: 100%;
+}
+
+.personInfo {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
 .personAvatar {
 	border: 3px solid var(--theme-focus-border-color, #6ea8fe);
 	border-radius: 50%;
-	height: 140px;
+	height: 120px;
 	object-fit: cover;
-	width: 140px;
+	width: 120px;
+	flex-shrink: 0;
 }
 
 .personBorn {
@@ -232,12 +285,32 @@
 	max-width: 800px;
 }
 
+.cardBandWrapper {
+	flex-shrink: 0;
+	overflow-x: auto;
+	overflow-y: visible;
+	scrollbar-width: none;
+	-webkit-overflow-scrolling: touch;
+	transform: translateZ(0);
+	will-change: scroll-position;
+	contain: layout style;
+	padding: 16px 40px;
+	margin: -16px -40px;
+
+	&::-webkit-scrollbar {
+		display: none;
+	}
+}
+
 .cardBand {
 	display: flex;
 	flex-direction: row;
+	width: max-content;
 }
 
 .metaRow              { .flex-row-gap(0); }
 .techRow              { .flex-row-gap(8px); }
 .hero                 { .flex-col-gap(10px); }
 .cardBand             { .flex-row-gap(16px); }
+.personHeader         { .flex-row-gap(24px); }
+.personInfo           { .flex-col-gap(6px); }

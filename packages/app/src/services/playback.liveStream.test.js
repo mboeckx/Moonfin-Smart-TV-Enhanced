@@ -2,7 +2,7 @@ import * as playback from './playback';
 import * as jellyfinApi from './jellyfinApi';
 
 jest.mock('./jellyfinApi', () => {
-	const server = {getPlaybackInfo: jest.fn(), closeLiveStream: jest.fn(), reportPlaybackStopped: jest.fn()};
+	const server = {getPlaybackInfo: jest.fn(), closeLiveStream: jest.fn(), reportPlaybackStopped: jest.fn(), reportPlaybackStart: jest.fn()};
 	return {
 		api: server,
 		createApiForServer: () => server,
@@ -128,6 +128,68 @@ describe('the stop beacon', () => {
 		expect(api.closeLiveStream).toHaveBeenCalledWith('live-a');
 	});
 
+	test('duplicate exit events and late cleanup send one stop', async () => {
+		answerMovie();
+		await playback.getPlaybackInfo(movie.Id, {item: movie});
+		playback.reportStopBeacon(100);
+		playback.reportStopBeacon(100);
+		playback.discardCurrentSession();
+		playback.reportStopBeacon(100);
+		await playback.reportStop(100);
+		expect(stops).toHaveLength(1);
+		expect(api.reportPlaybackStopped).not.toHaveBeenCalled();
+	});
+
+	test('a failed beacon can be retried at the same position', async () => {
+		answerMovie();
+		await playback.getPlaybackInfo(movie.Id, {item: movie});
+		status = 500;
+		expect(playback.reportStopBeacon(100)).toBe(false);
+		status = 200;
+		expect(playback.reportStopBeacon(100)).toBe(true);
+		expect(stops).toHaveLength(2);
+	});
+
+	test('an exit stop matching the background stop counts as sent and goes out once', async () => {
+		answerMovie();
+		await playback.getPlaybackInfo(movie.Id, {item: movie});
+		playback.reportBackgroundStop(0);
+		expect(playback.reportStopBeacon(0)).toBe(true);
+		expect(stops).toHaveLength(1);
+		playback.discardCurrentSession();
+		expect(playback.reportStopBeacon(0)).toBe(false);
+		await playback.reportStop(0);
+		expect(stops).toHaveLength(1);
+		expect(api.reportPlaybackStopped).not.toHaveBeenCalled();
+	});
+
+	test('a normal stop at the background stop position is not sent again', async () => {
+		answerMovie();
+		await playback.getPlaybackInfo(movie.Id, {item: movie});
+		playback.reportBackgroundStop(100);
+		await playback.reportStop(100);
+		expect(stops).toHaveLength(1);
+		expect(api.reportPlaybackStopped).not.toHaveBeenCalled();
+		expect(playback.getCurrentSession()).toBeNull();
+	});
+
+	test('a normal stop after seeking away from the background stop still goes out', async () => {
+		answerMovie();
+		await playback.getPlaybackInfo(movie.Id, {item: movie});
+		playback.reportBackgroundStop(100);
+		await playback.reportStop(200);
+		expect(api.reportPlaybackStopped).toHaveBeenCalledWith(expect.objectContaining({PositionTicks: 200}));
+	});
+
+	test('a resumed session can stop again at the same position', async () => {
+		answerMovie();
+		await playback.getPlaybackInfo(movie.Id, {item: movie});
+		playback.reportBackgroundStop(0);
+		await playback.reportStart(0);
+		playback.reportBackgroundStop(0);
+		expect(stops).toHaveLength(2);
+	});
+
 	test('a film has no stream to name', async () => {
 		answerMovie();
 		await playback.getPlaybackInfo(movie.Id, {item: movie});
@@ -166,5 +228,45 @@ describe('transcode preferences', () => {
 		await playback.getPlaybackInfo(movie.Id, {item: movie});
 		await playback.changeAudioStream(3, 0);
 		expect(lastRequest()).toMatchObject({EnableDirectPlay: false, EnableDirectStream: true});
+	});
+});
+
+describe('the source id PlaybackInfo is pinned to', () => {
+	const sentIds = () => api.getPlaybackInfo.mock.calls.map(([, body]) => body.MediaSourceId);
+	const probed = {Id: 'real', SupportsDirectPlay: true, Container: 'mkv', MediaStreams: [{Type: 'Audio', Index: 1}]};
+
+	test("an Emby channel item's placeholder is left off so the server probes the file", async () => {
+		const item = {Id: 'ch-item', Type: 'Movie', MediaSources: [{Id: 'ph', MediaStreams: []}]};
+		api.getPlaybackInfo.mockResolvedValue({PlaySessionId: 'session', MediaSources: [probed]});
+		await playback.getPlaybackInfo(item.Id, {item, serverType: 'emby', mediaSourceId: 'ph'});
+		await playback.getPlaybackInfo(item.Id, {item, serverType: 'jellyfin', mediaSourceId: 'ph'});
+		expect(sentIds()).toEqual([undefined, 'ph']);
+	});
+
+	test('Emby is asked again without the id when the placeholder comes back unprobed', async () => {
+		api.getPlaybackInfo
+			.mockResolvedValueOnce({PlaySessionId: 'first', MediaSources: [{Id: 'ph', MediaStreams: [], SupportsDirectPlay: false, SupportsDirectStream: false, TranscodingUrl: '/x'}]})
+			.mockResolvedValueOnce({PlaySessionId: 'probed', MediaSources: [{Id: 'ph', MediaStreams: []}, probed]});
+		const result = await playback.getPlaybackInfo('ch-item', {item: {Id: 'ch-item', Type: 'Movie'}, serverType: 'emby', mediaSourceId: 'ph'});
+		expect(sentIds()).toEqual(['ph', undefined]);
+		expect(result.playSessionId).toBe('probed');
+		expect(result.mediaSourceId).toBe('real');
+	});
+
+	test('an in-progress recording that has no compatible stream for its pinned id plays the one the server picks', async () => {
+		const recording = {Id: 'rec', Type: 'Recording', MediaSources: [{Id: 'rec1'}]};
+		api.getPlaybackInfo
+			.mockResolvedValueOnce({MediaSources: [], ErrorCode: 'NoCompatibleStream'})
+			.mockResolvedValueOnce({PlaySessionId: 'active', MediaSources: [{Id: 'active', SupportsDirectPlay: true, IsInfiniteStream: true, Container: 'ts', MediaStreams: []}]});
+		const result = await playback.getPlaybackInfo(recording.Id, {item: recording, mediaSourceId: 'rec1'});
+		expect(sentIds()).toEqual(['rec1', undefined]);
+		expect(result.mediaSourceId).toBe('active');
+	});
+
+	test('a picked version that fails is not swapped for another', async () => {
+		const item = {Id: 'two', Type: 'Movie', MediaSources: [{Id: 'a'}, {Id: 'b'}]};
+		api.getPlaybackInfo.mockResolvedValueOnce({MediaSources: [], ErrorCode: 'NoCompatibleStream'});
+		await expect(playback.getPlaybackInfo(item.Id, {item, mediaSourceId: 'b'})).rejects.toThrow('NoCompatibleStream');
+		expect(sentIds()).toEqual(['b']);
 	});
 });

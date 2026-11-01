@@ -39,6 +39,8 @@ const TIZEN_KEYS = {
 	CHANNEL_DOWN: 428,
 };
 
+// The channel buttons reach the page as Page Up and Page Down, and the Magic Remote's pointer
+// hiding comes in as a key of its own.
 const WEBOS_KEYS = {
 	BACK: 461,
 	PLAY: 415,
@@ -46,6 +48,9 @@ const WEBOS_KEYS = {
 	STOP: 413,
 	REWIND: 412,
 	FAST_FORWARD: 417,
+	CHANNEL_UP: 33,
+	CHANNEL_DOWN: 34,
+	POINTER_HIDE: 1537,
 };
 
 // The Vega WebView hands the page the back key as Escape and the transport keys
@@ -80,10 +85,23 @@ export const KEYS = {
 	...(PLATFORM_KEYS[getPlatform()] || WEBOS_KEYS),
 };
 
+// Fast forward and rewind, and the track and page keys a remote may carry, page a list. 1 is a
+// page forward, -1 a page back and 0 any other key.
+const PAGE_FORWARD_KEYS = [KEYS.FAST_FORWARD || 417, 425, 10233, 34];
+const PAGE_BACK_KEYS = [KEYS.REWIND || 412, 424, 10232, 33];
+export const pageDirection = (keyCode) => {
+	if (PAGE_FORWARD_KEYS.indexOf(keyCode) >= 0) return 1;
+	if (PAGE_BACK_KEYS.indexOf(keyCode) >= 0) return -1;
+	return 0;
+};
+
 export const isBackKey = (e) => {
 	const code = e.keyCode || e.which;
 	return code === KEYS.BACK || code === 27 || code === 8;
 };
+
+// The transport keys, which music playing behind the other screens still answers.
+export const isMediaKey = (e) => [KEYS.PLAY, KEYS.PAUSE, KEYS.PLAY_PAUSE, KEYS.STOP, KEYS.FAST_FORWARD, KEYS.REWIND].includes(e.keyCode || e.which);
 
 // A remote with a menu key does with one press what the others do by holding OK.
 export const isMenuKey = (e) => KEYS.MENU !== undefined && (e.keyCode || e.which) === KEYS.MENU;
@@ -91,6 +109,40 @@ export const isMenuKey = (e) => KEYS.MENU !== undefined && (e.keyCode || e.which
 export const isExitKey = (e) => {
 	if (getPlatform() !== 'tizen') return false;
 	return (e.keyCode || e.which) === TIZEN_KEYS.EXIT;
+};
+
+// A slow TV can take longer to draw a move than the remote takes to repeat a held arrow. Older engines
+// stamp events when they're handled, so a repeat's wait can't be read off the event. A repeat that
+// arrives before the last move has been drawn is dropped, so focus keeps pace with the key and stops
+// when it's let go. A separate press always goes through.
+const MAX_DRAW_WAIT_MS = 1000;
+export const paceArrowKeys = (target = window) => {
+	let held = null;
+	let drawing = false;
+	let acceptedAt = 0;
+	// A message posted from the next frame's callback is handled once that frame has been drawn.
+	const channel = new MessageChannel();
+	channel.port1.onmessage = () => {
+		drawing = false;
+	};
+	target.addEventListener('keydown', (e) => {
+		const code = e.keyCode;
+		if (code !== KEYS.UP && code !== KEYS.DOWN && code !== KEYS.LEFT && code !== KEYS.RIGHT) return;
+		const repeat = e.repeat || held === code;
+		held = code;
+		// A page that stops drawing, hidden behind another app for one, can't hold the arrows forever.
+		if (repeat && drawing && Date.now() - acceptedAt < MAX_DRAW_WAIT_MS) {
+			e.preventDefault();
+			e.stopImmediatePropagation();
+			return;
+		}
+		drawing = true;
+		acceptedAt = Date.now();
+		window.requestAnimationFrame(() => channel.port2.postMessage(null));
+	}, true);
+	target.addEventListener('keyup', (e) => {
+		if (e.keyCode === held) held = null;
+	}, true);
 };
 
 export const ESSENTIAL_KEY_NAMES = [

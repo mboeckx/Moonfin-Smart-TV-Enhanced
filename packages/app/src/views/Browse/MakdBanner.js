@@ -3,12 +3,13 @@ import {isMdblistEnabled} from '../../services/mdblistApi';
 import Spottable from '@enact/spotlight/Spottable';
 import Spotlight from '@enact/spotlight';
 import $L from '@enact/i18n/$L';
-import {getImageUrl, getBackdropId, formatDuration} from '../../utils/helpers';
+import {getFeaturedBackdropUrl, formatDuration} from '../../utils/helpers';
 import RatingsRow from '../../components/RatingsRow';
 import {KEYS} from '../../utils/keys';
 import useTrailerPreview from './useTrailerPreview';
 import css from './Browse.module.less';
 import {carouselIntervalMs} from '../../utils/carouselTiming';
+import {useScreensaverActive} from '../../hooks/useScreensaverActive';
 
 const FEATURED_GENRES_LIMIT = 3;
 const PRELOAD_ADJACENT_SLIDES = 2;
@@ -32,6 +33,7 @@ const MakdBanner = memo(({
 }) => {
 	const [currentIndex, setCurrentIndex] = useState(0);
 	const [featuredFocused, setFeaturedFocused] = useState(false);
+	const screensaverActive = useScreensaverActive();
 
 	const preloadedImagesRef = useRef(new Set());
 	const carouselIntervalRef = useRef(null);
@@ -46,14 +48,16 @@ const MakdBanner = memo(({
 
 	const {trailerActive, trailerHolding, trailerContainerRef} = useTrailerPreview({
 		currentItem: currentFeatured,
-		isVisible: isVisible && browseVisible,
+		isVisible: isVisible && browseVisible && featuredFocused,
 		enabled: settingsLoaded && settings.featuredTrailerPreview,
 		preferMuted: settings.featuredTrailerMuted,
+		volume: settings.trailerVolume,
 		showCaptions: settings.mediaBarTrailerCaptions,
 		captionLanguage: settings.uiLanguage,
 		api,
 		getItemServerUrl,
-		onEnded: handleTrailerEnded
+		onEnded: handleTrailerEnded,
+		hidesChrome: featuredFocused
 	});
 
 	useEffect(() => {
@@ -81,10 +85,7 @@ const MakdBanner = memo(({
 			const index = (currentIndex + offset + featuredItems.length) % featuredItems.length;
 			const item = featuredItems[index];
 			if (item) {
-				const backdropId = getBackdropId(item);
-				if (backdropId) {
-					preloadImage(getImageUrl(serverUrl, backdropId, 'Backdrop', {maxWidth: 1920, quality: 85}));
-				}
+				preloadImage(getFeaturedBackdropUrl(serverUrl, item, {maxWidth: 1920, quality: 85}));
 				if (item.LogoUrl) {
 					preloadImage(item.LogoUrl);
 				}
@@ -103,12 +104,12 @@ const MakdBanner = memo(({
 			settings.autoAdvanceInterval,
 			settings.carouselSpeed
 		);
-		if (!isVisible || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0 || trailerHolding) return;
+		if (!isVisible || screensaverActive || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0 || trailerHolding) return;
 
 		carouselIntervalRef.current = setInterval(() => {
 			setCurrentIndex((prev) => (prev + 1) % featuredItems.length);
 		}, carouselSpeed);
-	}, [isVisible, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed, trailerHolding]);
+	}, [isVisible, screensaverActive, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed, trailerHolding]);
 
 	useEffect(() => {
 		const carouselSpeed = carouselIntervalMs(
@@ -116,7 +117,7 @@ const MakdBanner = memo(({
 			settings.autoAdvanceInterval,
 			settings.carouselSpeed
 		);
-		if (!isVisible || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0 || trailerHolding) return;
+		if (!isVisible || screensaverActive || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0 || trailerHolding) return;
 		startCarouselTimer();
 		return () => {
 			if (carouselIntervalRef.current) {
@@ -124,7 +125,7 @@ const MakdBanner = memo(({
 				carouselIntervalRef.current = null;
 			}
 		};
-	}, [isVisible, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed, trailerHolding, startCarouselTimer]);
+	}, [isVisible, screensaverActive, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed, trailerHolding, startCarouselTimer]);
 
 	useEffect(() => {
 		return () => {
@@ -212,7 +213,7 @@ const MakdBanner = memo(({
 			>
 				<div className={css.makdBackdrop}>
 					<img
-						src={getImageUrl(getItemServerUrl(currentFeatured), getBackdropId(currentFeatured), 'Backdrop', {maxWidth: 1920, quality: 85})}
+						src={getFeaturedBackdropUrl(getItemServerUrl(currentFeatured), currentFeatured, {maxWidth: 1920, quality: 85})}
 						alt=''
 					/>
 				</div>
@@ -275,7 +276,8 @@ const MakdBanner = memo(({
 							item={currentFeatured}
 							serverUrl={getItemServerUrl(currentFeatured)}
 							compact
-							pluginEnabled={isMdblistEnabled(settings)}
+							surface='mediaBar'
+							pluginEnabled={isMdblistEnabled(settings, 'mediaBar')}
 						/>
 
 						{!settings.hideHomeMediaDescription && (

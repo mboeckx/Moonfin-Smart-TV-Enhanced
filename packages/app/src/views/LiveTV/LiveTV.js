@@ -7,17 +7,21 @@ import {useAuth} from '../../context/AuthContext';
 import {useSettings} from '../../context/SettingsContext';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import {formatClockTime, formatDayLabel} from '../../utils/clock';
-import {KEYS} from '../../utils/keys';
-import {pointerHover} from '../../utils/focusScroll';
+import {KEYS, pageDirection} from '../../utils/keys';
+import {animateScrollTop, pointerHover, stopScrollAnimation} from '../../utils/focusScroll';
 import {rem, rootScale} from '../../utils/rootScale';
+import {getImageUrl} from '../../utils/helpers';
 import {createLiveTvGuideStore} from '../../services/liveTvGuideStore';
 import {getLiveTvLastChannelId, loadLiveTvLastChannel} from '../../services/liveTvLastChannel';
 import {
-	CELL_KINDS, CHANNEL_SORTS, GUIDE_FILTERS, TV_CANVAS_SCALE, artworkSource, buildRowCells, categoryTags,
-	clampAnchorInto, episodeLine, episodeTitleOf, filterLabel, floorToHalfHour, genreFor, guideWindowFor,
-	guideLeftEdge, hasSeriesTimer, hasTimer, isLiveAt, programAiringAt, programEnd, programStart, progressAt,
-	reanchorSelection, resolveCellIndexAt, seasonEpisodeLabel
+	CELL_KINDS, CHANNEL_SORTS, DEFAULT_SERIES_CHOICE, GUIDE_FILTERS, TV_CANVAS_SCALE, artworkSource, buildRowCells,
+	clampAnchorInto, episodeLine, episodeTitleOf, floorToHalfHour, genreFor, guideWindowFor, guideLeftEdge, hasSeriesTimer,
+	hasTimer, isLiveAt, programAiringAt, programEnd, programStart, progressAt, reanchorSelection,
+	recordingMark, resolveCellIndexAt, seasonEpisodeLabel, seriesChoiceFlags, seriesChoiceOf
 } from '../../utils/liveTvGuide';
+import SeriesEpisodeChoices from '../../components/SeriesEpisodeChoices';
+import {useRecordPrompt} from '../../components/RecordPrompt';
+import {RECORD_OUTCOME, outcomeAddsFutureShowing, recordAiring, recordAiringMessage, recordPromptChannel} from '../../utils/recordAiring';
 import {ChannelCell, ProgramCell} from './GuideCells';
 import {GUIDE_ICONS, GuideIcon} from './GuideIcons';
 import GuideHero from './GuideHero';
@@ -74,15 +78,6 @@ const REANCHOR_INPUT_QUIET_MS = 1000;
 const WINDOW_BAR_PREVIOUS = 0;
 const WINDOW_BAR_LAST = 5;
 
-// Fast forward and rewind, and the track and page keys a remote may carry, page the rows.
-const PAGE_FORWARD_KEYS = [KEYS.FAST_FORWARD || 417, 425, 10233, 34];
-const PAGE_BACK_KEYS = [KEYS.REWIND || 412, 424, 10232, 33];
-const pageDirection = (keyCode) => {
-	if (PAGE_FORWARD_KEYS.indexOf(keyCode) >= 0) return 1;
-	if (PAGE_BACK_KEYS.indexOf(keyCode) >= 0) return -1;
-	return 0;
-};
-
 const SORT_LABELS = {number: 'Channel Number', name: 'Name', favoritesFirst: 'Favorites First'};
 const normalizeSort = (value) => (CHANNEL_SORTS.indexOf(value) >= 0 ? value : 'number');
 
@@ -90,6 +85,7 @@ const channelSpotlightId = (channelId) => `guide-ch-${channelId}`;
 const cellSpotlightId = (channelId, index) => `guide-cell-${channelId}-${index}`;
 const barSpotlightId = (index) => `guide-bar-${index}`;
 const chipSpotlightId = (index) => `guide-chip-${index}`;
+const PLEX_MISSING_FILTERS = ['sports', 'news', 'kids'];
 
 const isLoadingCells = (cells) => cells.length === 1 && cells[0].kind === CELL_KINDS.loading;
 
@@ -109,36 +105,12 @@ const focusWhenMounted = (spotlightId, {attempts = 12, defer = false} = {}) => {
 	else tryFocus(attempts);
 };
 
-// One animation per scroller. A held key would otherwise stack loops that all write the offset
-// each frame, and a leftover one would undo a jump set straight after it.
-const scrollFrames = new WeakMap();
-
-const stopScrollAnimation = (node) => {
-	window.cancelAnimationFrame(scrollFrames.get(node));
-	scrollFrames.delete(node);
-};
-
-const animateScrollTop = (node, target, duration) => {
-	stopScrollAnimation(node);
-	const from = node.scrollTop;
-	const distance = target - from;
-	if (!distance) return;
-	const started = Date.now();
-	const step = () => {
-		const t = Math.min(1, (Date.now() - started) / duration);
-		node.scrollTop = from + distance * (1 - Math.pow(1 - t, 3));
-		if (t < 1) scrollFrames.set(node, window.requestAnimationFrame(step));
-		else scrollFrames.delete(node);
-	};
-	scrollFrames.set(node, window.requestAnimationFrame(step));
-};
-
 // The same span the other clients' date picker offers, a week back through two weeks out.
 const buildDateOptions = () => {
 	const options = [];
 	const today = new Date();
-	today.setHours(0, 0, 0, 0);
-	for (let i = -7; i <= 14; i++) options.push(new Date(today.getTime() + i * 86400000));
+	// Stepped by calendar day, since a day across a daylight saving change isn't 24 hours.
+	for (let i = -7; i <= 14; i++) options.push(new Date(today.getFullYear(), today.getMonth(), today.getDate() + i));
 	return options;
 };
 
@@ -159,10 +131,6 @@ const GuideRow = memo(({channel, rowIndex, cells, windowStart, now, layout, logo
 	const handleFocusCell = useCallback((cell) => onFocusCell(rowIndex, channel.Id, cell), [rowIndex, channel.Id, onFocusCell]);
 	const handleKeyDownCell = useCallback((e, cell) => onKeyDownCell(e, rowIndex, channel.Id, cell, cells), [rowIndex, channel.Id, cells, onKeyDownCell]);
 	const handleSelectCell = useCallback((cell) => onSelectCell(rowIndex, channel.Id, cell), [rowIndex, channel.Id, onSelectCell]);
-	const cellTags = useMemo(
-		() => cells.map((cell) => (cell.program ? categoryTags(cell.program).map((key) => $L(filterLabel(key))) : [])),
-		[cells]
-	);
 
 	return (
 		<div className={css.guideRow} data-channel-id={channel.Id}>
@@ -188,12 +156,11 @@ const GuideRow = memo(({channel, rowIndex, cells, windowStart, now, layout, logo
 							width={(cell.end - cell.start) * layout.pxPerMs}
 							spotlightId={cellSpotlightId(channel.Id, index)}
 							genre={program ? genreFor(program) : null}
-							rating={program?.OfficialRating || null}
-							tags={cellTags[index]}
+							episode={program ? episodeLine(program) : ''}
+							mark={program ? recordingMark(program) : null}
 							isLive={live}
 							isPast={program ? programEnd(program) < now : false}
 							progress={live ? progressAt(program, now) : 0}
-							hasTimer={program ? hasTimer(program) : false}
 							startsBeforeWindow={program ? programStart(program) < windowStart : false}
 							noProgramLabel={$L('No program data')}
 							onFocusCell={handleFocusCell}
@@ -234,14 +201,14 @@ const GuideHeroHost = ({store, emitter, focusRef, serverUrl, clockDisplay, versi
 
 	const heroProps = useMemo(() => {
 		const logoUrl = channel?.ImageTags?.Primary
-			? `${serverUrl}/Items/${channel.Id}/Images/Primary?maxHeight=209&tag=${channel.ImageTags.Primary}`
+			? getImageUrl(serverUrl, channel.Id, 'Primary', {maxHeight: 209, tag: channel.ImageTags.Primary})
 			: null;
 		const artwork = preview ? (artworkSource(preview) || store.cachedArtworkFor(preview.Id)) : null;
 		let programImageUrl = null;
 		if (artwork) {
 			programImageUrl = artwork.isThumb
-				? `${serverUrl}/Items/${artwork.itemId}/Images/Thumb?maxWidth=157&tag=${artwork.tag}`
-				: `${serverUrl}/Items/${artwork.itemId}/Images/Primary?maxHeight=209&maxWidth=157&tag=${artwork.tag}`;
+				? getImageUrl(serverUrl, artwork.itemId, 'Thumb', {maxWidth: 157, tag: artwork.tag})
+				: getImageUrl(serverUrl, artwork.itemId, 'Primary', {maxWidth: 157, maxHeight: 209, tag: artwork.tag});
 		}
 		const episodeTitle = preview ? episodeTitleOf(preview) : '';
 		const episodeSuffix = episodeTitle && episodeTitle !== preview?.Name ? ` - ${episodeTitle}` : '';
@@ -261,7 +228,8 @@ const GuideHeroHost = ({store, emitter, focusRef, serverUrl, clockDisplay, versi
 			communityRating: preview?.CommunityRating ?? null,
 			badgeLabel,
 			synopsis: preview?.Overview || null,
-			isLive: preview ? isLiveAt(preview, now) : false
+			isLive: preview ? isLiveAt(preview, now) : false,
+			mark: preview ? recordingMark(preview) : null
 		};
 	}, [tick, version, clockDisplay, serverUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -269,9 +237,14 @@ const GuideHeroHost = ({store, emitter, focusRef, serverUrl, clockDisplay, versi
 };
 
 const LiveTV = ({onPlayChannel, onRecordings, backHandlerRef}) => {
-	const {api, serverUrl} = useAuth();
+	const {api, serverUrl, serverType} = useAuth();
+	// Plex's guide carries no sports, news or kids flags, so those would always come up empty.
+	const guideFilters = useMemo(() => (serverType === 'plex'
+		? GUIDE_FILTERS.filter((filter) => !PLEX_MISSING_FILTERS.includes(filter.key))
+		: GUIDE_FILTERS), [serverType]);
 	const {settings, updateSetting} = useSettings();
 	const clockDisplay = settings.clockDisplay;
+	const {prompt: openRecordPrompt, setLoading: setRecordPromptLoading, handleBack: handleRecordPromptBack, element: recordPromptElement} = useRecordPrompt(clockDisplay);
 
 	const storeRef = useRef(null);
 	if (!storeRef.current) {
@@ -747,6 +720,7 @@ const LiveTV = ({onPlayChannel, onRecordings, backHandlerRef}) => {
 		} else if (code === KEYS.LEFT) {
 			consume();
 			onNavigationKey();
+			focusWhenMounted(chipSpotlightId(0));
 		}
 	}, [focusChannelRow, focusProgramFromChannel, focusWindowBar, rowsPerViewport]);
 
@@ -808,15 +782,81 @@ const LiveTV = ({onPlayChannel, onRecordings, backHandlerRef}) => {
 		if (actionBusyRef.current) return;
 		actionBusyRef.current = true;
 		try {
-			await action();
+			const message = await action();
 			setDialog(null);
-			showToast(success);
+			showToast(typeof message === 'string' ? message : success);
 			setTimeout(restoreGridFocus, 0);
 		} catch {
 			actionBusyRef.current = false;
 			showToast(failure);
 		}
 	}, [restoreGridFocus, showToast]);
+
+	// Record on a program with no timer yet. Back on the Record prompt leaves the program dialog open.
+	const handleRecordProgram = useCallback(async (target) => {
+		if (actionBusyRef.current) return;
+		actionBusyRef.current = true;
+		try {
+			const channel = store.channelForId(target.ChannelId);
+			const outcome = await recordAiring({
+				program: target,
+				start: new Date(programStart(target)),
+				createTimer: () => store.toggleProgramRecording(target),
+				prompt: openRecordPrompt,
+				setLoading: setRecordPromptLoading,
+				stillValid: () => dialogRef.current?.program?.Id === target.Id,
+				channel: channel ? recordPromptChannel(channel.ChannelNumber, channel.Name) : undefined
+			});
+			if (outcome === RECORD_OUTCOME.cancelled) {
+				actionBusyRef.current = false;
+				if (dialogRef.current?.program?.Id === target.Id) setTimeout(() => Spotlight.focus('livetv-record'), 0);
+				return;
+			}
+			if (outcomeAddsFutureShowing(outcome)) await store.refreshRecordings().catch(() => {});
+			setDialog(null);
+			showToast(recordAiringMessage(outcome));
+			setTimeout(restoreGridFocus, 0);
+		} catch {
+			actionBusyRef.current = false;
+			showToast($L('Unable to create recording'));
+		}
+	}, [openRecordPrompt, setRecordPromptLoading, restoreGridFocus, showToast, store]);
+
+	const openSeriesChoice = useCallback((target, rule = null) => {
+		setDialog({type: 'series', program: target, rule});
+		setTimeout(() => Spotlight.focus('livetv-series'), 100);
+	}, []);
+
+	const openSeriesSettings = useCallback(async (target) => {
+		if (actionBusyRef.current) return;
+		actionBusyRef.current = true;
+		try {
+			const rule = await api.getLiveTvSeriesTimer(target.SeriesTimerId);
+			actionBusyRef.current = false;
+			openSeriesChoice(target, rule);
+		} catch {
+			actionBusyRef.current = false;
+			showToast($L('Unable to update series recording'));
+		}
+	}, [api, openSeriesChoice, showToast]);
+
+	const handleSeriesChoice = useCallback((key) => {
+		const {program: target, rule} = dialogRef.current;
+		if (!rule) {
+			runDialogAction(
+				() => store.toggleSeriesRecording(target, seriesChoiceFlags(key)),
+				$L('Series set to record'),
+				$L('Unable to create series recording')
+			);
+		} else if (seriesChoiceOf(rule) === key) {
+			closeDialog();
+		} else {
+			runDialogAction(async () => {
+				await api.updateLiveTvSeriesTimer(rule.Id, {...rule, ...seriesChoiceFlags(key)});
+				await store.refreshRecordings();
+			}, $L('Series recording updated'), $L('Unable to update series recording'));
+		}
+	}, [api, closeDialog, runDialogAction, store]);
 
 	const openSort = useCallback(() => {
 		pendingMoveRef.current = null;
@@ -900,11 +940,13 @@ const LiveTV = ({onPlayChannel, onRecordings, backHandlerRef}) => {
 	useEffect(() => {
 		if (!backHandlerRef) return undefined;
 		const handler = () => {
+			if (handleRecordPromptBack()) return true;
 			if (dialogRef.current) {
-				if (dialogRef.current.type === 'program') closeDialog();
-				else {
+				if (dialogRef.current.type === 'sort' || dialogRef.current.type === 'date') {
 					setDialog(null);
 					setTimeout(() => focusWindowBar(lastWindowBarIndexRef.current), 0);
+				} else {
+					closeDialog();
 				}
 				return true;
 			}
@@ -914,7 +956,7 @@ const LiveTV = ({onPlayChannel, onRecordings, backHandlerRef}) => {
 		return () => {
 			if (backHandlerRef.current === handler) backHandlerRef.current = null;
 		};
-	}, [backHandlerRef, closeDialog, consumeBackIfExploring, focusWindowBar]);
+	}, [backHandlerRef, closeDialog, consumeBackIfExploring, focusWindowBar, handleRecordPromptBack]);
 
 	// ------------------------------------------------------------------------------------------
 	// Channel numbers typed on the remote
@@ -1120,7 +1162,7 @@ const LiveTV = ({onPlayChannel, onRecordings, backHandlerRef}) => {
 									now={clockNow}
 									layout={layout}
 									logoUrl={channel.ImageTags?.Primary
-										? `${serverUrl}/Items/${channel.Id}/Images/Primary?maxHeight=${ROW_HEIGHT}&tag=${channel.ImageTags.Primary}`
+										? getImageUrl(serverUrl, channel.Id, 'Primary', {maxHeight: ROW_HEIGHT, tag: channel.ImageTags.Primary})
 										: null}
 									onFocusChannel={handleFocusChannel}
 									onKeyDownChannel={handleKeyDownChannel}
@@ -1155,7 +1197,7 @@ const LiveTV = ({onPlayChannel, onRecordings, backHandlerRef}) => {
 		<div className={css.page} ref={pageRef}>
 			<FilterRailContainer className={css.filterRail} spotlightId="livetv-filters">
 				<div ref={filterRailRef} className={css.filterRailScroller}>
-					{GUIDE_FILTERS.map((filter, index) => (
+					{guideFilters.map((filter, index) => (
 						<SpottableButton
 							key={filter.key}
 							className={`${css.chip} ${store.filter === filter.key ? css.chipSelected : ''}`}
@@ -1260,6 +1302,9 @@ const LiveTV = ({onPlayChannel, onRecordings, backHandlerRef}) => {
 								{`${formatClockTime(new Date(programStart(program)), clockDisplay)} – ${formatClockTime(new Date(programEnd(program)), clockDisplay)}`}
 							</div>
 							{programEpisodeLine && <div className={css.dialogEpisode}>{programEpisodeLine}</div>}
+							{programHasSeriesTimer && !programHasTimer && !programEnded && (
+								<div className={css.dialogNote}>{$L('The series recording will skip this showing')}</div>
+							)}
 							{program.Overview && <div className={css.dialogOverview}>{program.Overview}</div>}
 							<div className={css.dialogChips}>
 								{program.IsMovie && <span className={css.genreChip}>{$L('Movie')}</span>}
@@ -1273,24 +1318,41 @@ const LiveTV = ({onPlayChannel, onRecordings, backHandlerRef}) => {
 						<div className={css.dialogActions}>
 							{!programEnded && (
 								<SpottableButton
+									spotlightId="livetv-record"
 									className={`${css.dialogBtn} ${programHasTimer ? css.danger : ''} ${recordingNow ? 'spottable-default' : ''}`}
-									onClick={() => runDialogAction( // eslint-disable-line react/jsx-no-bind
-										() => store.toggleProgramRecording(program),
-										programHasTimer ? $L('Recording cancelled') : $L('Program set to record'),
-										programHasTimer ? $L('Failed to cancel recording') : $L('Unable to create recording')
-									)}
+									onClick={() => { // eslint-disable-line react/jsx-no-bind
+										if (!programHasTimer) {
+											handleRecordProgram(program);
+											return;
+										}
+										runDialogAction(
+											() => store.toggleProgramRecording(program),
+											$L('Recording cancelled'),
+											$L('Failed to cancel recording')
+										);
+									}}
 								>
 									{programHasTimer ? $L('Cancel Recording') : $L('Record')}
 								</SpottableButton>
 							)}
-							{program.IsSeries && (
+							{programHasSeriesTimer && (
+								<SpottableButton
+									className={css.dialogBtn}
+									onClick={() => openSeriesSettings(program)} // eslint-disable-line react/jsx-no-bind
+								>
+									{$L('Series Settings')}
+								</SpottableButton>
+							)}
+							{(program.IsSeries || programHasSeriesTimer) && (
 								<SpottableButton
 									className={`${css.dialogBtn} ${programHasSeriesTimer ? css.danger : ''}`}
-									onClick={() => runDialogAction( // eslint-disable-line react/jsx-no-bind
-										() => store.toggleSeriesRecording(program),
-										programHasSeriesTimer ? $L('Series recording cancelled') : $L('Series set to record'),
-										programHasSeriesTimer ? $L('Failed to cancel series recording') : $L('Unable to create series recording')
-									)}
+									onClick={() => (programHasSeriesTimer // eslint-disable-line react/jsx-no-bind
+										? runDialogAction(
+											() => store.toggleSeriesRecording(program),
+											$L('Series recording cancelled'),
+											$L('Failed to cancel series recording')
+										)
+										: openSeriesChoice(program))}
 								>
 									{programHasSeriesTimer ? $L('Cancel Series Recording') : $L('Record Series')}
 								</SpottableButton>
@@ -1324,6 +1386,22 @@ const LiveTV = ({onPlayChannel, onRecordings, backHandlerRef}) => {
 					</PopupContainer>
 				</div>
 			)}
+
+			{dialog?.type === 'series' && (
+				<div className={css.dialogScrim}>
+					<PopupContainer className={css.dialog} spotlightId="livetv-series">
+						<div className={css.dialogTitle}>{$L('Which episodes should be recorded?')}</div>
+						<div className={css.dialogBody}>
+							<SeriesEpisodeChoices
+								selected={dialog.rule ? seriesChoiceOf(dialog.rule) : DEFAULT_SERIES_CHOICE}
+								onPick={handleSeriesChoice}
+							/>
+						</div>
+					</PopupContainer>
+				</div>
+			)}
+
+			{recordPromptElement}
 
 			{toast && <div key={toast.key} className={css.toast}>{toast.message}</div>}
 		</div>

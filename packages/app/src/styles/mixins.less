@@ -35,6 +35,16 @@
 // Frosted panel matching moonfin-core. backdrop-filter needs Chrome 76 and the
 // floor here is 38, so the tint carries legibility on its own and blur is layered
 // on only where it exists.
+// A row with its items centered across it
+.flex-center() {
+	display: -webkit-box;
+	display: -webkit-flex;
+	display: flex;
+	-webkit-box-align: center;
+	-webkit-align-items: center;
+	align-items: center;
+}
+
 .glass-panel(@radius: 16px) {
 	border-radius: @radius;
 	border: 1px solid rgba(255, 255, 255, 0.16);
@@ -211,6 +221,64 @@
 .descender-room() {
 	padding-bottom: 0.25em;
 	margin-bottom: -0.25em;
+}
+
+// The media preview plays into this frame over a card's artwork. It stays clear until
+// the stream reports playing, so the poster holds the card until there is a picture,
+// and the video is sized to overhang the frame, which clips it to the card.
+.media-preview-frame() {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	overflow: hidden;
+	border-radius: var(--theme-card-radius, 20px);
+	background: #000000;
+	opacity: 0;
+	z-index: 3;
+	pointer-events: none;
+
+	:global(.perf-high) & {
+		transition: opacity 0.3s ease;
+	}
+
+	// The Fire TV WebView only shows a video it can put on its own hardware plane, and
+	// a rounded clip turns into a mask that keeps it off one, so the corners go square
+	// there while the frame is up
+	:global(.vega) & {
+		border-radius: 0;
+	}
+
+	video {
+		position: absolute;
+		border: none;
+	}
+}
+
+// The focus border drawn over the preview video, where the image border was.
+.media-preview-ring() {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 4;
+	border: 4px solid var(--theme-focus-border-color, #ffffff);
+	border-radius: var(--theme-card-radius, 20px);
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+	box-sizing: border-box;
+	pointer-events: none;
+
+	:global(.perf-low) &,
+	:global(.perf-mid) & {
+		box-shadow: none;
+	}
+
+	// The ring loses its corners on the Fire TV with the frame it sits on
+	:global(.vega) & {
+		border-radius: 0;
+	}
 }
 
 // The settings lay out on a canvas 1150 units wide scaled to the screen. At 1080p one unit is this

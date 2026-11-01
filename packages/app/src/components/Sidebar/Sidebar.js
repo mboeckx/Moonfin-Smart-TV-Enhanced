@@ -2,13 +2,14 @@ import {memo, useCallback, useMemo} from 'react';
 import $L from '@enact/i18n/$L';
 import SpotlightContainerDecorator, {spotlightDefaultClass} from '@enact/spotlight/SpotlightContainerDecorator';
 import {useSettings} from '../../context/SettingsContext';
+import {useAuth} from '../../context/AuthContext';
 import {useSeerr} from '../../context/SeerrContext';
 import {useSyncPlay} from '../../context/SyncPlayContext';
 import {useServerMessages} from '../../context/ServerMessagesContext';
 import {useAchievements} from '../../context/AchievementsContext';
 import SeerrIcon from '../icons/SeerrIcon';
 import SyncPlayIcon from '../icons/SyncPlayIcon';
-import {FavoritesIcon, FriendsIcon, GenresIcon, HomeIcon, LiveTvIcon, MessagesIcon, SearchIcon, SettingsIcon, ShuffleIcon} from '../icons/navIcons';
+import {FavoritesIcon, FriendsIcon, GenresIcon, HomeIcon, LiveTvIcon, MessagesIcon, SearchIcon, SettingsIcon, ShuffleIcon, libraryNavIcon} from '../icons/navIcons';
 import useClock from '../../hooks/useClock';
 import {librariesForNav} from '../../utils/liveTvLibrary';
 import {isKidsMode} from '../../utils/kidsMode';
@@ -20,8 +21,16 @@ import SidebarItem from './SidebarItem';
 import SidebarLibraries from './SidebarLibraries';
 import SidebarUserButton from './SidebarUserButton';
 import useSidebarExpansion from './useSidebarExpansion';
+import {SidebarMusicCard} from '../MiniMusicPlayer/MiniMusicPlayer';
 
 import css from './Sidebar.module.less';
+
+// A library as a row of its own, for Show Libraries Individually. It holds the library itself
+// rather than its id, since two servers, or two users of one server, can list the same id.
+const SidebarLibraryItem = ({library, slot, onSelectLibrary}) => {
+	const handleClick = useCallback(() => onSelectLibrary?.(library), [library, onSelectLibrary]);
+	return <SidebarItem Icon={libraryNavIcon(library)} slot={slot} label={library.Name} onClick={handleClick} />;
+};
 
 const SidebarContainer = SpotlightContainerDecorator({
 	enterTo: 'default-element',
@@ -61,10 +70,14 @@ const Sidebar = ({
 	onUserMenu,
 	onSyncPlay,
 	onMessages,
-	onFriends
+	onFriends,
+	music,
+	onOpenMusic,
+	hideForTrailer
 }) => {
 	const {settings, activeTheme} = useSettings();
 	const {isEnabled: seerrEnabled, displayName} = useSeerr();
+	const {serverType} = useAuth();
 	const {isInGroup} = useSyncPlay();
 	const {messages, unreadCount} = useServerMessages();
 	const {socialAvailable, badgeCount: friendsBadge} = useAchievements();
@@ -80,7 +93,7 @@ const Sidebar = ({
 	const kidsMode = isKidsMode(settings);
 	const showLiveTv = !kidsMode && settings.showLiveTvButton !== false && hasLiveTv;
 	const showSeerr = !kidsMode && seerrEnabled && settings.showSeerrButton !== false;
-	const showSyncPlay = !kidsMode && settings.syncplayEnabled !== false && settings.showSyncPlayButton !== false;
+	const showSyncPlay = !kidsMode && serverType !== 'plex' && settings.syncplayEnabled !== false && settings.showSyncPlayButton !== false;
 	const navLibraries = librariesForNav(libraries, showLiveTv, {hideLiveTv: kidsMode});
 	const showLibraries = !kidsMode && settings.showLibrariesInToolbar !== false && navLibraries.length > 0;
 	// Only with something to show, so the rail never has a row that does nothing.
@@ -128,7 +141,7 @@ const Sidebar = ({
 
 	return (
 		<SidebarContainer
-			className={`${css.sidebar} ${expanded ? css.expanded : ''}`}
+			className={`${css.sidebar} ${expanded ? css.expanded : ''} ${hideForTrailer ? css.trailerHidden : ''}`}
 			style={navStyle}
 			onKeyDown={handleNavKeyDown}
 			onMouseEnter={handlers.onMouseEnter}
@@ -170,7 +183,16 @@ const Sidebar = ({
 						<SidebarItem Icon={SyncPlayIcon} slot={nextSlot()} label={$L('SyncPlay')} onClick={onSyncPlay} active={isInGroup} />
 					)}
 
-					{showLibraries && (
+					{showLibraries && (settings.showLibrariesIndividually === true ? (
+						navLibraries.map((library) => (
+							<SidebarLibraryItem
+								key={`${library._serverId || ''}:${library._serverUserId || ''}:${library.Id}`}
+								library={library}
+								slot={nextSlot()}
+								onSelectLibrary={onSelectLibrary}
+							/>
+						))
+					) : (
 						<SidebarLibraries
 							libraries={navLibraries}
 							slot={nextSlot()}
@@ -178,7 +200,7 @@ const Sidebar = ({
 							onToggle={toggleLibraries}
 							onSelectLibrary={onSelectLibrary}
 						/>
-					)}
+					))}
 
 					{showMessages && (
 						<SidebarItem Icon={MessagesIcon} slot={nextSlot()} label={$L('Messages')} onClick={onMessages} spotlightId="navbar-messages" badge={unreadCount} />
@@ -188,6 +210,8 @@ const Sidebar = ({
 					)}
 
 					<SidebarItem Icon={SettingsIcon} slot={nextSlot()} label={$L('Settings')} onClick={onSettings} spotlightId="navbar-settings" />
+
+					{music && <SidebarMusicCard item={music.item} paused={music.paused} expanded={expanded} onOpen={onOpenMusic} />}
 				</div>
 			</div>
 

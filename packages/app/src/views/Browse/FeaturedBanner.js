@@ -3,12 +3,14 @@ import {isMdblistEnabled} from '../../services/mdblistApi';
 import Spottable from '@enact/spotlight/Spottable';
 import Spotlight from '@enact/spotlight';
 import $L from '@enact/i18n/$L';
-import {getImageUrl, getBackdropId, formatDuration} from '../../utils/helpers';
+import {getFeaturedBackdropUrl, formatDuration} from '../../utils/helpers';
 import RatingsRow from '../../components/RatingsRow';
 import {KEYS} from '../../utils/keys';
 import useTrailerPreview from './useTrailerPreview';
 import css from './Browse.module.less';
 import {carouselIntervalMs} from '../../utils/carouselTiming';
+import {useScreensaverActive} from '../../hooks/useScreensaverActive';
+import {rem} from '../../utils/rootScale';
 
 const FEATURED_GENRES_LIMIT = 3;
 const PRELOAD_ADJACENT_SLIDES = 2;
@@ -18,6 +20,7 @@ const SpottableButton = Spottable('button');
 
 const FeaturedBanner = memo(({
 	isVisible,
+	rowPeek = 0,
 	browseVisible = true,
 	featuredItems,
 	serverUrl,
@@ -34,6 +37,7 @@ const FeaturedBanner = memo(({
 }) => {
 	const [currentIndex, setCurrentIndex] = useState(0);
 	const [featuredFocused, setFeaturedFocused] = useState(false);
+	const screensaverActive = useScreensaverActive();
 
 	const preloadedImagesRef = useRef(new Set());
 	const carouselIntervalRef = useRef(null);
@@ -49,15 +53,18 @@ const FeaturedBanner = memo(({
 	const {trailerActive, trailerHolding, trailerContainerRef} = useTrailerPreview({
 		currentItem: currentFeatured,
 		// The banner stays mounted behind the settings overlay so the hero keeps its
-		// place, but the trailer has to stop or it plays on underneath it.
-		isVisible: isVisible && browseVisible,
+		// place, but the trailer has to stop or it plays on underneath it. A trailer hides
+		// the navbar too, so it only plays while the bar itself has focus.
+		isVisible: isVisible && browseVisible && featuredFocused,
 		enabled: settingsLoaded && settings.featuredTrailerPreview,
 		preferMuted: settings.featuredTrailerMuted,
+		volume: settings.trailerVolume,
 		showCaptions: settings.mediaBarTrailerCaptions,
 		captionLanguage: settings.uiLanguage,
 		api,
 		getItemServerUrl,
-		onEnded: handleTrailerEnded
+		onEnded: handleTrailerEnded,
+		hidesChrome: featuredFocused
 	});
 
 	useEffect(() => {
@@ -85,10 +92,7 @@ const FeaturedBanner = memo(({
 			const index = (currentIndex + offset + featuredItems.length) % featuredItems.length;
 			const item = featuredItems[index];
 			if (item) {
-				const backdropId = getBackdropId(item);
-				if (backdropId) {
-					preloadImage(getImageUrl(serverUrl, backdropId, 'Backdrop', {maxWidth: 1920, quality: 85}));
-				}
+				preloadImage(getFeaturedBackdropUrl(serverUrl, item, {maxWidth: 1920, quality: 85}));
 				if (item.LogoUrl) {
 					preloadImage(item.LogoUrl);
 				}
@@ -107,12 +111,12 @@ const FeaturedBanner = memo(({
 			settings.autoAdvanceInterval,
 			settings.carouselSpeed
 		);
-		if (!isVisible || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0 || trailerHolding) return;
+		if (!isVisible || screensaverActive || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0 || trailerHolding) return;
 
 		carouselIntervalRef.current = setInterval(() => {
 			setCurrentIndex((prev) => (prev + 1) % featuredItems.length);
 		}, carouselSpeed);
-	}, [isVisible, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed, trailerHolding]);
+	}, [isVisible, screensaverActive, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed, trailerHolding]);
 
 	useEffect(() => {
 		const carouselSpeed = carouselIntervalMs(
@@ -120,7 +124,7 @@ const FeaturedBanner = memo(({
 			settings.autoAdvanceInterval,
 			settings.carouselSpeed
 		);
-		if (!isVisible || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0 || trailerHolding) return;
+		if (!isVisible || screensaverActive || featuredItems.length <= 1 || !featuredFocused || carouselSpeed <= 0 || trailerHolding) return;
 		startCarouselTimer();
 		return () => {
 			if (carouselIntervalRef.current) {
@@ -128,7 +132,7 @@ const FeaturedBanner = memo(({
 				carouselIntervalRef.current = null;
 			}
 		};
-	}, [isVisible, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed, trailerHolding, startCarouselTimer]);
+	}, [isVisible, screensaverActive, featuredItems.length, featuredFocused, settings.autoAdvance, settings.autoAdvanceInterval, settings.carouselSpeed, trailerHolding, startCarouselTimer]);
 
 	const handleFeaturedPrev = useCallback(() => {
 		if (featuredItems.length <= 1) return;
@@ -199,6 +203,10 @@ const FeaturedBanner = memo(({
 
 	if (!isVisible || !currentFeatured) return null;
 
+	// With the peek row out of the way the compact card drops back to where it sits
+	// without a peek, so it covers less of the trailer.
+	const contentDropped = rowPeek > 0 && trailerActive && featuredFocused;
+
 	return (
 		<div className={css.featuredBanner}>
 			<SpottableDiv
@@ -211,14 +219,12 @@ const FeaturedBanner = memo(({
 			>
 				<div className={css.featuredBackdrop}>
 					<img
-						src={getImageUrl(getItemServerUrl(currentFeatured), getBackdropId(currentFeatured), 'Backdrop', {maxWidth: 1920, quality: 85})}
+						src={getFeaturedBackdropUrl(getItemServerUrl(currentFeatured), currentFeatured, {maxWidth: 1920, quality: 85})}
 						alt=""
 					/>
 				</div>
 
 				<div className={css.trailerContainer} ref={trailerContainerRef} />
-
-				<div className={css.featuredGradient} />
 
 				{featuredItems.length > 1 && (
 					<>
@@ -256,7 +262,10 @@ const FeaturedBanner = memo(({
 					)}
 				</div>
 
-				<div className={css.featuredContent}>
+				<div
+					className={`${css.featuredContent} ${contentDropped ? css.featuredContentDropped : ''}`}
+					style={contentDropped ? {bottom: rem(52 - rowPeek)} : undefined}
+				>
 					<div className={css.featuredInfoBox} style={uiPanelStyle}>
 						<div className={css.featuredMeta}>
 							{currentFeatured.ProductionYear && (
@@ -275,7 +284,7 @@ const FeaturedBanner = memo(({
 							))}
 						</div>
 						<div className={css.featuredDetails}>
-							<RatingsRow item={currentFeatured} serverUrl={getItemServerUrl(currentFeatured)} compact pluginEnabled={isMdblistEnabled(settings)} />
+							<RatingsRow item={currentFeatured} serverUrl={getItemServerUrl(currentFeatured)} compact surface='mediaBar' pluginEnabled={isMdblistEnabled(settings, 'mediaBar')} />
 							{!settings.hideHomeMediaDescription && (
 								<p className={css.featuredOverview}>
 									{currentFeatured.Overview || $L('No description available.')}
