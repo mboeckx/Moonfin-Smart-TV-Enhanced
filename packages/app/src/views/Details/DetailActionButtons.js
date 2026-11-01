@@ -73,8 +73,8 @@ const DetailActionButtons = ({
 	onOpenCollectionModal,
 	onOpenDeleteDialog,
 	onOpenIdentifyModal,
-	seriesTrack,
 	onKeepAsComplete,
+	watchlist,
 	maxVisibleButtons,
 	overflowAsMenu
 }) => {
@@ -144,24 +144,6 @@ const DetailActionButtons = ({
 				<span className={css.btnDetail}>{mediaSource?.Name || `${$L('Version')} ${selectedVersionIndex + 1}`}</span>
 			</SpottableDiv>
 		)},
-		{id: 'audio', when: Boolean(seriesTrack), render: () => (
-			<SpottableDiv className={css.btnWrapper} onClick={seriesTrack.onOpenAudio} spotlightId="details-series-audio-btn">
-				<div className={css.btnAction}>
-					<BtnIcon path={DETAIL_ICON_PATHS.audio}/>
-				</div>
-				<span className={css.btnLabel}>{$L('Audio')}</span>
-				<span className={css.btnDetail}>{seriesTrack.audioLabel}</span>
-			</SpottableDiv>
-		)},
-		{id: 'subtitles', when: Boolean(seriesTrack), render: () => (
-			<SpottableDiv className={css.btnWrapper} onClick={seriesTrack.onOpenSubtitle} spotlightId="details-series-subtitle-btn">
-				<div className={css.btnAction}>
-					<BtnIcon path={DETAIL_ICON_PATHS.subtitle}/>
-				</div>
-				<span className={css.btnLabel}>{$L('Subtitle')}</span>
-				<span className={css.btnDetail}>{seriesTrack.subtitleLabel}</span>
-			</SpottableDiv>
-		)},
 		{id: 'audio', when: hasMultipleAudio, render: () => (
 			<SpottableDiv className={css.btnWrapper} onClick={onOpenAudioModal}>
 				<div className={css.btnAction}>
@@ -222,6 +204,15 @@ const DetailActionButtons = ({
 					<BtnIcon path={DETAIL_ICON_PATHS.favorite} stateClass={item.UserData?.IsFavorite ? css.favorited : ''}/>
 				</div>
 				<span className={css.btnLabel}>{item.UserData?.IsFavorite ? $L('Favorited') : $L('Favorite')}</span>
+			</SpottableDiv>
+		)},
+		// Patched: the film or series on the watchlist playlist.
+		{id: 'watchlist', when: Boolean(watchlist), render: () => (
+			<SpottableDiv className={css.btnWrapper} onClick={watchlist.toggle} spotlightId="details-watchlist-btn">
+				<div className={css.btnAction}>
+					<BtnIcon path={watchlist.on ? DETAIL_ICON_PATHS.watchlistOn : DETAIL_ICON_PATHS.watchlist} stateClass={watchlist.on ? css.favorited : ''}/>
+				</div>
+				<span className={css.btnLabel}>{watchlist.on ? $L('On Watchlist') : $L('Add to Watchlist')}</span>
 			</SpottableDiv>
 		)},
 		{id: 'personalRating', when: showsPersonalRating, render: () => (

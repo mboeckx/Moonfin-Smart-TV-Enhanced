@@ -54,7 +54,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import Screensaver from '../components/Screensaver';
 import {resetLibraryFilters} from '../services/libraryFilterReset';
 import {forgetCachedListItem} from '../services/libraryListCache';
-import {addToWatchlist} from '../services/watchlistPlaylist';
+import {addToWatchlist, watchlistMessage} from '../services/watchlistPlaylist';
 import SeasonalTheme from '../components/SeasonalTheme';
 import NoConnection from '../components/NoConnection/NoConnection';
 import SyncPlayDialog from '../components/SyncPlayDialog';
@@ -1036,7 +1036,6 @@ const AppContent = (props) => {
 	// on the Watchlist playlist. What comes back is shown over the screensaver; green leaves the
 	// screensaver running, yellow closes it to show the dialog.
 	const handleScreensaverColorKey = useCallback(async (color, item) => {
-		const name = item?.Name || $L('This title');
 		if (color === 'yellow') {
 			const controls = itemMenuControlsRef.current;
 			if (!controls || !controls.canChangeArtwork(item)) return $L('Only administrators can change artwork');
@@ -1046,17 +1045,10 @@ const AppContent = (props) => {
 		}
 		if (color === 'green') {
 			try {
-				const {status, entry, listName} = await addToWatchlist(api, item);
-				const list = $L(listName);
-				const episode = item.Type === 'Series' && entry
-					? ` (S${entry.ParentIndexNumber || 0}E${entry.IndexNumber || 0})`
-					: '';
-				if (status === 'already') return $L('{name} is already on {list}').replace('{name}', name).replace('{list}', list);
-				if (status === 'nothing') return $L('No episode of {name} to add to {list}').replace('{name}', name).replace('{list}', list);
-				return $L('Added to {list}: {name}').replace('{list}', list).replace('{name}', name + episode);
+				return watchlistMessage(await addToWatchlist(api, item), item, $L);
 			} catch (err) {
 				console.error('[Screensaver] Watchlist add failed:', err);
-				return $L('Couldn\'t add {name} to a watchlist').replace('{name}', name);
+				return watchlistMessage(null, item, $L);
 			}
 		}
 		return null;

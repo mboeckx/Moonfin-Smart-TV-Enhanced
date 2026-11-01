@@ -71,18 +71,19 @@ Tests: `cd packages/app && npx enact test`.
 - Yellow opens Change Artwork for the title shown; green adds it to the watchlist.
 
 **Watchlists**
-- Green on the screensaver adds a movie to a `Watchlist` playlist, and a series (its next-up or
-  first episode) to `Series Watchlist`. Both are created on first use.
+- A `Watchlist` playlist for films and a `Series Watchlist` for series (a series is stored as its
+  next-up or first episode). Both are created on first use.
+- The green key on a film or series card, in a library, on the home screen or anywhere else with
+  cards, puts it on its watchlist or takes it off. An episode or season card stands for its series.
+- Film and series pages have a watchlist button (*My Watchlist* in the button arrangement settings)
+  that shows whether the title is on it and toggles it.
+- Green on the screensaver only adds, since there's nothing on screen to show the current state.
+- Green and yellow are no longer swallowed by upstream's debug overlay unless it's open (red).
 
 **Playlists**
 - Every layout opens a playlist on the playlist page, which adds a poster view (episodes show as
   their series) and a Delete button to upstream's sort and filter bar. The view and sort are
   remembered per playlist. DEL removes an entry in any sort order.
-
-**Series audio and subtitles**
-- On a series page, Audio and Subtitles set a language for the whole series (subtitles can be
-  *None*). Languages in the first episode are listed first. Playback uses that choice before
-  anything remembered from earlier playback.
 
 **Other fixes**
 - Change Artwork shows each backdrop rather than the first one repeated.

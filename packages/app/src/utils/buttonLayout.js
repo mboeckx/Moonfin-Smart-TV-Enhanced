@@ -30,6 +30,8 @@ export const DETAIL_BUTTONS = [
 	{id: 'watchWithGroup', label: 'Watch with group', subtitle: "Only shows while you're in a SyncPlay group"},
 	{id: 'watched', label: 'Mark Watched'},
 	{id: 'favorite', label: 'Favorite'},
+	// Patched: the Jellyfin watchlist playlist.
+	{id: 'watchlist', label: 'My Watchlist'},
 	{id: 'personalRating', label: 'Rate'},
 	{id: 'goToSeries', label: 'Series'},
 	{id: 'playlist', label: 'Add to Playlist'},

@@ -1,10 +1,9 @@
 import {resolveSeriesAudio} from './initialAudio';
-import {getItemAudioPref, getSeriesAudioPref, getSeriesTrackOverride} from '../../services/subtitlePrefs';
+import {getItemAudioPref, getSeriesAudioPref} from '../../services/subtitlePrefs';
 
 jest.mock('../../services/subtitlePrefs', () => ({
 	getItemAudioPref: jest.fn(),
-	getSeriesAudioPref: jest.fn(),
-	getSeriesTrackOverride: jest.fn()
+	getSeriesAudioPref: jest.fn()
 }));
 
 const eng = {index: 1, language: 'eng'};
@@ -15,7 +14,6 @@ const episode = {Id: 'ep1', SeriesId: 'show'};
 beforeEach(() => {
 	getItemAudioPref.mockResolvedValue(undefined);
 	getSeriesAudioPref.mockResolvedValue(undefined);
-	getSeriesTrackOverride.mockResolvedValue({});
 });
 
 describe('resolveSeriesAudio', () => {

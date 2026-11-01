@@ -15,6 +15,7 @@ import ChangeArtworkModal from '../ChangeArtworkModal';
 import IdentifyModal from '../IdentifyModal';
 import {iconViewBox} from '../icons/iconViewBox';
 import {hideFromResume, itemMenuActions} from './itemMenuActions';
+import {toggleWatchlist, watchlistMessage, watchlistTarget} from '../../services/watchlistPlaylist';
 
 import css from './ItemContextMenu.module.less';
 
@@ -261,7 +262,26 @@ export const ItemMenuProvider = ({children, onPlay, onOpenItem, backRef, control
 		};
 	}, [controlsRef, actionsFor]);
 
-	const value = useMemo(() => ({open, canOpen}), [open, canOpen]);
+	// Patched: the green key on a card puts its film or series on the watchlist, or takes it off.
+	// What happened shows as a toast, the same one the menu's own actions use.
+	const watchlistBusyRef = useRef(false);
+	const toggleCardWatchlist = useCallback(async (item) => {
+		const target = watchlistTarget(item);
+		if (!target || watchlistBusyRef.current) return false;
+		watchlistBusyRef.current = true;
+		try {
+			const api = getApiForItem(item) || activeApi;
+			showToast(watchlistMessage(await toggleWatchlist(api, target), target, $L));
+		} catch (err) {
+			console.error('[ItemMenu] Watchlist change failed:', err);
+			showToast(watchlistMessage(null, target, $L));
+		} finally {
+			watchlistBusyRef.current = false;
+		}
+		return true;
+	}, [showToast]);
+
+	const value = useMemo(() => ({open, canOpen, toggleWatchlist: toggleCardWatchlist}), [open, canOpen, toggleCardWatchlist]);
 
 	return (
 		<ItemMenuContext.Provider value={value}>

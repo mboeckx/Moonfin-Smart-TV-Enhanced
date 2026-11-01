@@ -33,8 +33,7 @@ const loadPrefs = async () => {
 		series: readSeries(stored?.series),
 		seriesAudio: readSeries(stored?.seriesAudio),
 		itemAudio: stored?.itemAudio && typeof stored.itemAudio === 'object' ? stored.itemAudio : {},
-		secondaryItems: stored?.secondaryItems && typeof stored.secondaryItems === 'object' ? stored.secondaryItems : {},
-		seriesOverrides: stored?.seriesOverrides && typeof stored.seriesOverrides === 'object' ? stored.seriesOverrides : {}
+		secondaryItems: stored?.secondaryItems && typeof stored.secondaryItems === 'object' ? stored.secondaryItems : {}
 	};
 };
 
@@ -122,28 +121,6 @@ export const getSeriesSubtitlePref = async (seriesId) => {
 	if (!seriesId) return undefined;
 	const prefs = await loadPrefs();
 	return prefs.series[seriesId];
-};
-
-// Patched: the languages chosen on the series page, {audio, subtitle}. A missing value means
-// no override, and a subtitle of 'none' means subtitles off.
-export const getSeriesTrackOverride = async (seriesId) => {
-	if (!seriesId) return {};
-	const prefs = await loadPrefs();
-	const stored = prefs.seriesOverrides[seriesId];
-	return stored && typeof stored === 'object' ? {...stored} : {};
-};
-
-export const setSeriesTrackOverride = async (seriesId, kind, value) => {
-	if (!seriesId || (kind !== 'audio' && kind !== 'subtitle')) return {};
-	let next = {};
-	await updatePrefs((prefs) => {
-		next = {...(prefs.seriesOverrides[seriesId] || {})};
-		if (value) next[kind] = value;
-		else delete next[kind];
-		if (Object.keys(next).length) prefs.seriesOverrides[seriesId] = next;
-		else delete prefs.seriesOverrides[seriesId];
-	});
-	return next;
 };
 
 export const getSeriesAudioPref = async (seriesId) => {

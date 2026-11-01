@@ -1,6 +1,5 @@
-import {getItemAudioPref, getSeriesAudioPref, getSeriesTrackOverride} from '../../services/subtitlePrefs';
+import {getItemAudioPref, getSeriesAudioPref} from '../../services/subtitlePrefs';
 import {matchSeriesTrackIndex} from '../../utils/seriesTrackPrefs';
-import {overrideAudioIndex} from '../../utils/seriesTrackOverride';
 
 /**
  * The audio track remembered for this title, or else for its series when one of the
@@ -8,17 +7,6 @@ import {overrideAudioIndex} from '../../utils/seriesTrackOverride';
  */
 export const resolveSeriesAudio = async (item, audioStreams) => {
 	if (!item?.Id || !audioStreams?.length) return null;
-
-	// Patched: the language set on the series page comes first, before anything remembered
-	// from earlier playback, the same as for subtitles.
-	if (item.SeriesId) {
-		const override = (await getSeriesTrackOverride(item.SeriesId)) || {};
-		const overridden = overrideAudioIndex(audioStreams, override.audio);
-		if (overridden !== null) {
-			const track = audioStreams.find((stream) => stream.index === overridden);
-			if (track) return track;
-		}
-	}
 
 	const itemIndex = await getItemAudioPref(item.Id);
 	const itemTrack = itemIndex != null ? audioStreams.find((stream) => stream.index === itemIndex) : null;

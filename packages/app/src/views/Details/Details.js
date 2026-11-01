@@ -49,8 +49,8 @@ import useSeerrOverlay from './useSeerrOverlay';
 import DetailScrollPage from './DetailScrollPage';
 import DetailBackdrop from './DetailBackdrop';
 import DetailActionButtons from './DetailActionButtons';
+import useWatchlistToggle from './useWatchlistToggle';
 import DetailTrackModals from './DetailTrackModals';
-import useSeriesTrackOverride from './useSeriesTrackOverride';
 import DetailDialogs from './DetailDialogs';
 import SeerrDialogs from './SeerrDialogs';
 import TrailerOverlay from './TrailerOverlay';
@@ -219,8 +219,8 @@ const Details = ({itemId: itemIdProp, initialItem, onPlay, onSelectItem, onSelec
 	const trailerBackRef = useRef(null);
 	const reviewBackRef = useRef(null);
 	const modals = useDetailsModals({backHandlerRef, onArtworkClosed: refreshItem, seerrBackRef, overviewBackRef, spotlightBackRef, trailerBackRef, reviewBackRef});
-	// Patched: a series' own audio and subtitle language, picked from its page.
-	const seriesTrack = useSeriesTrackOverride({item, api: effectiveApi, openModal: modals.openModal, closeModal: modals.closeModal});
+	// Patched: the film or series on the watchlist playlist, toggled from its page.
+	const watchlist = useWatchlistToggle({item: seerrOnly ? null : item, api: effectiveApi, onToast: showToast});
 	const {activeModal, openModal, closeModal, advancedResumeRef} = modals;
 
 	const trailer = useDetailsTrailer({
@@ -1165,7 +1165,6 @@ const Details = ({itemId: itemIdProp, initialItem, onPlay, onSelectItem, onSelec
 				remoteSubtitleError={remoteSubtitleError}
 				remoteSubtitleResults={remoteSubtitleResults}
 				onSelectRemoteSubtitle={handleSelectRemoteSubtitle}
-				seriesTrack={seriesTrack}
 			/>
 			{trailerLayer}
 			<DetailDialogs
@@ -1311,7 +1310,7 @@ const Details = ({itemId: itemIdProp, initialItem, onPlay, onSelectItem, onSelec
 					handleOpenVersionModal={modals.handleOpenVersionModal}
 					handleOpenAudioModal={modals.handleOpenAudioModal}
 					handleOpenSubtitleModal={modals.handleOpenSubtitleModal}
-					seriesTrack={seriesTrack}
+					watchlist={watchlist}
 					handleOpenPlaylistModal={modals.handleOpenPlaylistModal}
 					handleOpenCollectionModal={canAddToCollection ? modals.handleOpenCollectionModal : null}
 					handleOpenIdentifyModal={canIdentify ? modals.handleOpenIdentifyModal : null}
@@ -1463,7 +1462,7 @@ const Details = ({itemId: itemIdProp, initialItem, onPlay, onSelectItem, onSelec
 			onOpenVersionModal={modals.handleOpenVersionModal}
 			onOpenAudioModal={modals.handleOpenAudioModal}
 			onOpenSubtitleModal={modals.handleOpenSubtitleModal}
-			seriesTrack={seriesTrack}
+			watchlist={watchlist}
 			onTrailer={trailer.handleTrailer}
 			onToggleWatched={handleToggleWatched}
 			onToggleFavorite={handleToggleFavorite}

@@ -66,10 +66,16 @@ const DebugOverlay = () => {
 		return () => { listeners.delete(onChange); };
 	}, []);
 
+	// Patched: green and yellow only act while the overlay is up, so the rest of the app can use
+	// them (green toggles the watchlist on a card).
+	const visibleRef = useRef(visible);
+	visibleRef.current = visible;
+
 	useEffect(() => {
 		const onKey = (e) => {
 			const code = e.keyCode || e.which;
 			if (code === KEY_RED) { setVisible((v) => !v); e.preventDefault(); e.stopPropagation(); }
+			else if (!visibleRef.current) return;
 			else if (code === KEY_GREEN) { buffer.length = 0; force((n) => n + 1); e.preventDefault(); e.stopPropagation(); }
 			else if (code === KEY_YELLOW) {
 				// Dump buffer to localStorage so we can retrieve later

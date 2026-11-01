@@ -3,9 +3,12 @@ import {useCallback, useEffect, useRef} from 'react';
 import {useItemMenu} from '../components/ItemContextMenu';
 import {LONG_PRESS_MS, isSelectKey} from '../utils/longPress';
 import {isMenuKey} from '../utils/keys';
+import {watchlistTarget} from '../services/watchlistPlaylist';
 
 // How long after a pointer lets go of a hold its click can still arrive.
 const RELEASE_CLICK_MS = 100;
+// Patched: the green colour key, the same code on Samsung and LG remotes.
+const GREEN_KEY = 404;
 
 // Where in its list the card a press landed on sits, for lists whose cards carry a data-index.
 export const cardIndexOf = (target) => {
@@ -82,6 +85,15 @@ const useItemMenuHold = (itemAt, options) => {
 	}, [menu, itemAt, options]);
 
 	const handleKeyDownCapture = useCallback((e) => {
+		// Patched: green toggles the card's film or series on the watchlist.
+		if ((e.keyCode || e.which) === GREEN_KEY && menu?.toggleWatchlist) {
+			const item = itemAt(e.target);
+			if (!watchlistTarget(item)) return;
+			e.preventDefault();
+			e.stopPropagation();
+			menu.toggleWatchlist(item);
+			return;
+		}
 		if (isMenuKey(e)) {
 			const item = itemAt(e.target);
 			if (!item || !menu?.canOpen(item, options)) return;

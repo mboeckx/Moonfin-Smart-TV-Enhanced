@@ -3,8 +3,7 @@ import $L from '@enact/i18n/$L';
 
 import * as playback from '../../services/playback';
 import {fetchTmdbSeasonRatings, resolveSeriesTmdbId, isRatingSourceAllowed} from '../../services/mdblistApi';
-import {getItemAudioPref, getSeriesAudioPref, getSeriesTrackOverride} from '../../services/subtitlePrefs';
-import {fromServerTrack, overrideAudioIndex} from '../../utils/seriesTrackOverride';
+import {getItemAudioPref, getSeriesAudioPref} from '../../services/subtitlePrefs';
 import {fromServerStream, matchSeriesTrackIndex} from '../../utils/seriesTrackPrefs';
 import {detailsSubtitlePosition} from '../Player/initialSubtitle';
 import {findParentCollections} from './parentCollection';
@@ -247,16 +246,11 @@ const useDetailsItem = ({itemId, initialItem, effectiveApi, effectiveServerUrl, 
 				const initAudioStreams = ms.MediaStreams?.filter(s => s.Type === 'Audio') || [];
 				// A track remembered for the title or its series shows as active, and only
 				// when there is none does the server's own default stand in.
-				// Patched: the language set on the series page goes first, as in the player.
-				const seriesOverride = (data.SeriesId ? await getSeriesTrackOverride(data.SeriesId) : null) || {};
-				const overriddenAudio = overrideAudioIndex(initAudioStreams.map(fromServerTrack), seriesOverride.audio);
-				const itemAudioPref = overriddenAudio === null ? await getItemAudioPref(data.Id) : undefined;
-				const seriesAudioPref = data.SeriesId && overriddenAudio === null ? await getSeriesAudioPref(data.SeriesId) : undefined;
-				const matchedAudio = overriddenAudio !== null
-					? overriddenAudio
-					: initAudioStreams.some((s) => s.Index === itemAudioPref)
-						? itemAudioPref
-						: (seriesAudioPref ? matchSeriesTrackIndex(initAudioStreams.map(fromServerStream), seriesAudioPref) : null);
+				const itemAudioPref = await getItemAudioPref(data.Id);
+				const seriesAudioPref = data.SeriesId ? await getSeriesAudioPref(data.SeriesId) : undefined;
+				const matchedAudio = initAudioStreams.some((s) => s.Index === itemAudioPref)
+					? itemAudioPref
+					: (seriesAudioPref ? matchSeriesTrackIndex(initAudioStreams.map(fromServerStream), seriesAudioPref) : null);
 				const rememberedAudioPos = matchedAudio !== null && matchedAudio >= 0
 					? initAudioStreams.findIndex(s => s.Index === matchedAudio)
 					: -1;

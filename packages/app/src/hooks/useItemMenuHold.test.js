@@ -190,4 +190,23 @@ describe('useItemMenuHold', () => {
 		expect(mockMenu.open).toHaveBeenCalledTimes(1);
 		expect(onClick).toHaveBeenCalledTimes(1);
 	});
+
+	test('green toggles the watchlist for a film or series card and is marked handled', () => {
+		mockMenu.toggleWatchlist = jest.fn();
+		const hold = setup();
+		const event = {...press(404), preventDefault: jest.fn(), stopPropagation: jest.fn()};
+		hold.onKeyDownCapture(event);
+		expect(mockMenu.toggleWatchlist).toHaveBeenCalledWith(ITEM);
+		expect(event.preventDefault).toHaveBeenCalled();
+		expect(mockMenu.open).not.toHaveBeenCalled();
+	});
+
+	test('green leaves a card with no watchlist, such as an album, alone', () => {
+		mockMenu.toggleWatchlist = jest.fn();
+		const {result} = renderHook(() => useItemMenuHold(() => ({Id: 'a', Type: 'MusicAlbum'})));
+		const event = {...press(404), preventDefault: jest.fn(), stopPropagation: jest.fn()};
+		result.current.onKeyDownCapture(event);
+		expect(mockMenu.toggleWatchlist).not.toHaveBeenCalled();
+		expect(event.preventDefault).not.toHaveBeenCalled();
+	});
 });

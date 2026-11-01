@@ -58,7 +58,7 @@ export const detailActionCatalogue = (props) => {
 		showsPersonalRating, personalRatingStyle, handleOpenRatingDialog,
 		handleOpenVersionModal, handleOpenAudioModal, handleOpenSubtitleModal, handleOpenPlaylistModal,
 		handleOpenCollectionModal, handleOpenDeleteDialog, handleOpenIdentifyModal,
-		canChangeArtwork, handleOpenArtworkModal, handleOpenPersonDisplayModal, handleKeepAsComplete, seriesTrack
+		canChangeArtwork, handleOpenArtworkModal, handleOpenPersonDisplayModal, handleKeepAsComplete, watchlist
 	} = props;
 
 	// Asking and taking back are separate buttons sharing one arrangement
@@ -103,20 +103,16 @@ export const detailActionCatalogue = (props) => {
 		)},
 		{id: 'shuffle', when: isSeries || isSeason || isBoxSet || (isPlaylist && (playlistTracks ? playlistTracks.length > 1 : (item.ChildCount > 1 || item.RecursiveItemCount > 1))), render: () => <ActionButton path={DETAIL_ICON_PATHS.shuffle} label={$L('Shuffle')} onClick={handleShuffle} />},
 		{id: 'version', when: hasMultipleVersions, render: () => <ActionButton path={DETAIL_ICON_PATHS.version} label={$L('Version')} onClick={handleOpenVersionModal} />},
-		// Patched: on a series these slots hold the series' audio and subtitle language, which
-		// keeps whatever place the viewer arranged them in.
-		{id: 'audio', when: hasMultipleAudio || Boolean(seriesTrack), render: () => (seriesTrack
-			? <ActionButton path={DETAIL_ICON_PATHS.audio} label={`${$L('Audio')}: ${seriesTrack.audioLabel}`} onClick={seriesTrack.onOpenAudio} spotlightId="details-series-audio-btn" />
-			: <ActionButton path={DETAIL_ICON_PATHS.audio} label={$L('Audio')} onClick={handleOpenAudioModal} />)},
-		{id: 'subtitles', when: supportsMediaSourceSelection || Boolean(seriesTrack), render: () => (seriesTrack
-			? <ActionButton path={DETAIL_ICON_PATHS.subtitle} label={`${$L('Subtitle')}: ${seriesTrack.subtitleLabel}`} onClick={seriesTrack.onOpenSubtitle} spotlightId="details-series-subtitle-btn" />
-			: <ActionButton path={DETAIL_ICON_PATHS.subtitle} label={$L('Subtitle')} onClick={handleOpenSubtitleModal} />)},
+		{id: 'audio', when: hasMultipleAudio, render: () => <ActionButton path={DETAIL_ICON_PATHS.audio} label={$L('Audio')} onClick={handleOpenAudioModal} />},
+		{id: 'subtitles', when: supportsMediaSourceSelection, render: () => <ActionButton path={DETAIL_ICON_PATHS.subtitle} label={$L('Subtitle')} onClick={handleOpenSubtitleModal} />},
 		{id: 'trailer', when: hasTrailer, render: () => <ActionButton path={DETAIL_ICON_PATHS.trailer} label={$L('Trailer')} onClick={handleTrailer} />},
 		// Offered while in a SyncPlay group and lit in the accent so it reads
 		// as the group's, next to a Play that stays as it is.
 		{id: 'watchWithGroup', when: inSyncPlayGroup && !isBook && !isPerson, render: () => <ActionButton path={DETAIL_ICON_PATHS.group} label={$L('Watch with group')} group onClick={onWatchWithGroup} spotlightId="details-watch-with-group-btn" />},
 		{id: 'watched', when: !isPerson, render: () => <ActionButton path={DETAIL_ICON_PATHS.watched} label={played ? $L('Watched') : $L('Mark as Watched')} active={played} onClick={handleToggleWatched} spotlightId="details-watched-btn" />},
 		{id: 'favorite', when: offersFavorite(isPerson, effectiveServerUrl), render: () => <ActionButton path={DETAIL_ICON_PATHS.favorite} label={isFavorite ? $L('Favorited') : $L('Favorite')} active={isFavorite} onClick={handleToggleFavorite} spotlightId="details-favorite-btn" />},
+		// Patched: the film or series on the watchlist playlist.
+		{id: 'watchlist', when: Boolean(watchlist), render: () => <ActionButton path={watchlist.on ? DETAIL_ICON_PATHS.watchlistOn : DETAIL_ICON_PATHS.watchlist} label={watchlist.on ? $L('On Watchlist') : $L('Add to Watchlist')} active={watchlist.on} onClick={watchlist.toggle} spotlightId="details-watchlist-btn" />},
 		{id: 'personDisplay', when: isPerson && Boolean(handleOpenPersonDisplayModal), render: () => <ActionButton path={DETAIL_ICON_PATHS.tune} label={$L('Display')} onClick={handleOpenPersonDisplayModal} />},
 		{id: 'personalRating', when: showsPersonalRating, render: () => <ActionButton path={personalRatingIconPath(personalRatingStyle, item.UserData)} label={personalRatingLabel(personalRatingStyle, item.UserData)} onClick={handleOpenRatingDialog} spotlightId="details-rating-btn" />},
 		{id: 'goToSeries', when: (isEpisode || isSeason) && item.SeriesId, render: () => <ActionButton path={DETAIL_ICON_PATHS.series} label={$L('Series')} onClick={handleGoToSeries} />},
