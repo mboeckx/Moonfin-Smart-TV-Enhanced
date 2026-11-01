@@ -211,6 +211,10 @@ export const defaultSettings = {
 	screensaverLibraryIds: [],
 	screensaverCollectionIds: [],
 	screensaverExcludedGenres: [],
+	// Patched: draw screensaver titles at random from the whole library and vary the backdrop.
+	screensaverShuffleLibrary: true,
+	// Patched: what OK on the screensaver does: 'play', 'details' or 'wake'.
+	screensaverEnterAction: 'play',
 	loadingAnimationImage: 'moonfinLogo',
 	loadingAnimationSize: 'medium',
 	loadingAnimationPosition: 'middle',

@@ -6,6 +6,13 @@ const FADE_DURATION = 1500;
 const FADE_INTERVAL = 50;
 const HOME_ROW_DELAY = 1500;
 
+// Patched: titles the server said have no theme song, kept for as long as the app runs, so
+// opening one again skips the lookup. Keyed by server too, since ids are per server. Only a
+// clean empty answer goes in here; a failed lookup is asked again next time.
+const titlesWithoutTheme = new Set();
+const themeKey = (itemId) => `${jellyfinApi.getServerUrl() || ''}|${itemId}`;
+export const forgetThemeMisses = () => titlesWithoutTheme.clear();
+
 const buildAudioUrl = (itemId) => {
 	const server = jellyfinApi.getServerUrl();
 	const token = jellyfinApi.getApiKey();
@@ -91,11 +98,13 @@ export const useThemeMusic = () => {
 		if (currentItemIdRef.current === itemId && audioRef.current) return;
 
 		stopImmediate();
+		if (titlesWithoutTheme.has(themeKey(itemId))) return;
 		currentItemIdRef.current = itemId;
 
 		try {
 			const result = await jellyfinApi.api.getThemeSongs(itemId, true);
 			const songs = result?.Items || [];
+			if (result && Array.isArray(result.Items) && songs.length === 0) titlesWithoutTheme.add(themeKey(itemId));
 			if (songs.length === 0 || currentItemIdRef.current !== itemId) return;
 
 			const song = songs[Math.floor(Math.random() * songs.length)];

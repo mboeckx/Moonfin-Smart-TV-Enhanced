@@ -57,7 +57,7 @@ export const detailActionCatalogue = (props) => {
 		showsPersonalRating, personalRatingStyle, handleOpenRatingDialog,
 		handleOpenVersionModal, handleOpenAudioModal, handleOpenSubtitleModal, handleOpenPlaylistModal,
 		handleOpenCollectionModal, handleOpenDeleteDialog, handleOpenIdentifyModal,
-		canChangeArtwork, handleOpenArtworkModal
+		canChangeArtwork, handleOpenArtworkModal, seriesTrack
 	} = props;
 
 	// Asking and taking back are separate buttons sharing one arrangement
@@ -102,8 +102,14 @@ export const detailActionCatalogue = (props) => {
 		)},
 		{id: 'shuffle', when: isSeries || isSeason || isBoxSet, render: () => <ActionButton path={DETAIL_ICON_PATHS.shuffle} label={$L('Shuffle')} onClick={handleShuffle} />},
 		{id: 'version', when: hasMultipleVersions, render: () => <ActionButton path={DETAIL_ICON_PATHS.version} label={$L('Version')} onClick={handleOpenVersionModal} />},
-		{id: 'audio', when: hasMultipleAudio, render: () => <ActionButton path={DETAIL_ICON_PATHS.audio} label={$L('Audio')} onClick={handleOpenAudioModal} />},
-		{id: 'subtitles', when: supportsMediaSourceSelection, render: () => <ActionButton path={DETAIL_ICON_PATHS.subtitle} label={$L('Subtitle')} onClick={handleOpenSubtitleModal} />},
+		// Patched: on a series these slots hold the series' audio and subtitle language, which
+		// keeps whatever place the viewer arranged them in.
+		{id: 'audio', when: hasMultipleAudio || Boolean(seriesTrack), render: () => (seriesTrack
+			? <ActionButton path={DETAIL_ICON_PATHS.audio} label={`${$L('Audio')}: ${seriesTrack.audioLabel}`} onClick={seriesTrack.onOpenAudio} spotlightId="details-series-audio-btn" />
+			: <ActionButton path={DETAIL_ICON_PATHS.audio} label={$L('Audio')} onClick={handleOpenAudioModal} />)},
+		{id: 'subtitles', when: supportsMediaSourceSelection || Boolean(seriesTrack), render: () => (seriesTrack
+			? <ActionButton path={DETAIL_ICON_PATHS.subtitle} label={`${$L('Subtitle')}: ${seriesTrack.subtitleLabel}`} onClick={seriesTrack.onOpenSubtitle} spotlightId="details-series-subtitle-btn" />
+			: <ActionButton path={DETAIL_ICON_PATHS.subtitle} label={$L('Subtitle')} onClick={handleOpenSubtitleModal} />)},
 		{id: 'trailer', when: hasTrailer, render: () => <ActionButton path={DETAIL_ICON_PATHS.trailer} label={$L('Trailer')} onClick={handleTrailer} />},
 		// Offered while in a SyncPlay group and lit in the accent so it reads
 		// as the group's, next to a Play that stays as it is.

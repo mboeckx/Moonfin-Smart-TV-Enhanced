@@ -9,6 +9,31 @@ import {SpottableButton, SpottableDiv} from './detailsSpottables';
 
 import css from './Details.module.less';
 
+// Patched: a series' language list, the first episode's languages on top and the rest below a
+// divider.
+const SeriesLanguageRows = ({choices, current, episodeLabel, onChoose}) => {
+	const inEpisode = choices.filter((choice) => choice.inFirstEpisode);
+	const others = choices.filter((choice) => !choice.inFirstEpisode);
+	const row = (choice) => (
+		<TrackOptionRow
+			key={choice.value}
+			label={choice.label}
+			detail={choice.inFirstEpisode && episodeLabel ? $L('In {episode}').replace('{episode}', episodeLabel) : undefined}
+			selected={current === choice.value}
+			data-value={choice.value}
+			onClick={onChoose}
+		/>
+	);
+	return (
+		<>
+			{inEpisode.length > 0 && <TrackDivider />}
+			{inEpisode.map(row)}
+			<TrackDivider />
+			{others.map(row)}
+		</>
+	);
+};
+
 // The pickers behind the Version, Audio and Subtitle buttons. Only one is ever raised at a
 // time, so they share activeModal.
 const DetailTrackModals = ({
@@ -29,7 +54,8 @@ const DetailTrackModals = ({
 	isDownloadingRemoteSubtitle,
 	remoteSubtitleError,
 	remoteSubtitleResults,
-	onSelectRemoteSubtitle
+	onSelectRemoteSubtitle,
+	seriesTrack
 }) => {
 	const stopPropagation = useCallback((e) => e.stopPropagation(), []);
 
@@ -148,6 +174,51 @@ const DetailTrackModals = ({
 								spotlightId="btn-subtitle-download"
 								onClick={onOpenRemoteSubtitleSearch}
 							/>
+							<TrackDivider />
+							<TrackOptionRow label={$L('Cancel')} dimmed onClick={onCloseModal} />
+						</div>
+					</ModalContainer>
+				</div>
+			)}
+			{seriesTrack && activeModal === 'seriesAudio' && (
+				<div className={css.trackModal} onClick={onCloseModal}>
+					<ModalContainer className={`${css.trackModalPanel} ${css.seriesTrackPanel}`} onClick={stopPropagation} data-modal="seriesAudio" spotlightId="seriesAudio-modal">
+						<h2 className={css.trackModalTitle}>{$L('Audio Language for This Series')}</h2>
+						<div className={css.trackList}>
+							<TrackOptionRow
+								label={$L('Auto')}
+								detail={$L('Your remembered and default choices')}
+								selected={!seriesTrack.audio}
+								data-value=""
+								onClick={seriesTrack.onChooseAudio}
+							/>
+							<SeriesLanguageRows choices={seriesTrack.audioChoices} current={seriesTrack.audio} episodeLabel={seriesTrack.episodeLabel} onChoose={seriesTrack.onChooseAudio} />
+							<TrackDivider />
+							<TrackOptionRow label={$L('Cancel')} dimmed onClick={onCloseModal} />
+						</div>
+					</ModalContainer>
+				</div>
+			)}
+			{seriesTrack && activeModal === 'seriesSubtitle' && (
+				<div className={css.trackModal} onClick={onCloseModal}>
+					<ModalContainer className={`${css.trackModalPanel} ${css.seriesTrackPanel}`} onClick={stopPropagation} data-modal="seriesSubtitle" spotlightId="seriesSubtitle-modal">
+						<h2 className={css.trackModalTitle}>{$L('Subtitles for This Series')}</h2>
+						<div className={css.trackList}>
+							<TrackOptionRow
+								label={$L('Auto')}
+								detail={$L('Your remembered and default choices')}
+								selected={!seriesTrack.subtitle}
+								data-value=""
+								onClick={seriesTrack.onChooseSubtitle}
+							/>
+							<TrackOptionRow
+								label={$L('None')}
+								detail={$L('Subtitles off')}
+								selected={seriesTrack.subtitle === 'none'}
+								data-value="none"
+								onClick={seriesTrack.onChooseSubtitle}
+							/>
+							<SeriesLanguageRows choices={seriesTrack.subtitleChoices} current={seriesTrack.subtitle} episodeLabel={seriesTrack.episodeLabel} onChoose={seriesTrack.onChooseSubtitle} />
 							<TrackDivider />
 							<TrackOptionRow label={$L('Cancel')} dimmed onClick={onCloseModal} />
 						</div>

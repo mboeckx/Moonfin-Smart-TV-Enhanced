@@ -111,7 +111,8 @@ const ChangeArtworkModal = ({open, item: initialItem, api, serverUrl, onClose, o
 		}
 	}, [previewImage, downloadImage, closePreview]);
 
-	if (!open) return null;
+	// Patched: nothing to draw until there is an item to draw it for.
+	if (!open || !activeItem) return null;
 
 	return (
 		<div className={css.overlay}>

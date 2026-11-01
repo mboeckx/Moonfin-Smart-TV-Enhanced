@@ -62,7 +62,7 @@ const seriesOf = (item) => {
 // Holds the long press menu for every card in the app, along with the dialogs its entries open.
 // A card asks for it through useItemMenu. `backRef` is how the app's back key reaches whatever
 // is open here before it reaches the screen underneath.
-export const ItemMenuProvider = ({children, onPlay, onOpenItem, backRef}) => {
+export const ItemMenuProvider = ({children, onPlay, onOpenItem, backRef, controlsRef}) => {
 	const {user, serverUrl} = useAuth();
 	const {settings, updateSetting, updateSettings} = useSettings();
 	const [menu, setMenu] = useState(null);
@@ -239,6 +239,26 @@ export const ItemMenuProvider = ({children, onPlay, onOpenItem, backRef}) => {
 			backRef.current = null;
 		};
 	}, [backRef, dialog, menu, closeDialog, closeMenu]);
+
+	// Patched: lets the app open the artwork dialog for a title that isn't on a card, such as
+	// the one the screensaver shows. The full record is read first, since the dialog shows the
+	// images the title currently has.
+	useEffect(() => {
+		if (!controlsRef) return undefined;
+		controlsRef.current = {
+			canChangeArtwork: (item) => actionsFor(item).some((action) => action.id === 'changeArtwork'),
+			openArtwork: async (item) => {
+				if (!item) return;
+				const api = getApiForItem(item) || activeApi;
+				const full = await api.getItem(item.Id).catch(() => null);
+				returnFocusRef.current = Spotlight.getCurrent();
+				setDialog({kind: 'artwork', item: full ? {...item, ...full} : item, api});
+			}
+		};
+		return () => {
+			controlsRef.current = null;
+		};
+	}, [controlsRef, actionsFor]);
 
 	const value = useMemo(() => ({open, canOpen}), [open, canOpen]);
 

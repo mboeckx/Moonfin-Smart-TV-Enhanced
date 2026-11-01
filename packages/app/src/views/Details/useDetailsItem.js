@@ -3,7 +3,8 @@ import $L from '@enact/i18n/$L';
 
 import * as playback from '../../services/playback';
 import {fetchTmdbSeasonRatings, resolveSeriesTmdbId, isRatingSourceAllowed} from '../../services/mdblistApi';
-import {getItemSubtitlePref, getSeriesSubtitlePref, getSeriesAudioPref} from '../../services/subtitlePrefs';
+import {getItemSubtitlePref, getSeriesSubtitlePref, getSeriesAudioPref, getSeriesTrackOverride} from '../../services/subtitlePrefs';
+import {fromServerTrack, overrideAudioIndex, overrideSubtitleIndex} from '../../utils/seriesTrackOverride';
 import {fromServerStream, matchSeriesTrackIndex} from '../../utils/seriesTrackPrefs';
 import {findParentCollections} from './parentCollection';
 import {canScoreSeedLocally, getOnlineRecommendations, getRecommendations, mergeRecommendations} from '../../services/homeRecommendations';
@@ -192,10 +193,13 @@ const useDetailsItem = ({itemId, initialItem, effectiveApi, effectiveServerUrl, 
 				const initSubtitleStreams = ms.MediaStreams?.filter(s => s.Type === 'Subtitle') || [];
 				// A track remembered for the series shows as active, and only when there
 				// is none does the server's own default stand in.
-				const seriesAudioPref = data.SeriesId ? await getSeriesAudioPref(data.SeriesId) : undefined;
-				const matchedAudio = seriesAudioPref
+				// Patched: the languages set on the series page go first, as in the player.
+				const seriesOverride = (data.SeriesId ? await getSeriesTrackOverride(data.SeriesId) : null) || {};
+				const overriddenAudio = overrideAudioIndex(initAudioStreams.map(fromServerTrack), seriesOverride.audio);
+				const seriesAudioPref = data.SeriesId && overriddenAudio === null ? await getSeriesAudioPref(data.SeriesId) : undefined;
+				const matchedAudio = overriddenAudio !== null ? overriddenAudio : (seriesAudioPref
 					? matchSeriesTrackIndex(initAudioStreams.map(fromServerStream), seriesAudioPref)
-					: null;
+					: null);
 				const rememberedAudioPos = matchedAudio !== null && matchedAudio >= 0
 					? initAudioStreams.findIndex(s => s.Index === matchedAudio)
 					: -1;
@@ -209,7 +213,15 @@ const useDetailsItem = ({itemId, initialItem, effectiveApi, effectiveServerUrl, 
 				// reselecting. The per-item index restores the exact track, and an episode
 				// otherwise inherits its series' remembered language.
 				let savedSubtitlePos = null;
-				const savedItemIndex = await getItemSubtitlePref(itemId);
+				const overriddenSubtitle = overrideSubtitleIndex(initSubtitleStreams.map(fromServerTrack), seriesOverride.subtitle,
+					{preferSdh: settingsRef.current?.preferSdhSubtitles === true});
+				if (overriddenSubtitle === -1) {
+					savedSubtitlePos = -1;
+				} else if (overriddenSubtitle !== null) {
+					const pos = initSubtitleStreams.findIndex(s => s.Index === overriddenSubtitle);
+					if (pos >= 0) savedSubtitlePos = pos;
+				}
+				const savedItemIndex = savedSubtitlePos === null ? await getItemSubtitlePref(itemId) : undefined;
 				if (savedItemIndex !== undefined) {
 					if (savedItemIndex < 0) {
 						savedSubtitlePos = -1;

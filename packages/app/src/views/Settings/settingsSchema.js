@@ -44,6 +44,7 @@ import {
 	getResumeRewindOptions,
 	getRewatchSortOptions,
 	getScreensaverBackdropOptions,
+	getScreensaverEnterOptions,
 	getScreensaverComponentOptions,
 	getScreensaverDimmingOptions,
 	getScreensaverMovementOptions,
@@ -657,6 +658,8 @@ export const SETTINGS_SCHEMA = [
 					{kind: KIND.OPTION, key: 'screensaverPosition', label: () => $L('Component Position'), options: getScreensaverPositionOptions, fallback: () => $L('Middle'), icon: 'grid_view_rounded', when: whenScreensaverStatic},
 					{kind: KIND.SECTION, id: 'screensaverLibraryContent', label: () => $L('Library Content'), when: whenScreensaverLibrary},
 					{kind: KIND.OPTION, key: 'screensaverContentType', label: () => $L('Content Type'), options: getContentTypeOptions, fallback: () => $L('Movies & TV Shows'), icon: 'category', when: whenScreensaverLibrary, padded: true},
+					{kind: KIND.OPTION, key: 'screensaverEnterAction', label: () => $L('OK Button'), desc: () => $L('What pressing OK does on the title the screensaver shows'), options: getScreensaverEnterOptions, fallback: () => $L('Play'), icon: 'play_circle', when: whenScreensaverLibrary},
+					{kind: KIND.TOGGLE, key: 'screensaverShuffleLibrary', label: () => $L('Shuffle Whole Library'), desc: () => $L('Pick titles at random from the whole library and vary the backdrop. Off uses the original selection.'), icon: 'shuffle', when: whenScreensaverLibrary},
 					{
 						kind: KIND.NAV,
 						id: 'screensaverLibraries',

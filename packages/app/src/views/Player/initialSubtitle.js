@@ -1,4 +1,5 @@
-import {getItemSubtitlePref, getSeriesSubtitlePref} from '../../services/subtitlePrefs';
+import {getItemSubtitlePref, getSeriesSubtitlePref, getSeriesTrackOverride} from '../../services/subtitlePrefs';
+import {overrideSubtitleIndex} from '../../utils/seriesTrackOverride';
 import {languageMatches, normalizeLanguageCode} from '../../utils/audioLanguage';
 import {matchSeriesTrackIndex} from '../../utils/seriesTrackPrefs';
 import {streamTitleText} from '../../utils/streamTitle';
@@ -160,6 +161,18 @@ export const resolveInitialSubtitle = async (result, item, initialSubtitleIndex,
 		if (initialSubtitleIndex < 0) return null;
 		const explicit = streams.find((s) => s.index === initialSubtitleIndex);
 		if (explicit) return explicit;
+	}
+
+	// Patched: the subtitle setting on the series page outranks what was remembered from
+	// earlier playback. An episode without the language carries on as before.
+	if (item.SeriesId) {
+		const override = (await getSeriesTrackOverride(item.SeriesId)) || {};
+		const overridden = overrideSubtitleIndex(streams, override.subtitle, {preferSdh: settings.preferSdhSubtitles === true});
+		if (overridden === -1) return null;
+		if (overridden !== null) {
+			const stream = streams.find((s) => s.index === overridden);
+			if (stream) return stream;
+		}
 	}
 
 	const savedItemIndex = await getItemSubtitlePref(item.Id);

@@ -27,6 +27,8 @@ import {PanelContainer} from '../../utils/spotlightContainers';
 import {KEYS} from '../../utils/keys';
 import useSortSettingsPanels from '../../hooks/useSortSettingsPanels';
 import useStartLetter from '../../hooks/useStartLetter';
+import {getLibraryState, saveLibraryState, takeVisitedItems} from '../../services/libraryReturnState';
+import {getCachedList, listSignature, nextFocusIndex, putCachedList, sameList} from '../../services/libraryListCache';
 import {useUserDataList} from '../../hooks/useUserDataSync';
 import useItemMenuHold, {cardIndexOf} from '../../hooks/useItemMenuHold';
 import {GRID_DIRECTIONS, IMAGE_SIZES, IMAGE_TYPES, LETTERS, capitalize, createGridKeyDown, createToolbarKeyDown, cycleValue, focusOverhang, horizontalCellPad, stopPropagation} from '../../utils/gridChrome';
@@ -76,6 +78,12 @@ const MUSIC_CONTENT_TYPES = [
 ];
 
 const FOLDER_DETAIL_TYPES = ['Series', 'BoxSet', 'Playlist', 'MusicAlbum', 'MusicArtist'];
+
+// Patched: one image of each kind the grid, the grouped rows and the details header read.
+// Without this every item also carries every extra backdrop, art and disc image along with
+// a placeholder hash for each, which the TV parses and never shows.
+const LIST_IMAGE_PARAMS = {ImageTypeLimit: 1, EnableImageTypes: 'Primary,Backdrop,Thumb,Logo,Banner'};
+const LIST_FIELDS = 'SortName,ProductionYear,ImageTags,OfficialRating,CommunityRating,CriticRating,RunTimeTicks,ProviderIds,UserData,Genres,Studios';
 
 // The inset the stylesheet keeps either side of the grid, both sides added up.
 const GRID_INSET = 174;
@@ -181,15 +189,23 @@ const handleToolbarKeyDown = createToolbarKeyDown('library-grid');
 const handleToolbarKeyDownGrouped = createToolbarKeyDown('library-group-row-0');
 // Up out of the grid goes to the first letter, or to the toolbar when the
 // alphabet bar is switched off and that letter is not there to land on.
-const handleGridKeyDown = createGridKeyDown(css.grid, 'library-letter-hash');
+const handleGridKeyDownToHash = createGridKeyDown(css.grid, 'library-letter-hash');
 const handleGridKeyDownNoLetters = createGridKeyDown(css.grid, 'library-toolbar');
 
 // The list redraws every card it holds each time it renders, so without this a
 // focus move that only changes the header would redraw the whole grid.
 const GridList = memo(VirtualGridList);
 
-const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto, onHome, backHandlerRef}) => {
-	const {api, serverUrl, serverType} = useAuth();
+const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto, onHome, backHandlerRef, restoreOnMount = false}) => {
+	// Patched: coming back from a title with back picks the screen up where it was left,
+	// filters, letter, loaded items and the card that was opened. Read once, on mount.
+	const returnKey = library?.Id || (genreFilter ? `genre-${genreFilter}` : studioFilter ? `studio-${studioFilter}` : 'default');
+	const restoredRef = useRef(undefined);
+	if (restoredRef.current === undefined) restoredRef.current = restoreOnMount ? getLibraryState(returnKey) : null;
+	const restored = restoredRef.current;
+	const restoredItems = restored?.hasItems ? restored : null;
+	const fromReturn = (key, fallback) => (restored && restored[key] !== undefined ? restored[key] : fallback);
+	const {api, serverUrl, serverType, user} = useAuth();
 	const {settings, updateSetting} = useSettings();
 
 	const effectiveApi = useMemo(() => {
@@ -211,41 +227,45 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 	const isPlaylistLibrary = library?.CollectionType?.toLowerCase() === 'playlists';
 	const isSquareDefault = isMusicLibrary || isPlaylistLibrary;
 
-	const [allItems, setAllItems] = useState([]);
-	const [isLoading, setIsLoading] = useState(true);
-	const [totalCount, setTotalCount] = useState(0);
+	const [allItems, setAllItems] = useState(() => restoredItems ? restoredItems.allItems : []);
+	const [isLoading, setIsLoading] = useState(!restoredItems);
+	const [totalCount, setTotalCount] = useState(restoredItems ? restoredItems.totalCount : 0);
 	// What the ratings filter dropped from the fetched pages, so the count shown leaves it out.
-	const [blockedCount, setBlockedCount] = useState(0);
+	const [blockedCount, setBlockedCount] = useState(restoredItems ? restoredItems.blockedCount : 0);
 	const shownCount = Math.max(0, totalCount - blockedCount);
-	const [favoritesOnly, setFavoritesOnly] = useState(false);
-	const [playedFilter, setPlayedFilter] = useState('all');
-	const [likedFilter, setLikedFilter] = useState('all');
-	const [seriesFilter, setSeriesFilter] = useState('all');
-	const [featureFilters, setFeatureFilters] = useState([]);
-	const [qualityFilters, setQualityFilters] = useState([]);
-	const [videoSourceFilters, setVideoSourceFilters] = useState([]);
-	const [genreFilters, setGenreFilters] = useState([]);
-	const [ratingFilters, setRatingFilters] = useState([]);
-	const [tagFilters, setTagFilters] = useState([]);
-	const [yearFilters, setYearFilters] = useState([]);
-	const [audioLanguageFilters, setAudioLanguageFilters] = useState([]);
-	const [subtitleLanguageFilters, setSubtitleLanguageFilters] = useState([]);
+	const [favoritesOnly, setFavoritesOnly] = useState(() => fromReturn('favoritesOnly', false));
+	const [playedFilter, setPlayedFilter] = useState(() => fromReturn('playedFilter', 'all'));
+	const [likedFilter, setLikedFilter] = useState(() => fromReturn('likedFilter', 'all'));
+	const [seriesFilter, setSeriesFilter] = useState(() => fromReturn('seriesFilter', 'all'));
+	const [featureFilters, setFeatureFilters] = useState(() => fromReturn('featureFilters', []));
+	const [qualityFilters, setQualityFilters] = useState(() => fromReturn('qualityFilters', []));
+	const [videoSourceFilters, setVideoSourceFilters] = useState(() => fromReturn('videoSourceFilters', []));
+	const [genreFilters, setGenreFilters] = useState(() => fromReturn('genreFilters', []));
+	const [ratingFilters, setRatingFilters] = useState(() => fromReturn('ratingFilters', []));
+	const [tagFilters, setTagFilters] = useState(() => fromReturn('tagFilters', []));
+	const [yearFilters, setYearFilters] = useState(() => fromReturn('yearFilters', []));
+	const [audioLanguageFilters, setAudioLanguageFilters] = useState(() => fromReturn('audioLanguageFilters', []));
+	const [subtitleLanguageFilters, setSubtitleLanguageFilters] = useState(() => fromReturn('subtitleLanguageFilters', []));
 	const [facetValues, setFacetValues] = useState(null);
 	const [expandedSection, setExpandedSection] = useState(SORT_SECTION);
 	const [facetLimit, setFacetLimit] = useState(FACET_PAGE);
 	const [facetQuery, setFacetQuery] = useState('');
-	const [musicContentType, setMusicContentType] = useState('albums');
-	const [focusedItem, setFocusedItem] = useState(null);
-	const [musicGridView, setMusicGridView] = useState(null);
+	const [musicContentType, setMusicContentType] = useState(() => fromReturn('musicContentType', 'albums'));
+	const [focusedItem, setFocusedItem] = useState(() => (restoredItems?.focusedId ? restoredItems.allItems.find((entry) => entry.Id === restoredItems.focusedId) || null : null));
+	const focusedItemRef = useRef(focusedItem);
+	focusedItemRef.current = focusedItem;
+	const [musicGridView, setMusicGridView] = useState(() => fromReturn('musicGridView', null));
 	const libraryId = library?.Id || (genreFilter ? `genre-${genreFilter}` : studioFilter ? `studio-${studioFilter}` : 'default');
 	const [imageSize, setImageSize] = useStorage(`library_imageSize_${libraryId}`, 'medium');
 	const [imageType, setImageType] = useStorage(`library_imageType_${libraryId}`, isSquareDefault ? 'square' : 'poster');
 	const [gridDirection, setGridDirection] = useStorage(`library_gridDirection_${libraryId}`, 'vertical');
+	const gridDirectionRef = useRef(gridDirection);
+	gridDirectionRef.current = gridDirection;
 	const [storedGroupBy, setGroupBy] = useStorage(`library_groupBy_${libraryId}`, 'none');
 	const [folderView, setFolderView] = useStorage(`library_folderView_${libraryId}`, 'off');
 	const [sortKey, setSortKey] = useStorage(`library_sortKey_${libraryId}`, 'SortName');
 	const [sortOrder, setSortOrder] = useStorage(`library_sortOrder_${libraryId}`, '');
-	const [searchQuery, setSearchQuery] = useState('');
+	const [searchQuery, setSearchQuery] = useState(() => fromReturn('searchQuery', ''));
 	const [cardText, setCardText] = useStorage(`library_cardText_${libraryId}`, 'on');
 	const [letterNav, setLetterNav] = useStorage(`library_letterNav_${libraryId}`, 'on');
 	const showCardText = cardText !== 'off';
@@ -257,7 +277,11 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 	isMixedContentLibrary ||
 	folderViewMode === 'on' ||
 	(folderViewMode !== 'off' && folderView === 'on');
-	const [folderStack, setFolderStack] = useState([]);
+	const [folderStack, setFolderStack] = useState(() => fromReturn('folderStack', []));
+	// Patched: movie and show libraries load whole, which is also what lets their last list be
+	// shown straight away on the next visit.
+	const prefetchCollection = library?.CollectionType?.toLowerCase();
+	const prefetchAll = !isFolderView && (prefetchCollection === 'movies' || prefetchCollection === 'tvshows');
 	const currentFolderId = folderStack.length > 0 ? folderStack[folderStack.length - 1].id : library?.Id;
 	const currentFolderCollectionType = folderStack.length > 0 ? folderStack[folderStack.length - 1].collectionType?.toLowerCase() : null;
 	const isGenreMode = !!genreFilter;
@@ -265,8 +289,12 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 	const isFilterMode = isGenreMode || isStudioMode;
 
 	const loadingMoreRef = useRef(false);
-	const apiFetchIndexRef = useRef(0);
-	const initialFocusDoneRef = useRef(false);
+	const apiFetchIndexRef = useRef(restoredItems ? restoredItems.apiFetchIndex : 0);
+	// The card to land on when coming back. Its own focus pass runs instead of the first-card one.
+	const returnFocusIdRef = useRef(restoredItems?.focusedId || null);
+	const initialFocusDoneRef = useRef(Boolean(restoredItems));
+	// The remembered items stand in for the first load, so the reload on mount is skipped once.
+	const skipInitialReloadRef = useRef(Boolean(restoredItems));
 	const loadItemsRef = useRef(null);
 	const fetchGenerationRef = useRef(0);
 
@@ -305,11 +333,31 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 	const {startLetter, handleLetterSelect, items} = useStartLetter({
 		allItems: searchedItems,
 		isLoading,
-		gridSpotlightId: 'library-grid'
+		gridSpotlightId: 'library-grid',
+		initialLetter: fromReturn('startLetter', null)
 	});
 
 	const itemsRef = useRef(items);
 	itemsRef.current = items;
+
+	// Patched: up out of the top row lands on the letter that is picked, when one is, rather
+	// than on the first letter of the bar.
+	const startLetterRef = useRef(startLetter);
+	startLetterRef.current = startLetter;
+	const handleGridKeyDown = useCallback((ev) => {
+		const letter = startLetterRef.current;
+		if (ev.keyCode === KEYS.UP && letter) {
+			const grid = document.querySelector(`.${css.grid}`);
+			const button = document.querySelector(`[data-letter="${letter}"]`);
+			if (grid && (grid.scrollTop || 0) < 50 && button) {
+				ev.preventDefault();
+				ev.stopPropagation();
+				Spotlight.focus(button);
+				return;
+			}
+		}
+		handleGridKeyDownToHash(ev);
+	}, []);
 
 	// Holding OK on a card opens its menu, found from the card the press landed on.
 	const itemAtCard = useCallback((target) => itemsRef.current[cardIndexOf(target)] || null, []);
@@ -376,17 +424,19 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 		return '';
 	}, [library, isGenreMode, settings.groupItemsIntoCollections]);
 
-	const loadItems = useCallback(async (startIndex = 0, append = false) => {
-		if (!library && !genreFilter && !studioFilter) return;
+	// Patched: background mode builds the very same request but hands the page back instead
+	// of putting it on screen, for the refresh behind a remembered list.
+	const loadItems = useCallback(async (startIndex = 0, append = false, background = false) => {
+		if (!library && !genreFilter && !studioFilter) return null;
 
-		if (append && loadingMoreRef.current) return;
+		if (!background && append && loadingMoreRef.current) return null;
 
-		if (!append) {
+		if (!background && !append) {
 			fetchGenerationRef.current++;
 		}
 		const generation = fetchGenerationRef.current;
 
-		if (append) {
+		if (!background && append) {
 			loadingMoreRef.current = true;
 		}
 
@@ -438,8 +488,9 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 					Limit: 150,
 					SortBy: `IsFolder,${sortOption.field}`,
 					SortOrder: effectiveOrder,
-					EnableTotalRecordCount: true,
-					Fields: 'PrimaryImageAspectRatio,SortName,Path,ChildCount,MediaSourceCount,ProductionYear,ImageTags,OfficialRating,CommunityRating,CriticRating,RunTimeTicks,UserData'
+					EnableTotalRecordCount: !append,
+					Fields: 'PrimaryImageAspectRatio,SortName,Path,ChildCount,MediaSourceCount,ProductionYear,ImageTags,OfficialRating,CommunityRating,CriticRating,RunTimeTicks,UserData',
+					...LIST_IMAGE_PARAMS
 				};
 				if (filters.length > 0) params.Filters = filters.join(',');
 				Object.assign(params, extraParams);
@@ -451,7 +502,7 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 				if (generation !== fetchGenerationRef.current) return;
 				apiFetchIndexRef.current = append ? apiFetchIndexRef.current + newItems.length : newItems.length;
 				showPage(newItems);
-				setTotalCount(result.TotalRecordCount || 0);
+				if (!append) setTotalCount(result.TotalRecordCount || 0);
 			} else {
 				const params = {
 					StartIndex: startIndex,
@@ -459,8 +510,9 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 					SortBy: sortOption.field,
 					SortOrder: effectiveOrder,
 					Recursive: true,
-					EnableTotalRecordCount: true,
-					Fields: 'SortName,ProductionYear,ImageTags,OfficialRating,CommunityRating,CriticRating,RunTimeTicks,ProviderIds,UserData,Genres,Studios'
+					EnableTotalRecordCount: !append,
+					Fields: LIST_FIELDS,
+					...LIST_IMAGE_PARAMS
 				};
 
 				if (isPlaylistLibrary) params.Fields += ',ChildCount,RecursiveItemCount';
@@ -496,7 +548,7 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 					Limit: 150,
 					SortBy: sortOption.field,
 					SortOrder: effectiveOrder,
-					EnableTotalRecordCount: true,
+					EnableTotalRecordCount: !append,
 					Fields: 'PrimaryImageAspectRatio,SortName,ProductionYear,ImageTags,UserData',
 					ImageTypeLimit: 1,
 					EnableImageTypes: 'Primary,Backdrop,Thumb',
@@ -515,7 +567,7 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 						Limit: 150,
 						SortBy: sortOption.field,
 						SortOrder: effectiveOrder,
-						EnableTotalRecordCount: true,
+						EnableTotalRecordCount: !append,
 						Fields: 'PrimaryImageAspectRatio,ItemCounts'
 					});
 				} else {
@@ -529,27 +581,147 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 					newItems = newItems.filter(item => !excludedList.includes(item.Type));
 				}
 
+				if (background) return {items: newItems, fetched: result.Items?.length || 0, total: result.TotalRecordCount || 0};
+
 				apiFetchIndexRef.current = append ? apiFetchIndexRef.current + (result.Items?.length || 0) : (result.Items?.length || 0);
 				if (generation !== fetchGenerationRef.current) return;
 				showPage(newItems);
-				setTotalCount(result.TotalRecordCount || 0);
+				if (!append) setTotalCount(result.TotalRecordCount || 0);
 			}
-		} catch (err) { console.error('[Library] loadItems error:', err); } finally {
-			setIsLoading(false);
-			loadingMoreRef.current = false;
+		} catch (err) {
+			if (background) throw err;
+			console.error('[Library] loadItems error:', err);
+		} finally {
+			if (!background) {
+				setIsLoading(false);
+				loadingMoreRef.current = false;
+			}
 		}
+		return null;
 	}, [isPlaylistLibrary, effectiveApi, library, genreFilter, studioFilter, sortKey, sortOrder, favoritesOnly, playedFilter, likedFilter, seriesFilter, featureFilters, qualityFilters, videoSourceFilters, genreFilters, ratingFilters, tagFilters, yearFilters, audioLanguageFilters, subtitleLanguageFilters, isFolderView, currentFolderId, currentFolderCollectionType, isMusicLibrary, musicContentType, getItemTypeForLibrary, getExcludeItemTypes, settings.groupItemsIntoCollections, isGenreMode]);
 
 	loadItemsRef.current = loadItems;
 
+	// Patched: what identifies this list for the remembered-list cache. Only whole-loading
+	// libraries take part, since a part-loaded list can't stand in for the real one.
+	const listCacheSignature = useMemo(() => (prefetchAll ? listSignature([
+		effectiveServerUrl, user?.Id || '', returnKey, sortKey, sortOrder, favoritesOnly, playedFilter,
+		likedFilter, seriesFilter, featureFilters, qualityFilters, videoSourceFilters, genreFilters,
+		ratingFilters, tagFilters, yearFilters, audioLanguageFilters, subtitleLanguageFilters,
+		Boolean(settings.groupItemsIntoCollections)
+	]) : null), [prefetchAll, effectiveServerUrl, user?.Id, returnKey, sortKey, sortOrder, favoritesOnly, playedFilter,
+		likedFilter, seriesFilter, featureFilters, qualityFilters, videoSourceFilters, genreFilters,
+		ratingFilters, tagFilters, yearFilters, audioLanguageFilters, subtitleLanguageFilters,
+		settings.groupItemsIntoCollections]);
+	const listSignatureRef = useRef(listCacheSignature);
+	listSignatureRef.current = listCacheSignature;
+	const allItemsRef = useRef(allItems);
+	allItemsRef.current = allItems;
+	const revalidateGenRef = useRef(0);
+	const pendingSwapRef = useRef(null);
+	const listShownAtRef = useRef(Date.now());
+	const lastKeyAtRef = useRef(0);
+
+	useEffect(() => {
+		const noteKey = () => { lastKeyAtRef.current = Date.now(); };
+		window.addEventListener('keydown', noteKey, true);
+		return () => {
+			window.removeEventListener('keydown', noteKey, true);
+			// A counter, not a node: bumping it on the way out stops any refresh still running.
+			revalidateGenRef.current++; // eslint-disable-line react-hooks/exhaustive-deps
+		};
+	}, []);
+
+	// A list that finished loading is remembered for next time.
+	useEffect(() => {
+		if (!listCacheSignature || isLoading) return;
+		if (totalCount > 0 && apiFetchIndexRef.current >= totalCount) {
+			putCachedList(listCacheSignature, {items: allItems, totalCount, blockedCount});
+		}
+	}, [listCacheSignature, isLoading, totalCount, allItems, blockedCount]);
+
+	// Patched: the fresh copy replaces the remembered list only when something a card shows or a
+	// filter reads differs, and only once the remote has been still for a moment, so it never
+	// lands in the middle of a key press. Focus stays on the same title, or the nearest one
+	// that is still there, on the same row of the screen.
+	const applyFreshList = useCallback((signature, generation, fresh, total, fetched) => {
+		const apply = () => {
+			if (generation !== revalidateGenRef.current || signature !== listSignatureRef.current) return;
+			const quietFor = Date.now() - lastKeyAtRef.current;
+			if (quietFor < 700) {
+				setTimeout(apply, 700 - quietFor);
+				return;
+			}
+			const visible = withoutBlockedItems(fresh);
+			const blocked = fresh.length - visible.length;
+			apiFetchIndexRef.current = fetched;
+			setTotalCount(total);
+			setBlockedCount(blocked);
+			if (sameList(allItemsRef.current, visible)) return;
+
+			const gridNode = document.querySelector('[data-spotlight-id="library-grid"]');
+			const active = document.activeElement;
+			const card = gridNode && active && gridNode.contains(active) && active.closest ? active.closest('[data-index]') : null;
+			const oldItems = itemsRef.current;
+			const oldIndex = card ? parseInt(card.dataset.index, 10) : -1;
+			const focusedId = card ? oldItems[oldIndex]?.Id : focusedItemRef.current?.Id;
+			const rect = card ? card.getBoundingClientRect() : null;
+			pendingSwapRef.current = {
+				oldIds: oldItems.map((entry) => entry.Id),
+				focusedId,
+				oldIndex: oldIndex >= 0 ? oldIndex : Math.max(0, oldItems.findIndex((entry) => entry.Id === focusedId)),
+				oldEdge: rect ? (gridDirectionRef.current === 'horizontal' ? rect.left : rect.top) : null,
+				focusInGrid: Boolean(card),
+				focusInLibrary: Boolean(active && active !== document.body),
+				untouched: lastKeyAtRef.current < listShownAtRef.current
+			};
+			setAllItems(visible);
+		};
+		apply();
+	}, []);
+
+	const revalidateList = useCallback(async (signature) => {
+		const generation = ++revalidateGenRef.current;
+		const collected = [];
+		let fetched = 0;
+		let total = Infinity;
+		try {
+			while (fetched < total) {
+				const page = await loadItemsRef.current(fetched, fetched > 0, true);
+				if (generation !== revalidateGenRef.current || !page) return;
+				if (fetched === 0) total = page.total;
+				collected.push(...page.items);
+				if (page.fetched === 0) break;
+				fetched += page.fetched;
+			}
+		} catch (err) {
+			// The remembered list stays up; the next visit tries again.
+			console.warn('[Library] background refresh failed:', err);
+			return;
+		}
+		const seen = new Set();
+		const fresh = collected.filter((entry) => {
+			if (seen.has(entry.Id)) return false;
+			seen.add(entry.Id);
+			return true;
+		});
+		applyFreshList(signature, generation, fresh, total === Infinity ? fresh.length : total, fetched);
+	}, [applyFreshList]);
+	const revalidateListRef = useRef(revalidateList);
+	revalidateListRef.current = revalidateList;
+
 	// Grouping covers the whole library, so the rest of it loads in the
 	// background the way scrolling to the end would have.
+	// Patched: the letter bar only filters pages already fetched, so a picked
+	// letter needs the rest of the library too. Movie and show libraries also
+	// load ahead in the background, so scrolling no longer waits for the grid
+	// to stop before asking the server for the next page.
 	useEffect(() => {
-		if (!groupedActive || isLoading || loadingMoreRef.current) return;
+		if (!(groupedActive || startLetter || prefetchAll) || isLoading || loadingMoreRef.current) return;
 		if (apiFetchIndexRef.current < totalCount) {
 			loadItemsRef.current?.(apiFetchIndexRef.current, true);
 		}
-	}, [groupedActive, isLoading, totalCount, allItems.length]);
+	}, [groupedActive, startLetter, prefetchAll, isLoading, totalCount, allItems.length]);
 
 	// The summary cant tell music from audiobooks or music videos from movies, so
 	// those playlists are read once and remembered. A small batch at a time keeps
@@ -613,11 +785,36 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 	}, [scrollToGroupRow]);
 
 	useEffect(() => {
+		if (skipInitialReloadRef.current) {
+			skipInitialReloadRef.current = false;
+			return;
+		}
 		if (isMusicBrowseHome) {
 			setIsLoading(false);
 			return;
 		}
 		if (library || genreFilter || studioFilter) {
+			// Any refresh still running belongs to the query being left.
+			revalidateGenRef.current++;
+			pendingSwapRef.current = null;
+			// Patched: a list this query produced before goes up straight away, and a fresh copy
+			// loads behind it.
+			const signature = listSignatureRef.current;
+			const cached = signature ? getCachedList(signature) : null;
+			if (cached) {
+				fetchGenerationRef.current++;
+				const visible = withoutBlockedItems(cached.items);
+				setAllItems(visible);
+				setTotalCount(cached.totalCount);
+				setBlockedCount((cached.blockedCount || 0) + cached.items.length - visible.length);
+				loadingMoreRef.current = false;
+				apiFetchIndexRef.current = cached.totalCount;
+				initialFocusDoneRef.current = false;
+				listShownAtRef.current = Date.now();
+				setIsLoading(false);
+				revalidateListRef.current(signature);
+				return;
+			}
 			setIsLoading(true);
 			setAllItems([]);
 			setTotalCount(0);
@@ -625,6 +822,7 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 			loadingMoreRef.current = false;
 			apiFetchIndexRef.current = 0;
 			initialFocusDoneRef.current = false;
+			listShownAtRef.current = Date.now();
 			loadItemsRef.current(0, false);
 		}
 	}, [library, sortKey, sortOrder, favoritesOnly, playedFilter, likedFilter, seriesFilter, featureFilters, qualityFilters, videoSourceFilters, genreFilters, ratingFilters, tagFilters, yearFilters, audioLanguageFilters, subtitleLanguageFilters, musicContentType, isFolderView, currentFolderId, genreFilter, studioFilter, isMusicBrowseHome, settings.groupItemsIntoCollections]);
@@ -674,7 +872,13 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 		}
 	}, [isFolderView, onSelectItem, onViewPhoto]);
 
-	const {getScrollTo: getGridScrollTo, quickReturn} = useQuickReturnGrid('library-grid');
+	const {getScrollTo: getQuickReturnScrollTo, quickReturn} = useQuickReturnGrid('library-grid');
+	// The grid's scroller is kept here too, so coming back can land on the opened card.
+	const gridScrollToRef = useRef(null);
+	const getGridScrollTo = useCallback((fn) => {
+		gridScrollToRef.current = fn;
+		getQuickReturnScrollTo(fn);
+	}, [getQuickReturnScrollTo]);
 
 	const handleScrollStop = useCallback(() => {
 		if (apiFetchIndexRef.current < totalCount && !isLoading && !loadingMoreRef.current) {
@@ -759,6 +963,136 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 		}, 100);
 		return () => clearTimeout(id);
 	}, [items.length, isLoading, groupedActive, showSortPanel, showSettingsPanel]);
+
+	// Patched: back from a title lands on the card that was opened, scrolled into view.
+	useEffect(() => {
+		if (!restoredItems) return undefined;
+		const id = setTimeout(() => {
+			const targetId = returnFocusIdRef.current;
+			returnFocusIdRef.current = null;
+			if (groupedActive) {
+				Spotlight.focus('library-group-row-0');
+				return;
+			}
+			const index = targetId ? itemsRef.current.findIndex((entry) => entry.Id === targetId) : -1;
+			if (index >= 0 && gridScrollToRef.current) {
+				gridScrollToRef.current({index, animate: false, focus: true});
+			} else {
+				Spotlight.focus('library-grid');
+			}
+		}, 100);
+		return () => clearTimeout(id);
+	}, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+	// Patched: coming back from a title, the titles opened on the way are read again in one
+	// request, and any whose poster or other card data changed meanwhile is swapped in. The
+	// new image tag in its url makes the TV fetch the new poster instead of the cached one.
+	useEffect(() => {
+		if (!restoredItems) {
+			// A fresh visit starts the trail over.
+			takeVisitedItems();
+			return undefined;
+		}
+		const present = new Set(allItemsRef.current.map((entry) => entry.Id));
+		const ids = [...new Set([...takeVisitedItems(), restoredItems.focusedId])]
+			.filter((id) => id && present.has(id));
+		if (!ids.length || !effectiveApi?.getItems) return undefined;
+		let cancelled = false;
+		effectiveApi.getItems({Ids: ids.join(','), Fields: LIST_FIELDS, EnableTotalRecordCount: false, ...LIST_IMAGE_PARAMS})
+			.then((result) => {
+				if (cancelled) return;
+				const fresh = new Map((result?.Items || []).map((entry) => [entry.Id, entry]));
+				setAllItems((prev) => {
+					let changed = false;
+					const next = prev.map((entry) => {
+						const update = fresh.get(entry.Id);
+						if (!update || sameList([entry], [update])) return entry;
+						changed = true;
+						return {...entry, ...update};
+					});
+					return changed ? next : prev;
+				});
+			})
+			.catch(() => {});
+		return () => { cancelled = true; };
+	}, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+	// Patched: after a fresh list replaced the remembered one, put focus back on the same title
+	// (or its nearest surviving neighbour) and keep that card on the row it was on.
+	useEffect(() => {
+		const pending = pendingSwapRef.current;
+		if (!pending) return undefined;
+		pendingSwapRef.current = null;
+		const newItems = itemsRef.current;
+		const newIds = newItems.map((entry) => entry.Id);
+		let target = pending.focusedId == null && !pending.focusInGrid
+			? -1
+			: nextFocusIndex(pending.oldIds, newIds, pending.focusedId, pending.oldIndex);
+		// Nobody has moved since the list went up, so focus stays on the first card.
+		if (pending.untouched && pending.oldIndex === 0 && newIds.length) target = 0;
+		if (target >= 0) setFocusedItem(newItems[target]);
+		else if (!newIds.length) setFocusedItem(null);
+
+		const gridNode = document.querySelector('[data-spotlight-id="library-grid"]');
+		const cardAt = (index) => (gridNode ? gridNode.querySelector(`[data-index="${index}"]`) : null);
+		const focusCard = (index) => {
+			const el = cardAt(index);
+			if (el && document.activeElement !== el) Spotlight.focus(el);
+		};
+
+		if (!pending.focusInGrid || target < 0) {
+			// A grouped view or an emptied grid can take the focused card away with it.
+			if (pending.focusInLibrary && (!document.activeElement || document.activeElement === document.body)) {
+				Spotlight.focus(groupedActive ? 'library-group-row-0' : 'library-grid');
+			}
+			return undefined;
+		}
+		if (target === pending.oldIndex) {
+			focusCard(target);
+			return undefined;
+		}
+		if (gridScrollToRef.current) gridScrollToRef.current({index: target, animate: false, focus: true});
+		const frame = window.requestAnimationFrame(() => {
+			const el = cardAt(target);
+			if (!el || pending.oldEdge == null) return;
+			const horizontal = gridDirectionRef.current === 'horizontal';
+			const rect = el.getBoundingClientRect();
+			const delta = (horizontal ? rect.left : rect.top) - pending.oldEdge;
+			let scroller = el.parentElement;
+			while (scroller && scroller !== document.body) {
+				const style = window.getComputedStyle(scroller);
+				const overflow = horizontal ? style.overflowX : style.overflowY;
+				const room = horizontal ? scroller.scrollWidth > scroller.clientWidth : scroller.scrollHeight > scroller.clientHeight;
+				if (/(auto|scroll)/.test(overflow) && room) break;
+				scroller = scroller.parentElement;
+			}
+			if (scroller && scroller !== document.body && Math.abs(delta) > 1) {
+				if (horizontal) scroller.scrollLeft += delta;
+				else scroller.scrollTop += delta;
+			}
+			focusCard(target);
+		});
+		return () => window.cancelAnimationFrame(frame);
+	}, [allItems]); // eslint-disable-line react-hooks/exhaustive-deps
+
+	// Patched: the screen hands what it looks like to the return store as it unmounts, so a
+	// details page and back puts it together again. Kept current on every render.
+	const returnSnapshotRef = useRef(null);
+	returnSnapshotRef.current = {
+		key: returnKey,
+		hasItems: !isLoading,
+		allItems, totalCount, blockedCount,
+		favoritesOnly, playedFilter, likedFilter, seriesFilter,
+		featureFilters, qualityFilters, videoSourceFilters, genreFilters, ratingFilters,
+		tagFilters, yearFilters, audioLanguageFilters, subtitleLanguageFilters,
+		musicContentType, musicGridView, searchQuery, folderStack, startLetter,
+		focusedId: focusedItem?.Id || null
+	};
+	useEffect(() => () => {
+		const snapshot = returnSnapshotRef.current;
+		if (!snapshot) return;
+		saveLibraryState(snapshot.key, {...snapshot, apiFetchIndex: apiFetchIndexRef.current});
+	}, []);
 
 	// Choosing the sort already in use turns it around rather than doing nothing.
 	const handleSortSelect = useCallback((ev) => {
@@ -1017,7 +1351,13 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 			imageId = getPrimaryImageId(item);
 			imgApiType = 'Primary';
 		}
-		const imageUrl = imageId ? getImageUrl(effectiveServerUrl, imageId, imgApiType, {maxHeight: 300, quality: 70}) : null;
+		// Patched: the image tag makes the server mark the picture cacheable for a year. The tag
+		// changes whenever the picture does, so a replaced poster still shows up.
+		let imageTag;
+		if (imgApiType === 'Thumb') imageTag = item.ImageTags?.Thumb;
+		else if (imageId === item.Id) imageTag = item.ImageTags?.Primary;
+		else imageTag = item.SeriesPrimaryImageTag;
+		const imageUrl = imageId ? getImageUrl(effectiveServerUrl, imageId, imgApiType, {maxHeight: 300, quality: 70, tag: imageTag}) : null;
 
 		return (
 			<SpottableDiv

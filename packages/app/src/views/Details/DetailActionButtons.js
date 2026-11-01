@@ -72,6 +72,7 @@ const DetailActionButtons = ({
 	onOpenCollectionModal,
 	onOpenDeleteDialog,
 	onOpenIdentifyModal,
+	seriesTrack,
 	maxVisibleButtons,
 	overflowAsMenu
 }) => {
@@ -139,6 +140,24 @@ const DetailActionButtons = ({
 				</div>
 				<span className={css.btnLabel}>{$L('Version')}</span>
 				<span className={css.btnDetail}>{mediaSource?.Name || `${$L('Version')} ${selectedVersionIndex + 1}`}</span>
+			</SpottableDiv>
+		)},
+		{id: 'audio', when: Boolean(seriesTrack), render: () => (
+			<SpottableDiv className={css.btnWrapper} onClick={seriesTrack.onOpenAudio} spotlightId="details-series-audio-btn">
+				<div className={css.btnAction}>
+					<BtnIcon path={DETAIL_ICON_PATHS.audio}/>
+				</div>
+				<span className={css.btnLabel}>{$L('Audio')}</span>
+				<span className={css.btnDetail}>{seriesTrack.audioLabel}</span>
+			</SpottableDiv>
+		)},
+		{id: 'subtitles', when: Boolean(seriesTrack), render: () => (
+			<SpottableDiv className={css.btnWrapper} onClick={seriesTrack.onOpenSubtitle} spotlightId="details-series-subtitle-btn">
+				<div className={css.btnAction}>
+					<BtnIcon path={DETAIL_ICON_PATHS.subtitle}/>
+				</div>
+				<span className={css.btnLabel}>{$L('Subtitle')}</span>
+				<span className={css.btnDetail}>{seriesTrack.subtitleLabel}</span>
 			</SpottableDiv>
 		)},
 		{id: 'audio', when: hasMultipleAudio, render: () => (

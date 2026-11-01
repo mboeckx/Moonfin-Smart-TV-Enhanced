@@ -133,8 +133,11 @@ const useArtworkItem = ({open, initialItem, api, onError}) => {
 		}
 	}, [api, activeItem, history, historyIndex]);
 
+	// Patched: the dialog stays mounted with no item until it opens, and the item only lands in
+	// state from the effect above, a render later. That first render read the missing item and
+	// crashed, so until then the item it was opened with stands in.
 	return {
-		activeItem,
+		activeItem: activeItem || (open ? initialItem : null) || null,
 		supportedCategories,
 		remoteImages,
 		loadingCategories,

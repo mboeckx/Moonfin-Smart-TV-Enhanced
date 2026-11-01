@@ -3,7 +3,9 @@ import {getItemSubtitlePref, getSeriesSubtitlePref} from '../../services/subtitl
 
 jest.mock('../../services/subtitlePrefs', () => ({
 	getItemSubtitlePref: jest.fn(),
-	getSeriesSubtitlePref: jest.fn()
+	getSeriesSubtitlePref: jest.fn(),
+	// Patched: no series-page override in these cases.
+	getSeriesTrackOverride: jest.fn(async () => ({}))
 }));
 
 const eng = {index: 1, language: 'eng', isForced: false, isDefault: true};

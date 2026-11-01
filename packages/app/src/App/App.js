@@ -49,6 +49,9 @@ import AccountModal from '../components/AccountModal';
 import ExitDialog from '../components/ExitDialog';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Screensaver from '../components/Screensaver';
+import {clearLibraryStates, forgetLibraryItem, noteVisitedItem} from '../services/libraryReturnState';
+import {forgetCachedListItem} from '../services/libraryListCache';
+import {addToWatchlist} from '../services/watchlistPlaylist';
 import SeasonalTheme from '../components/SeasonalTheme';
 import NoConnection from '../components/NoConnection/NoConnection';
 import SyncPlayDialog from '../components/SyncPlayDialog';
@@ -249,6 +252,9 @@ const AppContent = (props) => {
 	const [isPlayerPaused, setIsPlayerPaused] = useState(false);
 	const [trailerPreviewActive, setTrailerPreviewActive] = useState(false);
 	const [panelHistory, setPanelHistory] = useState([]);
+	// Patched: whether the panel on screen was reached with back, which is when a library
+	// screen picks up where it was left.
+	const [enteredByBack, setEnteredByBack] = useState(false);
 	const [seerrBrowse, setSeerrBrowse] = useState(null);
 	const [seerrPerson, setSeerrPerson] = useState(null);
 	const [authChecked, setAuthChecked] = useState(false);
@@ -270,6 +276,8 @@ const AppContent = (props) => {
 	const cleanupHandlersRef = useRef(null);
 	const backHandlerRef = useRef(null);
 	const itemMenuBackRef = useRef(null);
+	// Patched: how the app opens the artwork dialog for the title on the screensaver.
+	const itemMenuControlsRef = useRef(null);
 	const detailsItemStackRef = useRef([]);
 	// Play from a card's menu opens the item's screen, which starts it once it knows what to play.
 	const [detailsAutoPlay, setDetailsAutoPlay] = useState(false);
@@ -678,6 +686,7 @@ const AppContent = (props) => {
 				return newHistory;
 			});
 		}
+		setEnteredByBack(false);
 		showPanel(panel);
 	}, [panelIndex, showPanel]);
 
@@ -691,11 +700,25 @@ const AppContent = (props) => {
 		if (panelHistory.length > 0) {
 			const prevPanel = panelHistory[panelHistory.length - 1];
 			setPanelHistory(prev => prev.slice(0, -1));
+			setEnteredByBack(true);
 			setPanelIndex(prevPanel);
 		} else if (panelIndex > PANELS.BROWSE) {
+			setEnteredByBack(true);
 			setPanelIndex(PANELS.BROWSE);
 		}
 	}, [panelHistory, panelIndex]);
+
+	// Patched: reaching the home screen, by back or the home button, starts every library over.
+	useEffect(() => {
+		if (panelIndex === PANELS.BROWSE) clearLibraryStates();
+	}, [panelIndex]);
+
+	// A title deleted from its page leaves the remembered library grid before back returns to it.
+	const handleItemDeleted = useCallback(() => {
+		forgetLibraryItem(selectedItem?.Id);
+		forgetCachedListItem(selectedItem?.Id);
+		handleBack();
+	}, [selectedItem, handleBack]);
 
 	useEffect(() => {
 		const handleKeyDown = (e) => {
@@ -830,6 +853,7 @@ const AppContent = (props) => {
 
 	const handleSelectItem = useCallback((item) => {
 		setDetailsAutoPlay(false);
+		noteVisitedItem(item?.Id);
 		// A channel has no details worth landing on, so it tunes straight away.
 		if (isLiveTvChannel(item)) {
 			handlePlayChannel(item);
@@ -868,6 +892,47 @@ const AppContent = (props) => {
 	}, [handleSelectItem]);
 
 	const handleAutoPlayed = useCallback(() => setDetailsAutoPlay(false), []);
+
+	// Patched: OK on the screensaver does what the setting says with the title on screen. Play
+	// goes through its details page, so a series picks its next episode and a started film
+	// resumes; back from the player then lands on that page. Wake only clears the screensaver,
+	// and in every case the press stays away from whatever had focus underneath.
+	const handleScreensaverEnter = useCallback((item) => {
+		dismissScreensaver();
+		const action = settings.screensaverEnterAction || 'play';
+		if (action === 'details') handleSelectItem(item);
+		else if (action === 'play') handlePlayFromMenu(item);
+	}, [dismissScreensaver, handlePlayFromMenu, handleSelectItem, settings.screensaverEnterAction]);
+
+	// Patched: yellow opens the artwork dialog for the title on the screensaver, green puts it
+	// on the Watchlist playlist. What comes back is shown over the screensaver; green leaves the
+	// screensaver running, yellow closes it to show the dialog.
+	const handleScreensaverColorKey = useCallback(async (color, item) => {
+		const name = item?.Name || $L('This title');
+		if (color === 'yellow') {
+			const controls = itemMenuControlsRef.current;
+			if (!controls || !controls.canChangeArtwork(item)) return $L('Only administrators can change artwork');
+			dismissScreensaver();
+			controls.openArtwork(item);
+			return null;
+		}
+		if (color === 'green') {
+			try {
+				const {status, entry, listName} = await addToWatchlist(api, item);
+				const list = $L(listName);
+				const episode = item.Type === 'Series' && entry
+					? ` (S${entry.ParentIndexNumber || 0}E${entry.IndexNumber || 0})`
+					: '';
+				if (status === 'already') return $L('{name} is already on {list}').replace('{name}', name).replace('{list}', list);
+				if (status === 'nothing') return $L('No episode of {name} to add to {list}').replace('{name}', name).replace('{list}', list);
+				return $L('Added to {list}: {name}').replace('{list}', list).replace('{name}', name + episode);
+			} catch (err) {
+				console.error('[Screensaver] Watchlist add failed:', err);
+				return $L('Couldn\'t add {name} to a watchlist').replace('{name}', name);
+			}
+		}
+		return null;
+	}, [api, dismissScreensaver]);
 
 	const handleViewPhoto = useCallback((item, siblings) => {
 		setPhotoViewerItem(item);
@@ -1186,6 +1251,7 @@ const AppContent = (props) => {
 
 	const handleHome = useCallback(() => {
 		setPanelHistory([]);
+		setEnteredByBack(false);
 		setSelectedItem(null);
 		setSelectedLibrary(null);
 		setSelectedPerson(null);
@@ -1574,7 +1640,7 @@ const AppContent = (props) => {
 					onFriends={handleOpenFriends}
 				/>
 			) : null}
-			<ItemMenuProvider onPlay={handlePlayFromMenu} onOpenItem={handleSelectItem} backRef={itemMenuBackRef}>
+			<ItemMenuProvider onPlay={handlePlayFromMenu} onOpenItem={handleSelectItem} backRef={itemMenuBackRef} controlsRef={itemMenuControlsRef}>
 				<Suspense fallback={<PanelLoader />}>
 					<Panels index={panelIndex} noCloseButton noAnimation>
 						<Panel>
@@ -1608,7 +1674,7 @@ const AppContent = (props) => {
 									onSelectItem={handleSelectItem}
 									onSelectPerson={handleSelectPerson}
 									onSelectStudio={handleSelectStudio}
-									onItemDeleted={handleBack}
+									onItemDeleted={handleItemDeleted}
 									autoPlay={detailsAutoPlay}
 									onAutoPlayed={handleAutoPlayed}
 									seerrNav={seerrNav}
@@ -1626,6 +1692,7 @@ const AppContent = (props) => {
 								onViewPhoto={handleViewPhoto}
 								onHome={handleHome}
 									backHandlerRef={backHandlerRef}
+									restoreOnMount={enteredByBack}
 							/>
 							)}
 						</Panel>
@@ -1912,6 +1979,9 @@ const AppContent = (props) => {
 				timeOffsetHours={settings.timeOffsetHours}
 				maxRating={settings.screensaverAgeFilter ? settings.screensaverMaxRating : null}
 				onDismiss={dismissScreensaver}
+				onPlayItem={panelIndex === PANELS.PLAYER ? undefined : handleScreensaverEnter}
+				onColorKey={panelIndex === PANELS.PLAYER ? undefined : handleScreensaverColorKey}
+				shuffleLibrary={settings.screensaverShuffleLibrary !== false}
 				serverUrl={serverUrl}
 			/>
 			{/* Home only, and unmounted under the screensaver and the full screen overlays so it

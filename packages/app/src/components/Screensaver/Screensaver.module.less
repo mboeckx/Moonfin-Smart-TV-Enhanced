@@ -283,3 +283,22 @@
 	87.5% { opacity: 0.146; }
 	100% { opacity: 0.5; }
 }
+
+// Patched: what a coloured key did, shown over the screensaver for a few seconds.
+.notice {
+	position: absolute;
+	left: 50%;
+	bottom: 8%;
+	transform: translateX(-50%);
+	z-index: 20;
+	max-width: 70%;
+	padding: 18px 36px;
+	border-radius: 40px;
+	background: rgba(0, 0, 0, 0.75);
+	color: #fff;
+	font-size: 30px;
+	text-align: center;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}

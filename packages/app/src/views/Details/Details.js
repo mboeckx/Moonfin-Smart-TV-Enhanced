@@ -40,6 +40,7 @@ import DetailScrollPage from './DetailScrollPage';
 import DetailBackdrop from './DetailBackdrop';
 import DetailActionButtons from './DetailActionButtons';
 import DetailTrackModals from './DetailTrackModals';
+import useSeriesTrackOverride from './useSeriesTrackOverride';
 import DetailDialogs from './DetailDialogs';
 import SeerrDialogs from './SeerrDialogs';
 import TrailerOverlay from './TrailerOverlay';
@@ -200,6 +201,8 @@ const Details = ({itemId: itemIdProp, initialItem, onPlay, onSelectItem, onSelec
 	const spotlightBackRef = useRef(null);
 	const trailerBackRef = useRef(null);
 	const modals = useDetailsModals({backHandlerRef, onArtworkClosed: refreshItem, seerrBackRef, overviewBackRef, spotlightBackRef, trailerBackRef});
+	// Patched: a series' own audio and subtitle language, picked from its page.
+	const seriesTrack = useSeriesTrackOverride({item, api: effectiveApi, openModal: modals.openModal, closeModal: modals.closeModal});
 	const {activeModal, openModal, closeModal, advancedResumeRef} = modals;
 
 	const trailer = useDetailsTrailer({
@@ -1009,6 +1012,7 @@ const Details = ({itemId: itemIdProp, initialItem, onPlay, onSelectItem, onSelec
 				remoteSubtitleError={remoteSubtitleError}
 				remoteSubtitleResults={remoteSubtitleResults}
 				onSelectRemoteSubtitle={handleSelectRemoteSubtitle}
+				seriesTrack={seriesTrack}
 			/>
 			{trailerLayer}
 			<DetailDialogs
@@ -1034,6 +1038,35 @@ const Details = ({itemId: itemIdProp, initialItem, onPlay, onSelectItem, onSelec
 			<SeerrDialogs seerr={seerr} title={item.Name} />
 		</>
 	);
+
+	// Patched: every layout opens a playlist on its own page, which has the poster view and
+	// sorting. The other layouts only showed a playlist as a plain list of names.
+	if (isPlaylist) {
+		const toast = toastMessage
+			? <div className={css.toast} onAnimationEnd={handleToastEnd}>{toastMessage}</div>
+			: null;
+		return (
+			<DetailScrollPage backdrop={backdrop} scrollerRef={pageScrollerRef} onScrollTo={handlePageScrollTo} sidebarDocked={sidebarDocked} footer={<>{toast}{overlays}</>}>
+				<PlaylistScreen
+					item={item}
+					serverUrl={effectiveServerUrl}
+					showsSection={showsSection}
+					posterUrl={posterUrl}
+					genres={genres}
+					playlistItems={playlistItems}
+					onPlay={handlePlay}
+					onShuffle={handlePlaylistShuffle}
+					onToggleFavorite={handleToggleFavorite}
+					onItemSelect={handlePlaylistItemSelect}
+					playlistMenu={playlistMenu}
+					onItemKeyDown={handlePlaylistItemKeyDown}
+					onFocusRow={handleButtonRowFocus}
+					onOpenItem={onSelectItem}
+					onDelete={item.CanDelete ? modals.handleOpenDeleteDialog : null}
+				/>
+			</DetailScrollPage>
+		);
+	}
 
 	if (settings.detailScreenStyle !== 'v1') {
 		const DetailContent = DETAIL_CONTENT[settings.detailScreenStyle] || ModernDetailContent;
@@ -1119,6 +1152,7 @@ const Details = ({itemId: itemIdProp, initialItem, onPlay, onSelectItem, onSelec
 					handleOpenVersionModal={modals.handleOpenVersionModal}
 					handleOpenAudioModal={modals.handleOpenAudioModal}
 					handleOpenSubtitleModal={modals.handleOpenSubtitleModal}
+					seriesTrack={seriesTrack}
 					handleOpenPlaylistModal={modals.handleOpenPlaylistModal}
 					handleOpenCollectionModal={canAddToCollection ? modals.handleOpenCollectionModal : null}
 					handleOpenIdentifyModal={canIdentify ? modals.handleOpenIdentifyModal : null}
@@ -1182,31 +1216,6 @@ const Details = ({itemId: itemIdProp, initialItem, onPlay, onSelectItem, onSelec
 					onToggleWatched={handleToggleWatched}
 					onToggleFavorite={handleToggleFavorite}
 					onEpisodeSelect={handleEpisodeSelect}
-					onFocusRow={handleButtonRowFocus}
-				/>
-			</DetailScrollPage>
-		);
-	}
-
-	if (isPlaylist) {
-		const toast = toastMessage
-			? <div className={css.toast} onAnimationEnd={handleToastEnd}>{toastMessage}</div>
-			: null;
-		return (
-			<DetailScrollPage backdrop={backdrop} scrollerRef={pageScrollerRef} onScrollTo={handlePageScrollTo} sidebarDocked={sidebarDocked} footer={toast}>
-				<PlaylistScreen
-					item={item}
-					serverUrl={effectiveServerUrl}
-					showsSection={showsSection}
-					posterUrl={posterUrl}
-					genres={genres}
-					playlistItems={playlistItems}
-					onPlay={handlePlay}
-					onShuffle={handlePlaylistShuffle}
-					onToggleFavorite={handleToggleFavorite}
-					onItemSelect={handlePlaylistItemSelect}
-					playlistMenu={playlistMenu}
-					onItemKeyDown={handlePlaylistItemKeyDown}
 					onFocusRow={handleButtonRowFocus}
 				/>
 			</DetailScrollPage>
@@ -1309,6 +1318,7 @@ const Details = ({itemId: itemIdProp, initialItem, onPlay, onSelectItem, onSelec
 			onOpenVersionModal={modals.handleOpenVersionModal}
 			onOpenAudioModal={modals.handleOpenAudioModal}
 			onOpenSubtitleModal={modals.handleOpenSubtitleModal}
+			seriesTrack={seriesTrack}
 			onTrailer={trailer.handleTrailer}
 			onToggleWatched={handleToggleWatched}
 			onToggleFavorite={handleToggleFavorite}

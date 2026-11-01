@@ -16,10 +16,14 @@ export const CurrentArtworkCard = ({serverUrl, itemId, category, tag, index, siz
 		onRequestDelete?.(category, getDeleteIndex(category, index));
 	}, [onRequestDelete, category, index]);
 
+	// Patched: backdrops are a list, and the server answers a request without a position with
+	// the first one, so every card showed the first backdrop. The position picks the right one.
+	const imagePath = category === 'Backdrop' && index != null ? `Backdrop/${index}` : category;
+
 	return (
 		<SpottableDiv className={`${css.cardWrapper} ${sizeClass}`}>
 			<img
-				src={getImageUrl(serverUrl, itemId, category, {maxWidth: 400, tag})}
+				src={getImageUrl(serverUrl, itemId, imagePath, {maxWidth: 400, tag})}
 				className={css.cardImg}
 				alt=""
 			/>

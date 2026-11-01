@@ -1,0 +1,55 @@
+name: Build TV patches
+
+# Tests and builds the Tizen packages from tv-patches and puts them on the
+# "tv-patches-latest" release.
+
+on:
+  push:
+    branches: [tv-patches]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-tv-patches
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tv-patches
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --force
+
+      - name: Run tests
+        working-directory: packages/app
+        run: npx enact test
+
+      - name: Build Tizen (all variants)
+        run: npm run build:tizen:all
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=tv-patches-latest
+          notes="Built from tv-patches at $(git rev-parse --short HEAD) on $(date -u +'%Y-%m-%d %H:%M UTC'). See FORK.md for what's changed."
+          # Start the release over so packages from an older version number don't linger.
+          gh release delete "$tag" --yes 2> /dev/null || true
+          gh release create "$tag" Moonfin_Tizen_*.wgt --title "TV patches (latest)" --notes "$notes" --prerelease --target "$(git rev-parse HEAD)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tizen-tv-patches
+          path: Moonfin_Tizen_*.wgt

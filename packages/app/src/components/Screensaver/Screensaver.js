@@ -1,7 +1,8 @@
-import {useState, useEffect, useRef, useCallback} from 'react';
+import {useState, useEffect, useRef, useCallback, useMemo} from 'react';
 import {getImageUrl, getBackdropId, getLogoUrl} from '../../utils/helpers';
 import {autocropLogoUrl} from '../../utils/logoAutocrop';
 import {formatClockTime, shiftedNow} from '../../utils/clock';
+import {KEYS} from '../../utils/keys';
 import * as jellyfinApi from '../../services/jellyfinApi';
 import ScreensaverGradient, {isGradientBackdrop} from './ScreensaverGradient';
 import ScreensaverRunner from './ScreensaverRunner';
@@ -12,6 +13,10 @@ const BOUNCE_MARGIN = 20;
 const BACKDROP_INTERVAL = 30000;
 const BACKDROP_BATCH_SIZE = 60;
 const RUNNER_BASE_SIZE = 96;
+// Patched: only the Tizen key table names the colour keys, and 404 and 405 are what Samsung and
+// LG remotes send for green and yellow, so those stand in elsewhere.
+const GREEN_KEY = KEYS.GREEN || 404;
+const YELLOW_KEY = KEYS.YELLOW || 405;
 
 const SORT_FIELDS = ['DateCreated', 'CommunityRating'];
 const SORT_ORDERS = ['Descending', 'Ascending'];
@@ -52,7 +57,37 @@ const viewMatchesContentType = (collectionType, contentType) => {
 	return LIBRARY_TYPES.indexOf(collectionType) !== -1;
 };
 
-const loadBackdropBatch = async ({contentType, libraryIds, collectionIds, excludedGenres, maxRating}) => {
+// Patched: titles shown lately, kept for as long as the app runs, so shuffling the whole
+// library doesn't bring the same one back within a session.
+const RECENT_LIMIT = 150;
+const recentlyShown = [];
+const rememberShown = (id) => {
+	if (!id) return;
+	const at = recentlyShown.indexOf(id);
+	if (at !== -1) recentlyShown.splice(at, 1);
+	recentlyShown.push(id);
+	if (recentlyShown.length > RECENT_LIMIT) recentlyShown.shift();
+};
+export const forgetRecentlyShown = () => { recentlyShown.length = 0; };
+
+// The backdrop to show for an item: a random one of its own when it has several, otherwise
+// its parent's. The tag goes in the url so the server lets the TV cache the picture.
+export const pickBackdrop = (item, randomIndex) => {
+	if (!item) return null;
+	const own = item.BackdropImageTags || [];
+	if (own.length > 0) {
+		const index = randomIndex ? Math.floor(Math.random() * own.length) : 0;
+		return {id: item.Id, index, tag: own[index]};
+	}
+	const parent = item.ParentBackdropImageTags || [];
+	if (item.ParentBackdropItemId && parent.length > 0) {
+		const index = randomIndex ? Math.floor(Math.random() * parent.length) : 0;
+		return {id: item.ParentBackdropItemId, index, tag: parent[index]};
+	}
+	return null;
+};
+
+const loadBackdropBatch = async ({contentType, libraryIds, collectionIds, excludedGenres, maxRating, shuffleLibrary}) => {
 	let parentIds = libraryIds.concat(collectionIds).filter(Boolean);
 	if (parentIds.length === 0) {
 		const views = await jellyfinApi.api.getAllLibraries();
@@ -62,12 +97,14 @@ const loadBackdropBatch = async ({contentType, libraryIds, collectionIds, exclud
 			.filter(Boolean);
 	}
 
+	// Shuffle asks the server for a random draw from the whole library. The original way
+	// sorts by date added or rating and reads near one end, which never reaches the middle.
 	const query = {
 		IncludeItemTypes: includeItemTypesFor(contentType),
 		ExcludeItemTypes: 'BoxSet',
 		Recursive: true,
-		SortBy: pickOne(SORT_FIELDS),
-		SortOrder: pickOne(SORT_ORDERS),
+		SortBy: shuffleLibrary ? 'Random' : pickOne(SORT_FIELDS),
+		SortOrder: shuffleLibrary ? 'Ascending' : pickOne(SORT_ORDERS),
 		Limit: BACKDROP_BATCH_SIZE,
 		Fields: ITEM_FIELDS,
 		EnableTotalRecordCount: false,
@@ -77,7 +114,7 @@ const loadBackdropBatch = async ({contentType, libraryIds, collectionIds, exclud
 		query.MaxOfficialRating = RATING_MAP[maxRating];
 	}
 
-	const startIndex = pickOne(START_OFFSETS);
+	const startIndex = shuffleLibrary ? 0 : pickOne(START_OFFSETS);
 
 	const fetchFrom = async (parentId) => {
 		const run = (start) => {
@@ -102,6 +139,14 @@ const loadBackdropBatch = async ({contentType, libraryIds, collectionIds, exclud
 		return !(item.Genres || []).some(genre => excluded.indexOf(genre) !== -1);
 	});
 
+	if (shuffleLibrary) {
+		// Fresh titles first. A small library runs out of them, so the recent ones fill in
+		// behind rather than leaving the screen empty.
+		const fresh = items.filter(item => recentlyShown.indexOf(item.Id) === -1);
+		const recent = items.filter(item => recentlyShown.indexOf(item.Id) !== -1);
+		return fresh.concat(recent).slice(0, BACKDROP_BATCH_SIZE);
+	}
+
 	return items.slice(0, BACKDROP_BATCH_SIZE);
 };
 
@@ -121,6 +166,9 @@ const Screensaver = ({
 	timeOffsetHours = 0,
 	maxRating = null,
 	onDismiss,
+	onPlayItem,
+	onColorKey,
+	shuffleLibrary = true,
 	serverUrl
 }) => {
 	const showLibrary = backdrop === 'library';
@@ -141,6 +189,11 @@ const Screensaver = ({
 	const facingRef = useRef(false);
 
 	const [currentItem, setCurrentItem] = useState(null);
+	// Picked once per title shown, so a re-render doesn't swap the picture mid-fade.
+	const currentBackdrop = useMemo(() => pickBackdrop(currentItem, shuffleLibrary), [currentItem, shuffleLibrary]);
+	useEffect(() => {
+		if (shuffleLibrary && currentItem) rememberShown(currentItem.Id);
+	}, [currentItem, shuffleLibrary]);
 	const [backdropVisible, setBackdropVisible] = useState(false);
 	const [batchReady, setBatchReady] = useState(false);
 	const [croppedLogoUrl, setCroppedLogoUrl] = useState(null);
@@ -205,7 +258,8 @@ const Screensaver = ({
 			libraryIds: libraryKey ? libraryKey.split(',') : [],
 			collectionIds: collectionKey ? collectionKey.split(',') : [],
 			excludedGenres: genreKey ? genreKey.split(',') : [],
-			maxRating
+			maxRating,
+			shuffleLibrary
 		};
 
 		const fetchItems = async () => {
@@ -229,7 +283,7 @@ const Screensaver = ({
 			cancelled = true;
 			clearTimeout(initialTimer);
 		};
-	}, [visible, showLibrary, serverUrl, contentType, libraryKey, collectionKey, genreKey, maxRating]);
+	}, [visible, showLibrary, serverUrl, contentType, libraryKey, collectionKey, genreKey, maxRating, shuffleLibrary]);
 
 	useEffect(() => {
 		if (!visible || !showLibrary || !serverUrl || !batchReady) return;
@@ -239,7 +293,8 @@ const Screensaver = ({
 			libraryIds: libraryKey ? libraryKey.split(',') : [],
 			collectionIds: collectionKey ? collectionKey.split(',') : [],
 			excludedGenres: genreKey ? genreKey.split(',') : [],
-			maxRating
+			maxRating,
+			shuffleLibrary
 		};
 
 		const cycle = async () => {
@@ -271,7 +326,7 @@ const Screensaver = ({
 				clearInterval(backdropTimerRef.current);
 			}
 		};
-	}, [visible, showLibrary, serverUrl, batchReady, contentType, libraryKey, collectionKey, genreKey, maxRating]);
+	}, [visible, showLibrary, serverUrl, batchReady, contentType, libraryKey, collectionKey, genreKey, maxRating, shuffleLibrary]);
 
 	useEffect(() => {
 		if (!visible || !bounces || !box || !boxRef.current) return;
@@ -287,6 +342,71 @@ const Screensaver = ({
 		});
 	}, [visible, bounces, box, scale, speedMultiplier, rendered]);
 
+	// Patched: OK on a showing backdrop plays that title. The press is held back from the
+	// screen underneath, keyup included, so it doesn't also click whatever had focus there.
+	const shownItemRef = useRef(null);
+	shownItemRef.current = currentItem && backdropVisible ? currentItem : null;
+	const onPlayItemRef = useRef(onPlayItem);
+	onPlayItemRef.current = onPlayItem;
+	const onDismissRef = useRef(onDismiss);
+	onDismissRef.current = onDismiss;
+	const onColorKeyRef = useRef(onColorKey);
+	onColorKeyRef.current = onColorKey;
+
+	// Patched: a short message over the screensaver, for what a coloured key did.
+	const [notice, setNotice] = useState(null);
+	const noticeTimerRef = useRef(null);
+	const showNotice = useCallback((message) => {
+		if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+		setNotice({message, key: Date.now()});
+		noticeTimerRef.current = setTimeout(() => setNotice(null), 3500);
+	}, []);
+	useEffect(() => () => { if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current); }, []);
+	useEffect(() => { if (!visible) setNotice(null); }, [visible]);
+	const visibleRef = useRef(visible);
+	visibleRef.current = visible;
+	const swallowEnterUpRef = useRef(false);
+
+	// Registered once on mount, which puts it ahead of the inactivity listener the app adds
+	// after its children mount, so the screensaver is still on screen when this reads it.
+	useEffect(() => {
+		const isEnter = (e) => (e.keyCode || e.which) === KEYS.ENTER;
+		const handleKeyDown = (e) => {
+			// Patched: yellow and green act on the title on screen. The press stops here, before
+			// the inactivity listener sees it, so the screensaver stays up unless the action
+			// itself closes it.
+			const code = e.keyCode || e.which;
+			if (visibleRef.current && onColorKeyRef.current && shownItemRef.current && (code === GREEN_KEY || code === YELLOW_KEY)) {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				const color = code === GREEN_KEY ? 'green' : 'yellow';
+				Promise.resolve(onColorKeyRef.current(color, shownItemRef.current))
+					.then((message) => { if (message && visibleRef.current) showNotice(message); })
+					.catch(() => {});
+				return;
+			}
+			if (!visibleRef.current || !onPlayItemRef.current || !isEnter(e)) return;
+			e.preventDefault();
+			e.stopPropagation();
+			swallowEnterUpRef.current = true;
+			const item = shownItemRef.current;
+			if (item) onPlayItemRef.current(item);
+			else if (onDismissRef.current) onDismissRef.current();
+		};
+		const handleKeyUp = (e) => {
+			if (!swallowEnterUpRef.current || !isEnter(e)) return;
+			swallowEnterUpRef.current = false;
+			e.preventDefault();
+			e.stopPropagation();
+		};
+		window.addEventListener('keydown', handleKeyDown, true);
+		window.addEventListener('keyup', handleKeyUp, true);
+		return () => {
+			window.removeEventListener('keydown', handleKeyDown, true);
+			window.removeEventListener('keyup', handleKeyUp, true);
+		};
+	}, [showNotice]);
+
 	const handleInteraction = useCallback((e) => {
 		e.preventDefault();
 		e.stopPropagation();
@@ -298,8 +418,9 @@ const Screensaver = ({
 	const dimmingAlpha = Math.max(0, Math.min(100, dimmingLevel)) / 100;
 	const clockAlpha = 1 - (dimmingAlpha * 0.7);
 
-	const backdropId = currentItem ? getBackdropId(currentItem) : null;
-	const backdropUrl = backdropId ? getImageUrl(serverUrl, backdropId, 'Backdrop', {maxWidth: 1920, quality: 80}) : null;
+	const backdropUrl = currentBackdrop
+		? getImageUrl(serverUrl, currentBackdrop.id, `Backdrop/${currentBackdrop.index}`, {maxWidth: 1920, quality: 80, tag: currentBackdrop.tag})
+		: null;
 	const displayLogoUrl = croppedLogoUrl || currentItemLogoUrl;
 
 	const renderComponent = () => {
@@ -357,6 +478,8 @@ const Screensaver = ({
 			)}
 
 			{isGradientBackdrop(backdrop) && <ScreensaverGradient backdrop={backdrop} />}
+
+			{notice && <div key={notice.key} className={css.notice}>{notice.message}</div>}
 
 			{showLibrary && !backdropUrl && (
 				<div className={css.logoContainerCentered}>

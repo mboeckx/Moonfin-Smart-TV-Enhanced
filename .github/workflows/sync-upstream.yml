@@ -1,0 +1,93 @@
+name: Sync upstream
+
+# Copies Moonfin-Client/Smart-TV main onto this fork's main and merges it into tv-patches.
+# On a merge conflict nothing is pushed and an issue is opened instead.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      merged: ${{ steps.merge.outputs.merged }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tv-patches
+          fetch-depth: 0
+          # GITHUB_TOKEN may not push changes to .github/workflows. If upstream edits its
+          # workflows, add a personal access token with the "workflow" scope as SYNC_TOKEN.
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/Moonfin-Client/Smart-TV.git
+          git fetch upstream main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Mirror upstream main
+        run: git push origin upstream/main:refs/heads/main --force
+
+      - name: Merge into tv-patches
+        id: merge
+        run: |
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Already up to date."
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git merge --no-edit upstream/main -m "Merge upstream $(git rev-parse --short upstream/main) into tv-patches"; then
+            git push origin HEAD:tv-patches
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only --diff-filter=U > conflicts.txt
+            git merge --abort
+            echo "merged=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open an issue on conflict
+        if: steps.merge.outputs.merged == 'conflict'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Upstream merge needs a hand"
+          if gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number' | grep -q .; then
+            echo "Issue already open."
+            exit 0
+          fi
+          {
+            echo "Upstream \`main\` ($(git rev-parse --short upstream/main)) could not be merged into \`tv-patches\` automatically."
+            echo
+            echo "Files with conflicts:"
+            sed 's/^/- `/; s/$/`/' conflicts.txt
+            echo
+            echo "To fix it on your computer:"
+            echo '```sh'
+            echo 'git checkout tv-patches'
+            echo 'git fetch upstream'
+            echo 'git merge upstream/main   # resolve the files above'
+            echo 'git push origin tv-patches'
+            echo '```'
+            echo "Close this issue once it's pushed."
+          } > body.md
+          gh issue create --title "$title" --body-file body.md
+
+  build:
+    needs: sync
+    if: needs.sync.outputs.merged == 'true'
+    uses: ./.github/workflows/build-tv-patches.yml
+    permissions:
+      contents: write

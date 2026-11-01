@@ -116,6 +116,13 @@ export const getUiScaleOptions = () => [
 	{ value: 1.3, label: $L('Maximum') }
 ];
 
+// Patched: what OK does while the screensaver shows a title.
+export const getScreensaverEnterOptions = () => [
+	{ value: 'play', label: $L('Play') },
+	{ value: 'details', label: $L('Open Details') },
+	{ value: 'wake', label: $L('Wake Only') }
+];
+
 export const getScreensaverBackdropOptions = () => [
 	{ value: 'library', label: $L('Library Art') },
 	{ value: 'black', label: $L('Black') },
