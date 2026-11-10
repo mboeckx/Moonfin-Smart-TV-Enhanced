@@ -10,6 +10,7 @@
 import {
 	permittedFromPolicy, keepPermitted, scopeLibraries, mergeResponses
 } from '../utils/libraryScopeRules';
+import {archiveExcludes} from './archiveApi';
 
 // Keyed by server and user, so a switch between either reads the new one rather than the old.
 const sessions = new Map();
@@ -67,7 +68,9 @@ export const visibleLibraryIds = async (api, includeItemTypes) => {
 	if (!canRead(api)) return null;
 
 	const user = await readUser(api);
-	const excludes = user?.Configuration?.MyMediaExcludes || [];
+	// The archive library is left out of every sweep too. It has its own screen, and that's the
+	// only place its titles are meant to turn up.
+	const excludes = [...(user?.Configuration?.MyMediaExcludes || []), ...(await archiveExcludes(api))];
 	// Nothing hidden means nothing to narrow, and no reason to ask for the views at all.
 	if (excludes.length === 0) return null;
 

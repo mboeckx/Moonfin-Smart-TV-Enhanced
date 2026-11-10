@@ -15,6 +15,7 @@ import {buildCollectionIndex, collectionPlaylistItems, fetchCollectionPage, inde
 import {DEFAULT_SORT, SORT_CUSTOM, mergeSavedOrder, orderCollectionIndex} from './nouveau/nouveauCollectionSort';
 import {sectionVisibility} from '../../utils/detailSectionLayout';
 import {withPersonRoles} from '../../utils/personCredits';
+import {withoutArchivedForPerson} from '../../services/archiveApi';
 import {isBlocked as isContentBlocked, isBlockedNow, observeItem} from '../../services/blockedContentGate';
 import {getActiveParentalFilter, withoutBlockedItems} from '../../services/parentalControls';
 import * as userDataSync from '../../services/userDataSync';
@@ -525,7 +526,11 @@ const useDetailsItem = ({itemId, initialItem, effectiveApi, effectiveServerUrl, 
 
 				if (data.Type === 'Person') {
 					const filmography = await effectiveApi.getItemsByPerson(itemId, 50).catch(() => null);
-					if (filmography) setSimilar(tagWithServerInfo(withPersonRoles(withoutBlockedItems(filmography.Items || []), itemId)));
+					if (filmography) {
+						// The Archive plugin can keep archived titles off a person's page.
+						const shown = await withoutArchivedForPerson(effectiveApi, itemId, withoutBlockedItems(filmography.Items || []));
+						if (!cancelled) setSimilar(tagWithServerInfo(withPersonRoles(shown, itemId)));
+					}
 				}
 			};
 

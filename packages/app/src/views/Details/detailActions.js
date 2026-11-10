@@ -58,7 +58,8 @@ export const detailActionCatalogue = (props) => {
 		showsPersonalRating, personalRatingStyle, handleOpenRatingDialog,
 		handleOpenVersionModal, handleOpenAudioModal, handleOpenSubtitleModal, handleOpenPlaylistModal,
 		handleOpenCollectionModal, handleOpenDeleteDialog, handleOpenIdentifyModal,
-		canChangeArtwork, handleOpenArtworkModal, handleOpenPersonDisplayModal, handleKeepAsComplete
+		canChangeArtwork, handleOpenArtworkModal, handleOpenPersonDisplayModal, handleKeepAsComplete,
+		handleArchive, isArchived, archiveBusy
 	} = props;
 
 	// Asking and taking back are separate buttons sharing one arrangement
@@ -117,6 +118,7 @@ export const detailActionCatalogue = (props) => {
 		{id: 'playlist', when: !isPerson, render: () => <ActionButton path={DETAIL_ICON_PATHS.playlist} label={$L('Add to Playlist')} onClick={handleOpenPlaylistModal} />},
 		{id: 'collection', when: Boolean(handleOpenCollectionModal), render: () => <ActionButton path={DETAIL_ICON_PATHS.collection} label={$L('Add to Collection')} onClick={handleOpenCollectionModal} />},
 		{id: 'deleteFiles', when: item.CanDelete, render: () => <ActionButton path={DETAIL_ICON_PATHS.delete} label={$L('Delete')} onClick={handleOpenDeleteDialog} />},
+		{id: 'archive', when: Boolean(handleArchive), render: () => <ActionButton path={isArchived ? DETAIL_ICON_PATHS.unarchive : DETAIL_ICON_PATHS.archive} label={archiveBusy ? $L('Moving…') : isArchived ? $L('Restore from Archive') : $L('Move to Archive')} active={archiveBusy} onClick={handleArchive} spotlightId="details-archive-btn" />},
 		{id: 'artwork', when: canChangeArtwork, render: () => <ActionButton path={DETAIL_ICON_PATHS.artwork} label={$L('Change Artwork')} onClick={handleOpenArtworkModal} spotlightId="details-artwork-btn" />},
 		{id: 'seerrWatchlist', when: seerr.showsWatchlist, render: () => <ActionButton path={seerr.onWatchlist ? DETAIL_ICON_PATHS.watchlistOn : DETAIL_ICON_PATHS.watchlist} label={seerr.onWatchlist ? $L('On Watchlist') : $L('Add to Watchlist')} active={seerr.onWatchlist} onClick={seerr.toggleWatchlist} />},
 		{id: 'seerrReportIssue', when: seerr.showsReportIssue, render: () => <ActionButton path={DETAIL_ICON_PATHS.reportIssue} label={$L('Report Issue')} onClick={seerr.handleReportIssueClick} />},

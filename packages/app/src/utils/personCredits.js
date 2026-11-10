@@ -93,14 +93,52 @@ export const splitFilmography = (items, showsSection = SHOWS_EVERYTHING, sortOpt
 	return {movies, series, guestAppearances, musicVideos};
 };
 
-// What the person plays in each title rides along as the card's second line,
-// and the rest of the cast is let go. Several roles arrive one per line.
+// What the person did on a title, as one line for its card: the character an actor played, or the
+// job for anyone in the crew. Several roles arrive one per line, and somebody both in front of and
+// behind the camera gets both.
+const CREW_LABELS = {
+	Director: () => $L('Director'),
+	Writer: () => $L('Writer'),
+	Producer: () => $L('Producer'),
+	Composer: () => $L('Composer'),
+	Conductor: () => $L('Conductor'),
+	Lyricist: () => $L('Lyricist'),
+	Arranger: () => $L('Arranger'),
+	Engineer: () => $L('Engineer'),
+	Mixer: () => $L('Mixer'),
+	Remixer: () => $L('Remixer'),
+	Creator: () => $L('Creator'),
+	Editor: () => $L('Editor'),
+	Artist: () => $L('Artist'),
+	Illustrator: () => $L('Illustrator')
+};
+
+const ACTING_TYPES = ['Actor', 'GuestStar'];
+
+const splitRoles = (role) => String(role || '').split('\n').map((line) => line.trim()).filter(Boolean);
+
+export const personRoleLabel = (credits) => {
+	const parts = [];
+	const add = (text) => {
+		if (text && parts.indexOf(text) < 0) parts.push(text);
+	};
+	(credits || []).forEach((credit) => {
+		const roles = splitRoles(credit.Role);
+		if (ACTING_TYPES.indexOf(credit.Type) >= 0 || (!credit.Type && roles.length)) {
+			if (roles.length) add($L('as {character}').replace('{character}', roles.join(', ')));
+			return;
+		}
+		// A crew credit's role is often the job again, or a finer one like "Screenplay".
+		const job = roles.length ? roles.join(', ') : (CREW_LABELS[credit.Type] ? CREW_LABELS[credit.Type]() : credit.Type);
+		add(job);
+	});
+	return parts.join(' \u00b7 ');
+};
+
+// The role rides along on the card as its own line, and the rest of the cast is let go.
 export const withPersonRoles = (items, personId) => items.map(({People, ...item}) => {
-	const role = (People || [])
-		.filter((person) => person.Id === personId)
-		.map((person) => String(person.Role || '').split('\n').map((line) => line.trim()).filter(Boolean).join(', '))
-		.find(Boolean);
-	return role ? {...item, Subtitle: role} : item;
+	const role = personRoleLabel((People || []).filter((person) => person.Id === personId));
+	return role ? {...item, Subtitle: role, _personRole: role} : item;
 });
 
 const creditTitle = (credit) => credit.title || credit.name || credit.originalTitle || credit.originalName || '';

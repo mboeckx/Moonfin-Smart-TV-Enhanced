@@ -718,6 +718,14 @@ export const api = {
 	// Every rating the viewer gave through the plugin, as {Items: [{ItemId, Rating}]}.
 	getMyUserRatings: () => request('/Moonfin/UserRatings/Mine'),
 
+	// The Archive plugin: what the archive is and what this viewer may do with it, whether a title
+	// is in it, and moving one in or out. Moves run on the server and are followed by job.
+	getArchiveInfo: () => request('/Archive/Info'),
+	getArchiveStatus: (itemId) => request(`/Archive/Items/${itemId}`),
+	moveArchiveItem: (itemId, toArchive) =>
+		request(`/Archive/Items/${itemId}/${toArchive ? 'Archive' : 'Restore'}`, {method: 'POST'}),
+	getArchiveJob: (jobId) => request(`/Archive/Jobs/${jobId}`),
+
 	getMusicGenres: (params = {}) => {
 		const merged = {UserId: currentUser, SortBy: 'SortName', SortOrder: 'Ascending', Recursive: 'true'};
 		Object.keys(params).forEach(function (k) { merged[k] = String(params[k]); });
@@ -1233,6 +1241,12 @@ export const createApiForServer = (serverUrl, token, userId, serverTypeOverride 
 			serverRequest(`${serverUserRoutes.item(itemId)}Fields=MediaSources,MediaStreams`),
 
 		getPerson: (itemId) => serverRequest(serverUserRoutes.item(itemId)),
+
+		getArchiveInfo: () => serverRequest('/Archive/Info'),
+		getArchiveStatus: (itemId) => serverRequest(`/Archive/Items/${itemId}`),
+		moveArchiveItem: (itemId, toArchive) =>
+			serverRequest(`/Archive/Items/${itemId}/${toArchive ? 'Archive' : 'Restore'}`, {method: 'POST'}),
+		getArchiveJob: (jobId) => serverRequest(`/Archive/Jobs/${jobId}`),
 
 		getItemsByPerson: (personId, limit = 100) =>
 			serverRequest(`${serverUserRoutes.items()}PersonIds=${personId}&Recursive=true&IncludeItemTypes=Movie,Series,MusicVideo,Episode&SortBy=PremiereDate&SortOrder=Descending&Limit=${limit}&Fields=PrimaryImageAspectRatio,ProductionYear,OfficialRating,BasicSyncInfo,People`),

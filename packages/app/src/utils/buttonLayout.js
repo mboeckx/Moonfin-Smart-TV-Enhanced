@@ -35,6 +35,7 @@ export const DETAIL_BUTTONS = [
 	{id: 'playlist', label: 'Add to Playlist'},
 	{id: 'collection', label: 'Add to Collection'},
 	{id: 'deleteFiles', label: 'Delete'},
+	{id: 'archive', label: 'Archive', subtitle: 'Only shows when the Archive plugin lets you move titles'},
 	{id: 'artwork', label: 'Change Artwork'},
 	{id: 'seerrWatchlist', label: 'Watchlist'},
 	{id: 'seerrReportIssue', label: 'Report Issue'},

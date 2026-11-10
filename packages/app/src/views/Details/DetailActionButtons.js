@@ -74,6 +74,9 @@ const DetailActionButtons = ({
 	onOpenDeleteDialog,
 	onOpenIdentifyModal,
 	onKeepAsComplete,
+	onArchive,
+	isArchived,
+	archiveBusy,
 	maxVisibleButtons,
 	overflowAsMenu
 }) => {
@@ -243,6 +246,14 @@ const DetailActionButtons = ({
 					<BtnIcon path={DETAIL_ICON_PATHS.delete}/>
 				</div>
 				<span className={css.btnLabel}>{$L('Delete')}</span>
+			</SpottableDiv>
+		)},
+		{id: 'archive', when: Boolean(onArchive), render: () => (
+			<SpottableDiv className={css.btnWrapper} onClick={onArchive}>
+				<div className={css.btnAction}>
+					<BtnIcon path={isArchived ? DETAIL_ICON_PATHS.unarchive : DETAIL_ICON_PATHS.archive}/>
+				</div>
+				<span className={css.btnLabel}>{archiveBusy ? $L('Moving…') : isArchived ? $L('Restore from Archive') : $L('Move to Archive')}</span>
 			</SpottableDiv>
 		)},
 		{id: 'seerrWatchlist', when: seerr.showsWatchlist, render: () => (
