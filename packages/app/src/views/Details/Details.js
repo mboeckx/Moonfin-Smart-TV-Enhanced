@@ -1022,8 +1022,8 @@ const Details = ({
 	}, [item?.Id, showToast]);
 	const keepAsCompleteAction = incompleteRecording && canKeepAsComplete() ? handleKeepAsComplete : null;
 
-	// Archive or Restore, for the people the Archive plugin lets move titles.
-	const archive = useArchiveAction({item, effectiveApi, onSelectItem, showToast});
+	// Archive and Soft Delete, each flipping to its undo, for the people the Archive plugin gives them to.
+	const archive = useArchiveAction({item, effectiveApi, onSelectItem, onLeave: onItemDeleted, showToast});
 
 	const handleButtonRowFocus = useCallback(() => {
 		if (pageScrollToRef.current) {
@@ -1391,6 +1391,9 @@ const Details = ({
 					handleArchive={archive.handleArchive}
 					isArchived={archive.isArchived}
 					archiveBusy={archive.archiveBusy}
+					handleSoftDelete={archive.handleSoftDelete}
+					isSoftDeleted={archive.isSoftDeleted}
+					softDeleteBusy={archive.softDeleteBusy}
 					handleChapterSelect={handleChapterSelect}
 					handleEpisodePlay={handleEpisodePlay}
 					handleExtraSelect={handleExtraSelect}
@@ -1580,6 +1583,9 @@ const Details = ({
 			onArchive={archive.handleArchive}
 			isArchived={archive.isArchived}
 			archiveBusy={archive.archiveBusy}
+			onSoftDelete={archive.handleSoftDelete}
+			isSoftDeleted={archive.isSoftDeleted}
+			softDeleteBusy={archive.softDeleteBusy}
 		/>
 	);
 

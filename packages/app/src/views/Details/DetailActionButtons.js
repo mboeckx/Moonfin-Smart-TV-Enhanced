@@ -77,6 +77,9 @@ const DetailActionButtons = ({
 	onArchive,
 	isArchived,
 	archiveBusy,
+	onSoftDelete,
+	isSoftDeleted,
+	softDeleteBusy,
 	maxVisibleButtons,
 	overflowAsMenu
 }) => {
@@ -254,6 +257,14 @@ const DetailActionButtons = ({
 					<BtnIcon path={isArchived ? DETAIL_ICON_PATHS.unarchive : DETAIL_ICON_PATHS.archive}/>
 				</div>
 				<span className={css.btnLabel}>{archiveBusy ? $L('Moving…') : isArchived ? $L('Restore from Archive') : $L('Move to Archive')}</span>
+			</SpottableDiv>
+		)},
+		{id: 'softDelete', when: Boolean(onSoftDelete), render: () => (
+			<SpottableDiv className={css.btnWrapper} onClick={onSoftDelete}>
+				<div className={css.btnAction}>
+					<BtnIcon path={isSoftDeleted ? DETAIL_ICON_PATHS.undoSoftDelete : DETAIL_ICON_PATHS.softDelete}/>
+				</div>
+				<span className={css.btnLabel}>{softDeleteBusy ? $L('Moving…') : isSoftDeleted ? $L('Undo Soft Delete') : $L('Soft Delete')}</span>
 			</SpottableDiv>
 		)},
 		{id: 'seerrWatchlist', when: seerr.showsWatchlist, render: () => (

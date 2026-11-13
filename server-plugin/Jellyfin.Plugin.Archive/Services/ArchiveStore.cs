@@ -11,23 +11,26 @@ namespace Jellyfin.Plugin.Archive.Services;
 /// <summary>Where an archived title came from, so a restore can put it back.</summary>
 public class ArchiveRecord
 {
-    /// <summary>Gets or sets the top level path the title occupies in the archive.</summary>
+    /// <summary>Gets or sets the top level path the title occupies in the archive or soft delete library.</summary>
     public string ArchivePath { get; set; } = string.Empty;
 
-    /// <summary>Gets or sets the top level path it had before it was archived.</summary>
+    /// <summary>Gets or sets the top level path it had in its own library, before it was first put away.</summary>
     public string OriginalPath { get; set; } = string.Empty;
 
-    /// <summary>Gets or sets the library it was archived from.</summary>
+    /// <summary>Gets or sets the library it was first put away from.</summary>
     public Guid OriginalLibraryId { get; set; }
 
-    /// <summary>Gets or sets when it was archived.</summary>
+    /// <summary>Gets or sets when it was put where it is now.</summary>
     public DateTime ArchivedAtUtc { get; set; }
 
-    /// <summary>Gets or sets who archived it.</summary>
+    /// <summary>Gets or sets who put it there.</summary>
     public Guid ArchivedBy { get; set; }
 
     /// <summary>Gets or sets the title, for the log and the settings page.</summary>
     public string Name { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets where it is now.</summary>
+    public Place Place { get; set; } = Place.Archive;
 }
 
 /// <summary>Played state for one user, waiting for the moved title to appear under its new path.</summary>
@@ -74,8 +77,8 @@ public class ArchiveState
     public Dictionary<string, List<PendingUserData>> PendingUserData { get; set; } = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// Gets or sets the users the plugin moved off "all libraries" to keep the archive from them,
-    /// so they get every new library too and get "all libraries" back once they may view the archive.
+    /// Gets or sets the users the plugin moved off "all libraries" to keep the archive or soft delete library from them,
+    /// so they get every new library too and get "all libraries" back once they may view everything.
     /// </summary>
     public List<Guid> RestrictedUsers { get; set; } = new();
 }

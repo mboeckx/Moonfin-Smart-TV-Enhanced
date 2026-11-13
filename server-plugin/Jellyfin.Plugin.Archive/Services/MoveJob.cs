@@ -2,14 +2,17 @@ using System;
 
 namespace Jellyfin.Plugin.Archive.Services;
 
-/// <summary>Which way a title is moving.</summary>
-public enum MoveDirection
+/// <summary>Where a title can be.</summary>
+public enum Place
 {
-    /// <summary>Into the archive.</summary>
-    ToArchive,
+    /// <summary>An ordinary library.</summary>
+    Library,
 
-    /// <summary>Back out of the archive.</summary>
-    FromArchive
+    /// <summary>The archive.</summary>
+    Archive,
+
+    /// <summary>The soft delete library.</summary>
+    SoftDelete
 }
 
 /// <summary>Where a move has got to.</summary>
@@ -46,8 +49,11 @@ public class MoveJob
     /// <summary>Gets or sets the title, for messages.</summary>
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>Gets or sets which way it goes.</summary>
-    public MoveDirection Direction { get; set; }
+    /// <summary>Gets or sets where it was.</summary>
+    public Place From { get; set; }
+
+    /// <summary>Gets or sets where it is going.</summary>
+    public Place To { get; set; }
 
     /// <summary>Gets or sets where it has got to.</summary>
     public MoveState State { get; set; } = MoveState.Queued;

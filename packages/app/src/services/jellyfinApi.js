@@ -718,12 +718,13 @@ export const api = {
 	// Every rating the viewer gave through the plugin, as {Items: [{ItemId, Rating}]}.
 	getMyUserRatings: () => request('/Moonfin/UserRatings/Mine'),
 
-	// The Archive plugin: what the archive is and what this viewer may do with it, whether a title
-	// is in it, and moving one in or out. Moves run on the server and are followed by job.
+	// The Archive plugin: the archive and the soft delete library and what this viewer may do with
+	// each, where a title is, and moving it to `to` (Archive, SoftDelete or Library). Moves run on
+	// the server and are followed by job.
 	getArchiveInfo: () => request('/Archive/Info'),
 	getArchiveStatus: (itemId) => request(`/Archive/Items/${itemId}`),
-	moveArchiveItem: (itemId, toArchive) =>
-		request(`/Archive/Items/${itemId}/${toArchive ? 'Archive' : 'Restore'}`, {method: 'POST'}),
+	moveArchiveItem: (itemId, to) =>
+		request(`/Archive/Items/${itemId}/Move?to=${encodeURIComponent(to)}`, {method: 'POST'}),
 	getArchiveJob: (jobId) => request(`/Archive/Jobs/${jobId}`),
 
 	getMusicGenres: (params = {}) => {
@@ -1244,8 +1245,8 @@ export const createApiForServer = (serverUrl, token, userId, serverTypeOverride 
 
 		getArchiveInfo: () => serverRequest('/Archive/Info'),
 		getArchiveStatus: (itemId) => serverRequest(`/Archive/Items/${itemId}`),
-		moveArchiveItem: (itemId, toArchive) =>
-			serverRequest(`/Archive/Items/${itemId}/${toArchive ? 'Archive' : 'Restore'}`, {method: 'POST'}),
+		moveArchiveItem: (itemId, to) =>
+			serverRequest(`/Archive/Items/${itemId}/Move?to=${encodeURIComponent(to)}`, {method: 'POST'}),
 		getArchiveJob: (jobId) => serverRequest(`/Archive/Jobs/${jobId}`),
 
 		getItemsByPerson: (personId, limit = 100) =>

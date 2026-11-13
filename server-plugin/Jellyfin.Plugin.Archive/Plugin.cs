@@ -24,6 +24,10 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         : base(applicationPaths, xmlSerializer)
     {
         Instance = this;
+        if (Configuration.MigrateFirstVersion())
+        {
+            SaveConfiguration();
+        }
     }
 
     /// <summary>Raised after the admin saves the plugin settings.</summary>
@@ -40,7 +44,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     /// <inheritdoc />
     public override string Description =>
-        "Move movies and shows into an archive library that stays out of the main library, with per-user rights to move and to view.";
+        "Move movies and shows into an archive or a soft delete library that stay out of the main library, with per-user rights to move and to view.";
 
     /// <inheritdoc />
     public override void UpdateConfiguration(BasePluginConfiguration configuration)

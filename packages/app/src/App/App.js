@@ -2494,6 +2494,7 @@ const AppContent = (props) => {
 				clockDisplay={settings.clockDisplay}
 				timeOffsetHours={settings.timeOffsetHours}
 				maxRating={settings.screensaverAgeFilter ? settings.screensaverMaxRating : null}
+				includeArchive={settings.screensaverIncludeArchive === true}
 				onDismiss={dismissScreensaver}
 				serverUrl={serverUrl}
 			/>

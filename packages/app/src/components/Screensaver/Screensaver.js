@@ -3,6 +3,7 @@ import {getImageUrl, getBackdropId, getLogoUrl} from '../../utils/helpers';
 import {autocropLogoUrl} from '../../utils/logoAutocrop';
 import {formatClockTime, shiftedNow} from '../../utils/clock';
 import * as jellyfinApi from '../../services/jellyfinApi';
+import {isShelfLibrary, readArchiveInfo, screensaverHiddenShelves, withoutShelfLibraries} from '../../services/archiveApi';
 import ScreensaverGradient, {isGradientBackdrop} from './ScreensaverGradient';
 import ScreensaverRunner from './ScreensaverRunner';
 import {resolveLayout, startBounce} from './screensaverLayout';
@@ -53,11 +54,15 @@ const viewMatchesContentType = (collectionType, contentType) => {
 	return LIBRARY_TYPES.indexOf(collectionType) !== -1;
 };
 
-const loadBackdropBatch = async ({contentType, libraryIds, collectionIds, excludedGenres, maxRating}) => {
-	let parentIds = libraryIds.concat(collectionIds).filter(Boolean);
+const loadBackdropBatch = async ({contentType, libraryIds, collectionIds, excludedGenres, maxRating, includeArchive}) => {
+	// The Archive plugin's soft delete library never shows here, and its archive only when the
+	// viewer asked for it.
+	const shelves = await readArchiveInfo(jellyfinApi.api);
+	const hiddenShelves = screensaverHiddenShelves(includeArchive);
+	let parentIds = libraryIds.filter(id => !isShelfLibrary(shelves, id, hiddenShelves)).concat(collectionIds).filter(Boolean);
 	if (parentIds.length === 0) {
 		const views = await jellyfinApi.api.getAllLibraries();
-		parentIds = (views?.Items || [])
+		parentIds = withoutShelfLibraries(views?.Items, shelves, hiddenShelves)
 			.filter(view => viewMatchesContentType(view.CollectionType, contentType))
 			.map(view => view.Id)
 			.filter(Boolean);
@@ -121,6 +126,7 @@ const Screensaver = ({
 	clockDisplay = '24-hour',
 	timeOffsetHours = 0,
 	maxRating = null,
+	includeArchive = false,
 	onDismiss,
 	serverUrl
 }) => {
@@ -206,7 +212,8 @@ const Screensaver = ({
 			libraryIds: libraryKey ? libraryKey.split(',') : [],
 			collectionIds: collectionKey ? collectionKey.split(',') : [],
 			excludedGenres: genreKey ? genreKey.split(',') : [],
-			maxRating
+			maxRating,
+			includeArchive
 		};
 
 		const fetchItems = async () => {
@@ -230,7 +237,7 @@ const Screensaver = ({
 			cancelled = true;
 			clearTimeout(initialTimer);
 		};
-	}, [visible, showLibrary, serverUrl, contentType, libraryKey, collectionKey, genreKey, maxRating]);
+	}, [visible, showLibrary, serverUrl, contentType, libraryKey, collectionKey, genreKey, maxRating, includeArchive]);
 
 	useEffect(() => {
 		if (!visible || !showLibrary || !serverUrl || !batchReady) return;
@@ -240,7 +247,8 @@ const Screensaver = ({
 			libraryIds: libraryKey ? libraryKey.split(',') : [],
 			collectionIds: collectionKey ? collectionKey.split(',') : [],
 			excludedGenres: genreKey ? genreKey.split(',') : [],
-			maxRating
+			maxRating,
+			includeArchive
 		};
 
 		const cycle = async () => {
@@ -272,7 +280,7 @@ const Screensaver = ({
 				clearInterval(backdropTimerRef.current);
 			}
 		};
-	}, [visible, showLibrary, serverUrl, batchReady, contentType, libraryKey, collectionKey, genreKey, maxRating]);
+	}, [visible, showLibrary, serverUrl, batchReady, contentType, libraryKey, collectionKey, genreKey, maxRating, includeArchive]);
 
 	useEffect(() => {
 		if (!visible || !bounces || !box || !boxRef.current) return;

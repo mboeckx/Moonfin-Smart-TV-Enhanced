@@ -843,7 +843,8 @@ export const SETTINGS_SCHEMA = [
 						action: (ctx) => ctx.actions.openScreensaverGenres()
 					},
 					{kind: KIND.OPTION, key: 'screensaverMaxRating', label: () => $L('Max Age Rating'), options: getAgeRatingOptions, fallback: 'PG-13', icon: 'shield', when: whenScreensaverLibrary, padded: true},
-					{kind: KIND.TOGGLE, key: 'screensaverAgeFilter', label: () => $L('Require Age Rating'), desc: () => $L('Only show rated content'), icon: 'verified_user', when: whenScreensaverLibrary}
+					{kind: KIND.TOGGLE, key: 'screensaverAgeFilter', label: () => $L('Require Age Rating'), desc: () => $L('Only show rated content'), icon: 'verified_user', when: whenScreensaverLibrary},
+					{kind: KIND.TOGGLE, key: 'screensaverIncludeArchive', label: () => $L('Include Archived Titles'), desc: () => $L('Show titles from the archive in the screensaver'), icon: 'archive', when: (ctx) => whenScreensaverLibrary(ctx) && ctx.archiveViewable === true}
 				]
 			}
 		]

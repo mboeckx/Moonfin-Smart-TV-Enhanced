@@ -32,10 +32,10 @@ beforeEach(() => {
 	resetArchiveInfo();
 });
 
-describe('the archive library', () => {
+describe('the Archive plugin libraries', () => {
 	const withArchive = (api, archiveLibraryId) => ({
 		...api,
-		getArchiveInfo: () => Promise.resolve({Configured: true, CanView: true, ArchiveLibraryId: archiveLibraryId})
+		getArchiveInfo: () => Promise.resolve({Archive: {Configured: true, CanView: Boolean(archiveLibraryId), LibraryId: archiveLibraryId}})
 	});
 
 	test('is left out of a sweep even with nothing hidden', async () => {

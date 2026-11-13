@@ -1,6 +1,7 @@
 import {useCallback} from 'react';
 import $L from '@enact/i18n/$L';
 import {asOptions, loadGenreNames, openWhenLoaded} from './useMediaBarSources';
+import {readArchiveInfo, withoutShelfLibraries} from '../../services/archiveApi';
 
 const listOf = (value) => (Array.isArray(value) ? value : []);
 
@@ -8,7 +9,9 @@ const listOf = (value) => (Array.isArray(value) ? value : []);
 const useScreensaverSources = ({api, settings, updateSettings, openChecklist}) => {
 	const openScreensaverLibraries = useCallback(() => openWhenLoaded(
 		openChecklist,
-		async () => ((await api.getAllLibraries())?.Items || []).filter((lib) => {
+		// The Archive plugin's libraries aren't picked here. The archive has its own switch, and
+		// soft deleted titles never show.
+		async () => withoutShelfLibraries((await api.getAllLibraries())?.Items, await readArchiveInfo(api)).filter((lib) => {
 			const type = lib?.CollectionType;
 			return type === 'movies' || type === 'tvshows' || !type;
 		}),

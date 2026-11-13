@@ -19,8 +19,8 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.Archive.Services;
 
 /// <summary>
-/// Moves titles between their library and the archive library, and keeps who may see the
-/// archive in step with the plugin settings.
+/// Moves titles between their library, the archive and the soft delete library, and keeps who
+/// may see those two in step with the plugin settings.
 /// </summary>
 public class ArchiveService
 {
@@ -68,15 +68,40 @@ public class ArchiveService
 
     private static PluginConfiguration Config => Plugin.Instance?.Configuration ?? new PluginConfiguration();
 
-    // ---------------------------------------------------------------- libraries
+    // ---------------------------------------------------------------- shelves and libraries
 
-    /// <summary>Gets the archive library, or null when none is chosen or it no longer exists.</summary>
-    /// <returns>The archive library.</returns>
-    public VirtualFolderInfo? GetArchiveLibrary() => FindLibrary(Config.ArchiveLibraryId);
+    /// <summary>The places titles can be put away in.</summary>
+    public static readonly Place[] Shelves = { Place.Archive, Place.SoftDelete };
 
-    /// <summary>Gets the id of the archive library, or null.</summary>
+    /// <summary>Gets the settings for a shelf.</summary>
+    /// <param name="place">The shelf.</param>
+    /// <returns>Its settings.</returns>
+    public static ShelfSettings SettingsFor(Place place) => place == Place.SoftDelete ? Config.SoftDelete : Config.Archive;
+
+    /// <summary>Gets a shelf's library, or null when none is chosen or it no longer exists.</summary>
+    /// <param name="place">The shelf.</param>
+    /// <returns>The library.</returns>
+    public VirtualFolderInfo? GetShelfLibrary(Place place)
+    {
+        if (place == Place.Library)
+        {
+            return null;
+        }
+
+        var library = FindLibrary(SettingsFor(place).LibraryId);
+        // One library can't be both shelves. The archive keeps it.
+        if (library is not null && place == Place.SoftDelete && ParseId(library.ItemId) == ParseId(Config.Archive.LibraryId))
+        {
+            return null;
+        }
+
+        return library;
+    }
+
+    /// <summary>Gets the id of a shelf's library, or null.</summary>
+    /// <param name="place">The shelf.</param>
     /// <returns>The id.</returns>
-    public Guid? GetArchiveLibraryId() => ParseId(GetArchiveLibrary()?.ItemId);
+    public Guid? GetShelfLibraryId(Place place) => ParseId(GetShelfLibrary(place)?.ItemId);
 
     private VirtualFolderInfo? FindLibrary(string? id)
     {
@@ -111,82 +136,104 @@ public class ArchiveService
         return best;
     }
 
-    /// <summary>Whether the item can be archived at all: a movie or a show with its own files.</summary>
+    /// <summary>Whether the item can be put away at all: a movie or a show with its own files.</summary>
     /// <param name="item">The item.</param>
     /// <returns>True when it can move.</returns>
     public static bool IsMovable(BaseItem item) =>
         (item is Movie || item is Series) && !string.IsNullOrEmpty(item.Path) && item.LocationType == LocationType.FileSystem;
 
-    /// <summary>Whether the item lives in the archive library.</summary>
+    /// <summary>Which shelf the item is on, or <see cref="Place.Library"/>.</summary>
     /// <param name="item">The item.</param>
-    /// <returns>True when archived.</returns>
-    public bool IsArchived(BaseItem item)
+    /// <returns>Where it is.</returns>
+    public Place PlaceOf(BaseItem item) => string.IsNullOrEmpty(item.Path) ? Place.Library : PlaceOfLibrary(LibraryOfPath(item.Path)?.Library);
+
+    private Place PlaceOfLibrary(VirtualFolderInfo? library)
     {
-        var archive = GetArchiveLibrary();
-        if (archive is null || string.IsNullOrEmpty(item.Path))
+        var id = ParseId(library?.ItemId);
+        if (id is null)
         {
-            return false;
+            return Place.Library;
         }
 
-        return (archive.Locations ?? Array.Empty<string>()).Any(location => PathUtil.IsSameOrInside(item.Path, location));
+        return Shelves.FirstOrDefault(shelf => GetShelfLibraryId(shelf) == id, Place.Library);
     }
 
     // ---------------------------------------------------------------- permissions
 
     private bool IsAdministrator(User user) => _userManager.GetUserDto(user, null!).Policy?.IsAdministrator == true;
 
-    /// <summary>Whether the user may move titles to and from the archive.</summary>
+    /// <summary>Whether the user gets a shelf's button: may move titles onto it and off it.</summary>
     /// <param name="user">The user.</param>
+    /// <param name="place">The shelf.</param>
     /// <returns>True when allowed.</returns>
-    public bool CanManage(User user)
+    public bool CanManage(User user, Place place)
     {
-        var config = Config;
-        return config.ManagerUserIds.Contains(user.Id) || (config.AdministratorsCanManage && IsAdministrator(user));
+        if (place == Place.Library)
+        {
+            return true;
+        }
+
+        var settings = SettingsFor(place);
+        return GetShelfLibrary(place) is not null
+            && (settings.ManagerUserIds.Contains(user.Id) || (settings.AdministratorsCanManage && IsAdministrator(user)));
     }
 
-    /// <summary>Whether the settings say the user may see the archive.</summary>
+    /// <summary>Whether the user may move a title from one place to another. Both ends have to allow it.</summary>
     /// <param name="user">The user.</param>
+    /// <param name="from">Where it is.</param>
+    /// <param name="to">Where it would go.</param>
     /// <returns>True when allowed.</returns>
-    public bool ShouldView(User user)
+    public bool CanMove(User user, Place from, Place to) => from != to && CanManage(user, from) && CanManage(user, to);
+
+    /// <summary>Whether the settings say the user may see a shelf.</summary>
+    /// <param name="user">The user.</param>
+    /// <param name="place">The shelf.</param>
+    /// <returns>True when allowed.</returns>
+    public bool ShouldView(User user, Place place)
     {
-        var config = Config;
-        return config.ViewerUserIds.Contains(user.Id) || (config.AdministratorsCanView && IsAdministrator(user));
+        var settings = SettingsFor(place);
+        return settings.ViewerUserIds.Contains(user.Id) || (settings.AdministratorsCanView && IsAdministrator(user));
     }
 
-    /// <summary>Whether the user's library access actually reaches the archive right now.</summary>
+    /// <summary>Whether the user's library access actually reaches a shelf right now.</summary>
     /// <param name="user">The user.</param>
-    /// <returns>True when the archive is open to them.</returns>
-    public bool HasArchiveAccess(User user)
+    /// <param name="place">The shelf.</param>
+    /// <returns>True when it is open to them.</returns>
+    public bool HasAccess(User user, Place place)
     {
-        var archiveId = GetArchiveLibraryId();
-        if (archiveId is null)
+        var libraryId = GetShelfLibraryId(place);
+        if (libraryId is null)
         {
             return false;
         }
 
         var policy = _userManager.GetUserDto(user, null!).Policy;
-        if (policy is null || (policy.BlockedMediaFolders ?? Array.Empty<Guid>()).Contains(archiveId.Value))
+        if (policy is null || (policy.BlockedMediaFolders ?? Array.Empty<Guid>()).Contains(libraryId.Value))
         {
             return false;
         }
 
-        return policy.EnableAllFolders || (policy.EnabledFolders ?? Array.Empty<Guid>()).Contains(archiveId.Value);
+        return policy.EnableAllFolders || (policy.EnabledFolders ?? Array.Empty<Guid>()).Contains(libraryId.Value);
     }
 
     // ---------------------------------------------------------------- access sync
 
     /// <summary>
-    /// Opens the archive library to the viewers and closes it to everybody else, by way of each
-    /// user's own library access. A user on "all libraries" who may not see the archive is moved to
-    /// a list of every other library, and gets "all libraries" back once they may.
+    /// Opens each shelf's library to its viewers and closes it to everybody else, by way of each
+    /// user's own library access. A user on "all libraries" who may not see a shelf is moved to a
+    /// list of every other library, and gets "all libraries" back once they may see them all.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
     public async Task SyncAccessAsync(CancellationToken cancellationToken)
     {
         var config = Config;
-        var archiveId = GetArchiveLibraryId();
-        if (!config.EnforceViewerAccess || archiveId is null)
+        var shelves = Shelves
+            .Select(place => (Place: place, Id: GetShelfLibraryId(place)))
+            .Where(shelf => shelf.Id is not null)
+            .Select(shelf => (shelf.Place, Id: shelf.Id!.Value))
+            .ToList();
+        if (!config.EnforceViewerAccess || shelves.Count == 0)
         {
             return;
         }
@@ -211,68 +258,58 @@ public class ArchiveService
                     continue;
                 }
 
-                var view = ShouldView(user);
+                var open = shelves.Where(shelf => ShouldView(user, shelf.Place)).Select(shelf => shelf.Id).ToHashSet();
+                var closed = shelves.Where(shelf => !open.Contains(shelf.Id)).Select(shelf => shelf.Id).ToHashSet();
                 var enabled = (policy.EnabledFolders ?? Array.Empty<Guid>()).ToList();
-                var changed = false;
+                var before = (policy.EnableAllFolders, string.Join(',', enabled.OrderBy(id => id)));
 
-                if (view)
+                if (closed.Count == 0 && restricted.Contains(user.Id))
                 {
-                    if (restricted.Contains(user.Id))
-                    {
-                        // The plugin took "all libraries" away, so it gives it back.
-                        policy.EnableAllFolders = true;
-                        policy.EnabledFolders = Array.Empty<Guid>();
-                        restricted.Remove(user.Id);
-                        changed = true;
-                    }
-                    else if (!policy.EnableAllFolders && !enabled.Contains(archiveId.Value))
-                    {
-                        enabled.Add(archiveId.Value);
-                        policy.EnabledFolders = enabled.ToArray();
-                        changed = true;
-                    }
+                    // The plugin took "all libraries" away, and nothing needs keeping from them now.
+                    policy.EnableAllFolders = true;
+                    enabled.Clear();
+                    restricted.Remove(user.Id);
                 }
-                else if (policy.EnableAllFolders)
+                else if (closed.Count > 0 && policy.EnableAllFolders)
                 {
                     policy.EnableAllFolders = false;
-                    policy.EnabledFolders = allLibraries.Where(id => id != archiveId.Value).ToArray();
+                    enabled = allLibraries.Where(id => !closed.Contains(id)).ToList();
                     restricted.Add(user.Id);
-                    changed = true;
                 }
-                else
+                else if (!policy.EnableAllFolders)
                 {
-                    if (enabled.Remove(archiveId.Value))
-                    {
-                        changed = true;
-                    }
+                    enabled.RemoveAll(closed.Contains);
+                    enabled.AddRange(open.Where(id => !enabled.Contains(id)));
 
-                    // Somebody the plugin restricted gets every library added since, bar the archive.
+                    // Somebody the plugin restricted gets every library added since, bar what they can't see.
                     if (restricted.Contains(user.Id))
                     {
-                        foreach (var id in allLibraries.Where(id => id != archiveId.Value && !enabled.Contains(id)))
-                        {
-                            enabled.Add(id);
-                            changed = true;
-                        }
+                        enabled.AddRange(allLibraries.Where(id => !closed.Contains(id) && !enabled.Contains(id)));
                     }
-
-                    policy.EnabledFolders = enabled.ToArray();
                 }
 
-                if (changed)
+                policy.EnabledFolders = enabled.ToArray();
+                if (before != (policy.EnableAllFolders, string.Join(',', enabled.OrderBy(id => id))))
                 {
-                    _logger.LogInformation("Archive: {Action} the archive for {User}", view ? "opening" : "closing", user.Username);
+                    _logger.LogInformation(
+                        "Archive: library access for {User} now opens {Open} and closes {Closed} of the archive and soft delete libraries",
+                        user.Username,
+                        open.Count,
+                        closed.Count);
                     await _userManager.UpdatePolicyAsync(user.Id, policy).ConfigureAwait(false);
                 }
 
-                if (config.HideFromLatest && view)
+                var userConfig = dto.Configuration;
+                if (userConfig is not null)
                 {
-                    var userConfig = dto.Configuration;
-                    var latest = (userConfig?.LatestItemsExcludes ?? Array.Empty<Guid>()).ToList();
-                    if (userConfig is not null && !latest.Contains(archiveId.Value))
+                    var latest = (userConfig.LatestItemsExcludes ?? Array.Empty<Guid>()).ToList();
+                    var add = shelves
+                        .Where(shelf => open.Contains(shelf.Id) && SettingsFor(shelf.Place).HideFromLatest && !latest.Contains(shelf.Id))
+                        .Select(shelf => shelf.Id)
+                        .ToList();
+                    if (add.Count > 0)
                     {
-                        latest.Add(archiveId.Value);
-                        userConfig.LatestItemsExcludes = latest.ToArray();
+                        userConfig.LatestItemsExcludes = latest.Concat(add).ToArray();
                         await _userManager.UpdateConfigurationAsync(user.Id, userConfig).ConfigureAwait(false);
                     }
                 }
@@ -299,12 +336,12 @@ public class ArchiveService
     public MoveJob? GetActiveJob(Guid itemId) => _jobs.Values.FirstOrDefault(j =>
         j.ItemId == itemId && j.State is MoveState.Queued or MoveState.Moving or MoveState.Scanning);
 
-    /// <summary>Starts moving an item into or out of the archive. The caller has checked permission.</summary>
+    /// <summary>Starts moving an item to another place. The caller has checked permission.</summary>
     /// <param name="item">The item.</param>
     /// <param name="user">Who asked.</param>
-    /// <param name="direction">Which way.</param>
+    /// <param name="to">Where it goes.</param>
     /// <returns>The job, already running.</returns>
-    public MoveJob StartMove(BaseItem item, User user, MoveDirection direction)
+    public MoveJob StartMove(BaseItem item, User user, Place to)
     {
         PruneJobs();
         var existing = GetActiveJob(item.Id);
@@ -313,7 +350,7 @@ public class ArchiveService
             return existing;
         }
 
-        var job = new MoveJob { ItemId = item.Id, Name = item.Name, Direction = direction, UserId = user.Id };
+        var job = new MoveJob { ItemId = item.Id, Name = item.Name, From = PlaceOf(item), To = to, UserId = user.Id };
         _jobs[job.Id] = job;
         _ = Task.Run(() => RunAsync(job, CancellationToken.None));
         return job;
@@ -350,26 +387,31 @@ public class ArchiveService
 
     // ---------------------------------------------------------------- moving
 
+    private static string ShelfName(Place place) => place == Place.SoftDelete ? "soft delete library" : "archive";
+
     private async Task MoveAsync(MoveJob job, CancellationToken cancellationToken)
     {
         var item = _libraryManager.GetItemById(job.ItemId) ?? throw Fail(job, "The title no longer exists.");
         if (!IsMovable(item))
         {
-            throw Fail(job, "Only movies and shows can be archived.");
+            throw Fail(job, "Only movies and shows can be moved.");
         }
 
-        var archive = GetArchiveLibrary() ?? throw Fail(job, "No archive library is set up.");
         var source = LibraryOfPath(item.Path) ?? throw Fail(job, "The title is not inside any library folder.");
-        var toArchive = job.Direction == MoveDirection.ToArchive;
-        var inArchive = ParseId(source.Library.ItemId) == ParseId(archive.ItemId);
-        if (toArchive == inArchive)
+        var from = PlaceOfLibrary(source.Library);
+        if (from != job.From)
         {
-            throw Fail(job, toArchive ? "The title is already archived." : "The title is not archived.");
+            throw Fail(job, "The title has moved since.");
+        }
+
+        if (from == job.To)
+        {
+            throw Fail(job, job.To == Place.Library ? "The title is already in its library." : "The title is already in the " + ShelfName(job.To) + ".");
         }
 
         // What moves: a folder that belongs to this title alone, or else its files one by one. A
-        // title the plugin archived moves back exactly the way it went in.
-        var record = toArchive ? null : _store.FindRecord(item.Path);
+        // title the plugin put away moves on exactly the way it went in.
+        var record = from == Place.Library ? null : _store.FindRecord(item.Path);
         string fromTop;
         bool isDirectory;
         if (record is not null && (Directory.Exists(record.ArchivePath) || File.Exists(record.ArchivePath)))
@@ -390,15 +432,15 @@ public class ArchiveService
             }
         }
 
-        // Where it lands.
+        // Where it lands. Onto a shelf, at the same place relative to the library folder. Back to
+        // a library, where it first came from.
         string toTop;
-        Guid? originalLibrary = null;
-        if (toArchive)
+        if (job.To != Place.Library)
         {
-            var root = (archive.Locations ?? Array.Empty<string>()).FirstOrDefault()
-                ?? throw Fail(job, "The archive library has no folder.");
+            var shelf = GetShelfLibrary(job.To) ?? throw Fail(job, "No " + ShelfName(job.To) + " is set up.");
+            var root = (shelf.Locations ?? Array.Empty<string>()).FirstOrDefault()
+                ?? throw Fail(job, "The " + ShelfName(job.To) + " has no folder.");
             toTop = Path.Combine(root, Path.GetRelativePath(source.Root, fromTop));
-            originalLibrary = ParseId(source.Library.ItemId);
         }
         else if (record is not null)
         {
@@ -445,26 +487,30 @@ public class ArchiveService
             _libraryMonitor.ReportFileSystemChangeComplete(toTop, false);
         }
 
-        if (toArchive)
+        // One record per title put away, holding where it first came from however often it moves
+        // between the shelves.
+        _store.Update(s =>
         {
-            _store.Update(s =>
+            if (record is not null)
+            {
+                s.Records.RemoveAll(r => PathUtil.Same(r.ArchivePath, record.ArchivePath));
+            }
+
+            if (job.To != Place.Library)
             {
                 s.Records.RemoveAll(r => PathUtil.Same(r.ArchivePath, toTop));
                 s.Records.Add(new ArchiveRecord
                 {
                     ArchivePath = toTop,
-                    OriginalPath = fromTop,
-                    OriginalLibraryId = originalLibrary ?? Guid.Empty,
+                    OriginalPath = record?.OriginalPath ?? fromTop,
+                    OriginalLibraryId = record?.OriginalLibraryId ?? ParseId(source.Library.ItemId) ?? Guid.Empty,
                     ArchivedAtUtc = DateTime.UtcNow,
                     ArchivedBy = job.UserId,
-                    Name = item.Name
+                    Name = item.Name,
+                    Place = job.To
                 });
-            });
-        }
-        else if (record is not null)
-        {
-            _store.Update(s => s.Records.RemoveAll(r => PathUtil.Same(r.ArchivePath, record.ArchivePath)));
-        }
+            }
+        });
 
         job.State = MoveState.Scanning;
         var moved = await RescanAsync(fromTop, toTop, newItemPath, cancellationToken).ConfigureAwait(false);
@@ -477,6 +523,7 @@ public class ArchiveService
         {
             _libraryManager.DeleteItem(stale, new DeleteOptions { DeleteFileLocation = false }, true);
         }
+
         if (moved is null)
         {
             job.State = MoveState.DoneNotScanned;
@@ -642,7 +689,11 @@ public class ArchiveService
             var folder = ContainingFolder(path);
             if (folder is null)
             {
-                continue;
+                // A library that was empty when it was added has no folder in the database yet,
+                // so the first title into it takes a full scan to bring the folder in.
+                _logger.LogInformation("Archive: {Path} is in a library that hasn't been scanned yet; scanning all libraries", path);
+                await _libraryManager.ValidateMediaLibrary(new Progress<double>(), cancellationToken).ConfigureAwait(false);
+                break;
             }
 
             try
@@ -655,7 +706,14 @@ public class ArchiveService
             }
         }
 
+        // A full scan can still be writing the title down when it returns, so it gets a moment.
         var moved = _libraryManager.FindByPath(newItemPath, null);
+        for (var attempt = 0; moved is null && attempt < 10; attempt++)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+            moved = _libraryManager.FindByPath(newItemPath, null);
+        }
+
         if (moved is null)
         {
             // The scan will get to it; the monitor and the next library scan both pick it up.

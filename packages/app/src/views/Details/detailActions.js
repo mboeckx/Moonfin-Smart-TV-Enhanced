@@ -59,7 +59,7 @@ export const detailActionCatalogue = (props) => {
 		handleOpenVersionModal, handleOpenAudioModal, handleOpenSubtitleModal, handleOpenPlaylistModal,
 		handleOpenCollectionModal, handleOpenDeleteDialog, handleOpenIdentifyModal,
 		canChangeArtwork, handleOpenArtworkModal, handleOpenPersonDisplayModal, handleKeepAsComplete,
-		handleArchive, isArchived, archiveBusy
+		handleArchive, isArchived, archiveBusy, handleSoftDelete, isSoftDeleted, softDeleteBusy
 	} = props;
 
 	// Asking and taking back are separate buttons sharing one arrangement
@@ -119,6 +119,7 @@ export const detailActionCatalogue = (props) => {
 		{id: 'collection', when: Boolean(handleOpenCollectionModal), render: () => <ActionButton path={DETAIL_ICON_PATHS.collection} label={$L('Add to Collection')} onClick={handleOpenCollectionModal} />},
 		{id: 'deleteFiles', when: item.CanDelete, render: () => <ActionButton path={DETAIL_ICON_PATHS.delete} label={$L('Delete')} onClick={handleOpenDeleteDialog} />},
 		{id: 'archive', when: Boolean(handleArchive), render: () => <ActionButton path={isArchived ? DETAIL_ICON_PATHS.unarchive : DETAIL_ICON_PATHS.archive} label={archiveBusy ? $L('Moving…') : isArchived ? $L('Restore from Archive') : $L('Move to Archive')} active={archiveBusy} onClick={handleArchive} spotlightId="details-archive-btn" />},
+		{id: 'softDelete', when: Boolean(handleSoftDelete), render: () => <ActionButton path={isSoftDeleted ? DETAIL_ICON_PATHS.undoSoftDelete : DETAIL_ICON_PATHS.softDelete} label={softDeleteBusy ? $L('Moving…') : isSoftDeleted ? $L('Undo Soft Delete') : $L('Soft Delete')} active={softDeleteBusy} onClick={handleSoftDelete} spotlightId="details-soft-delete-btn" />},
 		{id: 'artwork', when: canChangeArtwork, render: () => <ActionButton path={DETAIL_ICON_PATHS.artwork} label={$L('Change Artwork')} onClick={handleOpenArtworkModal} spotlightId="details-artwork-btn" />},
 		{id: 'seerrWatchlist', when: seerr.showsWatchlist, render: () => <ActionButton path={seerr.onWatchlist ? DETAIL_ICON_PATHS.watchlistOn : DETAIL_ICON_PATHS.watchlist} label={seerr.onWatchlist ? $L('On Watchlist') : $L('Add to Watchlist')} active={seerr.onWatchlist} onClick={seerr.toggleWatchlist} />},
 		{id: 'seerrReportIssue', when: seerr.showsReportIssue, render: () => <ActionButton path={DETAIL_ICON_PATHS.reportIssue} label={$L('Report Issue')} onClick={seerr.handleReportIssueClick} />},
