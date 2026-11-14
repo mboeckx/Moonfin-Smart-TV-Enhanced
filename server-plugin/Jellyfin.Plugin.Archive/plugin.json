@@ -1,0 +1,13 @@
+{
+	"//": "Everything Jellyfin shows about the plugin. scripts/build-jellyfin-plugin.js writes it into the zip's meta.json and the repository manifest. version is used when no version is passed to the build.",
+	"name": "Archive",
+	"guid": "6f3c2a4e-8b1d-4f7a-9c2e-5a1b7d3e9f40",
+	"version": "1.1.0.0",
+	"targetAbi": "12.0.0.0",
+	"overview": "Move movies and shows into an archive or a soft delete library that stay out of the main library",
+	"description": "Adds an archive and a soft delete library to Jellyfin. Chosen users get the button to move a title, chosen users can see each library, and Moonfin shows the buttons on the details screen.",
+	"category": "General",
+	"owner": "moonfin",
+	"assembly": "Jellyfin.Plugin.Archive.dll",
+	"changelog": "Soft delete next to the archive, with separate rights for each button and each library."
+}

@@ -56,18 +56,56 @@ Jellyfin needs write access to the library folders and to both new folders.
 Pointing either setting at a different library turns the old one back into an ordinary library,
 and anyone the plugin had kept from it gets access to it again.
 
-## Building and installing
+## Installing
 
-Needs the .NET 10 SDK. Built against Jellyfin 12.0, and tested on Jellyfin 12.4.
+### From the plugin repository (recommended)
 
-```bash
-cd server-plugin/Jellyfin.Plugin.Archive
-dotnet build -c Release
+In Jellyfin, open *Dashboard → Plugins → Repositories*, add this URL, then install **Archive**
+from the catalog and restart Jellyfin. Jellyfin also finds and installs new versions from it.
+
+```
+https://github.com/mboeckx/Moonfin-Smart-TV-Enhanced/releases/download/jellyfin-plugin-repository/manifest.json
 ```
 
-Copy `bin/Release/net10.0/Jellyfin.Plugin.Archive.dll` into a folder named `Archive_1.0.0.0`
-inside the server's `plugins` folder (for Docker, `/config/plugins/Archive_1.0.0.0/`), then
-restart Jellyfin.
+The URL only works once a version has been published (see *Releasing* below).
+
+### By hand
+
+Unzip `Jellyfin.Plugin.Archive_<version>.zip` into a folder named `Archive_<version>` inside the
+server's `plugins` folder (for Docker, `/config/plugins/Archive_1.1.0.0/`), then restart Jellyfin.
+The zip comes from a release, from the *Jellyfin plugin* workflow's artifacts, or from building it
+yourself.
+
+## Building
+
+Needs Node.js and the .NET 10 SDK. Built against Jellyfin 12.0, and tested on Jellyfin 12.4.
+
+```bash
+npm run build:jellyfin-plugin
+```
+
+That writes `Jellyfin.Plugin.Archive_<version>.zip` to the repository root, with the version from
+`Jellyfin.Plugin.Archive/plugin.json`. Pass a version to build another (`npm run
+build:jellyfin-plugin -- 1.2.0`). `plugin.json` also holds the name, description and changelog
+Jellyfin shows.
+
+## Releasing
+
+The *Jellyfin plugin* workflow builds the plugin on every pull request and push to `main` that
+touches it, and keeps the zip as an artifact. To publish a version:
+
+1. Set `version` and `changelog` in `Jellyfin.Plugin.Archive/plugin.json`.
+2. Tag the commit and push the tag:
+
+   ```bash
+   git tag archive-plugin-v1.2.0
+   git push origin archive-plugin-v1.2.0
+   ```
+
+The workflow then makes a release for the tag with the zip, and adds the version to the plugin
+repository manifest, which it keeps on the `jellyfin-plugin-repository` release. Servers that have
+the repository pick the new version up on their next plugin update check. Neither release is
+marked as the repository's latest, so they don't get in the way of the app's own releases.
 
 ## API
 
