@@ -2,6 +2,7 @@ import {
 	permittedLibraryIds, retainPermitted, visibleLibraryIds, searchLibraries, scopedGetItems,
 	resetLibraryScope
 } from './libraryScope';
+import {resetArchiveInfo} from './archiveApi';
 
 const POLICY_OPEN = {EnableAllFolders: true};
 const POLICY_CLOSED = {EnableAllFolders: false, EnabledFolders: ['movies1', 'shows1']};
@@ -26,7 +27,25 @@ const fakeApi = ({policy = POLICY_OPEN, excludes = [], items} = {}) => ({
 	))
 });
 
-beforeEach(() => resetLibraryScope());
+beforeEach(() => {
+	resetLibraryScope();
+	resetArchiveInfo();
+});
+
+describe('the Archive plugin libraries', () => {
+	const withArchive = (api, archiveLibraryId) => ({
+		...api,
+		getArchiveInfo: () => Promise.resolve({Archive: {Configured: true, CanView: Boolean(archiveLibraryId), LibraryId: archiveLibraryId}})
+	});
+
+	test('is left out of a sweep even with nothing hidden', async () => {
+		expect(await visibleLibraryIds(withArchive(fakeApi(), 'music1'))).toEqual(['movies1', 'shows1']);
+	});
+
+	test('changes nothing for somebody the archive is closed to', async () => {
+		expect(await visibleLibraryIds(withArchive(fakeApi(), null))).toBeNull();
+	});
+});
 
 describe('permittedLibraryIds', () => {
 	test('is null when the policy allows every folder', async () => {

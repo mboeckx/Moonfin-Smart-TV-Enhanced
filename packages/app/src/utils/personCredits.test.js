@@ -191,23 +191,40 @@ describe('sortFilmography', () => {
 });
 
 describe('withPersonRoles', () => {
-	test('the role they play becomes the subtitle and the cast is let go', () => {
-		// Someone who directed and acted in a title is listed once per credit.
+	test('the character they play becomes its own line and the cast is let go', () => {
 		const [item] = withPersonRoles([{Id: 'm1', People: [
-			{Id: 'p2', Role: 'Fry'},
-			{Id: 'p1', Role: '', Type: 'Director'},
+			{Id: 'p2', Role: 'Fry', Type: 'Actor'},
 			{Id: 'p1', Role: ' Bender (voice) ', Type: 'Actor'}
 		]}], 'p1');
 
-		expect(item).toEqual({Id: 'm1', Subtitle: 'Bender (voice)'});
+		expect(item).toEqual({Id: 'm1', Subtitle: 'as Bender (voice)', _personRole: 'as Bender (voice)'});
+	});
+
+	test('someone who directed and acted in a title gets both credits', () => {
+		// They're listed once per credit.
+		const [item] = withPersonRoles([{Id: 'm1', People: [
+			{Id: 'p1', Role: '', Type: 'Director'},
+			{Id: 'p1', Role: 'Bender', Type: 'Actor'}
+		]}], 'p1');
+
+		expect(item._personRole).toBe('Director \u00b7 as Bender');
+	});
+
+	test('a crew credit names the job, or the finer job the server gives', () => {
+		expect(withPersonRoles([{Id: 'm1', People: [{Id: 'p1', Type: 'Writer'}]}], 'p1')[0]._personRole).toBe('Writer');
+		expect(withPersonRoles([{Id: 'm1', People: [{Id: 'p1', Role: 'Screenplay', Type: 'Writer'}]}], 'p1')[0]._personRole).toBe('Screenplay');
+	});
+
+	test('an actor with no character on file gets no line', () => {
+		expect(withPersonRoles([{Id: 'm1', People: [{Id: 'p1', Role: '', Type: 'Actor'}]}], 'p1')).toEqual([{Id: 'm1'}]);
 	});
 
 	test('several roles read as one', () => {
-		const [item] = withPersonRoles([{Id: 'm1', People: [{Id: 'p1', Role: 'Wakka\nKimahri\n'}]}], 'p1');
-		expect(item.Subtitle).toBe('Wakka, Kimahri');
+		const [item] = withPersonRoles([{Id: 'm1', People: [{Id: 'p1', Role: 'Wakka\nKimahri\n', Type: 'Actor'}]}], 'p1');
+		expect(item.Subtitle).toBe('as Wakka, Kimahri');
 	});
 
-	test('no role leaves the title without a subtitle', () => {
+	test('no credit leaves the title without a line', () => {
 		expect(withPersonRoles([{Id: 'm1', People: [{Id: 'p2', Role: 'Fry'}]}, {Id: 'm2'}], 'p1')).toEqual([{Id: 'm1'}, {Id: 'm2'}]);
 	});
 });

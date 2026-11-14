@@ -261,6 +261,8 @@ export const defaultSettings = {
 	screensaverLibraryIds: [],
 	screensaverCollectionIds: [],
 	screensaverExcludedGenres: [],
+	// Only offered to people the Archive plugin lets see the archive.
+	screensaverIncludeArchive: false,
 	loadingAnimationImage: 'moonfinLogo',
 	loadingAnimationSize: 'medium',
 	loadingAnimationPosition: 'middle',

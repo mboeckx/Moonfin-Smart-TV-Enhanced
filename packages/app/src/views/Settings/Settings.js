@@ -8,6 +8,7 @@ import {
 import $L from '@enact/i18n/$L';
 import Spotlight from '@enact/spotlight';
 import {useAuth} from '../../context/AuthContext';
+import {PLACE, readArchiveInfo} from '../../services/archiveApi';
 import {useSettings, defaultSettings, flushSettingsPush} from '../../context/SettingsContext';
 import {RATING_SETTING_KEYS, ratingKey} from '../../utils/ratingSources';
 import {useSeerr} from '../../context/SeerrContext';
@@ -136,6 +137,16 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 	const seerr = useSeerr();
 	const achievements = useAchievements();
 	const posterLabelsAvailable = usePosterLabelsAvailable(settings.useMoonfinPlugin);
+	// Whether the Archive plugin lets this account see the archive, which is what the screensaver's
+	// archive switch needs.
+	const [archiveViewable, setArchiveViewable] = useState(false);
+	useEffect(() => {
+		let cancelled = false;
+		readArchiveInfo(api).then((info) => {
+			if (!cancelled) setArchiveViewable(Boolean(info?.[PLACE.ARCHIVE]?.canView));
+		});
+		return () => { cancelled = true; };
+	}, [api]);
 	const romm = useRommAccount({serverUrl, accessToken});
 	const isSeerr = seerr.isMoonfin && seerr.variant === 'seerr';
 	const bootLocaleRef = useRef(settings.uiLanguage);
@@ -1084,6 +1095,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 		isSeerr,
 		hasLiveTv,
 		posterLabelsAvailable,
+		archiveViewable,
 		serverType,
 		isWebOS: isWebOS(),
 		isTizen: isTizen(),
@@ -1146,7 +1158,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			openDeviceProbe: canProbeDevice ? openDeviceProbe : null
 		}
 	}), [
-		settings, capabilities, seerr, achievements, romm, seerrLabel, isSeerr, hasLiveTv, posterLabelsAvailable, serverType, serverUrl, ratingsResetArmed, resetRatingsSettings, toggleExperimentalTruehd, updateSetting, updateSettings, refreshPlugin, calendarLibraries,
+		settings, capabilities, seerr, achievements, romm, seerrLabel, isSeerr, hasLiveTv, posterLabelsAvailable, archiveViewable, serverType, serverUrl, ratingsResetArmed, resetRatingsSettings, toggleExperimentalTruehd, updateSetting, updateSettings, refreshPlugin, calendarLibraries,
 		serverVersion, availableThemes, activeThemeId, openThemes, openThemeStore, openHomeRows,
 		openDetailButtons, openOsdButtons, openDetailMetadata, openDetailSections, openDiagnostics,
 		signInPin, toggleSignInPin, changeSignInPin, removeSignInPin, openKidsMode, openLibraries, openLibraryOrder, openParentalControls, openSubtitleDownloadLanguages, openTranscodeAudioCodecs, openQrLink, openRatingSources, openRowImageTypes, openExcludedGenres, openMediaBarLibraries,

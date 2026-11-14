@@ -15,6 +15,7 @@ import {useWatchPartyBackend} from '../../hooks/useWatchPartyRooms';
 import * as jellyfinApi from '../../services/jellyfinApi';
 import {searchesForTrailer} from '../../services/youtubeTrailer';
 import {canKeepAsComplete, keepAsComplete, useIncompleteRecording} from '../../services/incompleteRecordings';
+import useArchiveAction from './useArchiveAction';
 import {saveAudioPref, saveSubtitlePref} from '../../services/subtitlePrefs';
 import {fromServerStream} from '../../utils/seriesTrackPrefs';
 import ModernDetailContent from './ModernDetailContent';
@@ -1021,6 +1022,9 @@ const Details = ({
 	}, [item?.Id, showToast]);
 	const keepAsCompleteAction = incompleteRecording && canKeepAsComplete() ? handleKeepAsComplete : null;
 
+	// Archive and Soft Delete, each flipping to its undo, for the people the Archive plugin gives them to.
+	const archive = useArchiveAction({item, effectiveApi, onSelectItem, onLeave: onItemDeleted, showToast});
+
 	const handleButtonRowFocus = useCallback(() => {
 		if (pageScrollToRef.current) {
 			pageScrollToRef.current({position: {y: 0}, animate: true});
@@ -1384,6 +1388,12 @@ const Details = ({
 					handleOpenIdentifyModal={canIdentify ? modals.handleOpenIdentifyModal : null}
 					handleOpenDeleteDialog={modals.handleOpenDeleteDialog}
 					handleKeepAsComplete={keepAsCompleteAction}
+					handleArchive={archive.handleArchive}
+					isArchived={archive.isArchived}
+					archiveBusy={archive.archiveBusy}
+					handleSoftDelete={archive.handleSoftDelete}
+					isSoftDeleted={archive.isSoftDeleted}
+					softDeleteBusy={archive.softDeleteBusy}
 					handleChapterSelect={handleChapterSelect}
 					handleEpisodePlay={handleEpisodePlay}
 					handleExtraSelect={handleExtraSelect}
@@ -1570,6 +1580,12 @@ const Details = ({
 			onOpenDeleteDialog={modals.handleOpenDeleteDialog}
 			onOpenIdentifyModal={modals.handleOpenIdentifyModal}
 			onKeepAsComplete={keepAsCompleteAction}
+			onArchive={archive.handleArchive}
+			isArchived={archive.isArchived}
+			archiveBusy={archive.archiveBusy}
+			onSoftDelete={archive.handleSoftDelete}
+			isSoftDeleted={archive.isSoftDeleted}
+			softDeleteBusy={archive.softDeleteBusy}
 		/>
 	);
 

@@ -7,6 +7,7 @@ import {clearImageCache} from '../services/imageProxy';
 import {clearAnimeMarkerCache} from '../services/animeMarkersApi';
 import {clearPosterBadges} from '../services/posterBadgesApi';
 import {resetLibraryScope} from '../services/libraryScope';
+import {resetArchiveInfo} from '../services/archiveApi';
 import {resetBlockedContentGate} from '../services/blockedContentGate';
 import * as serverSocket from '../services/serverSocket';
 import * as userDataSync from '../services/userDataSync';
@@ -62,6 +63,8 @@ const clearAllCaches = () => {
 	clearPosterBadges();
 	// The policy and the hidden library list belong to the account that just left.
 	resetLibraryScope();
+	// So do the archive and what this account may do with it.
+	resetArchiveInfo();
 	resetBlockedContentGate();
 	console.log('[AuthContext] All caches cleared');
 };

@@ -11,7 +11,7 @@ const ICONS = {
 		seerrRequest: 'add', seerrRequest4k: 'add', shuffle: 'shuffle_rounded', version: 'video_file',
 		audio: 'audiotrack', subtitles: 'subtitles', trailer: 'movie_outlined', watchWithGroup: 'groups_rounded',
 		watched: 'check_circle_outline', favorite: 'favorite_border', personalRating: 'star_outline',
-		goToSeries: 'tv', playlist: 'playlist_add', collection: 'library_add', deleteFiles: 'delete_outline',
+		goToSeries: 'tv', playlist: 'playlist_add', collection: 'library_add', deleteFiles: 'delete_outline', archive: 'archive', softDelete: 'delete_sweep',
 		artwork: 'image', seerrWatchlist: 'bookmark_border', seerrReportIssue: 'report_problem_outlined',
 		seerrManage: 'rule', keepAsComplete: 'task_alt', admin: 'settings'
 	},

@@ -224,7 +224,8 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 	const yearInfo = homeText && (item.Type === 'Movie' || item.Type === 'Series') && item.ProductionYear
 		? String(item.ProductionYear)
 		: null;
-	const secondLine = (item._calendarDate && item.Subtitle) || yearInfo || item.Subtitle;
+	// On a person's page the line says who they played or what they did, which beats the year.
+	const secondLine = item._personRole || (item._calendarDate && item.Subtitle) || yearInfo || item.Subtitle;
 	// A home card's line that doesn't fit scrolls while the card has focus.
 	const line = (className, text) => (homeText
 		? <LoopMarquee className={className} text={text} active={focused} />

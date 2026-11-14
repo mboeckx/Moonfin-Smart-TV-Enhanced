@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Archive</title>
+</head>
+<body>
+<div id="archiveConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+            <form id="archiveConfigForm">
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">Archive and Soft Delete</h2>
+                    <p>
+                        The archive and the soft delete library are libraries of their own. Titles moved there leave their
+                        library on disk and stop showing up next to everything else. They stay one button away on clients
+                        that support it, such as Moonfin. Make a library for each first (Dashboard &rarr; Libraries), then
+                        pick it here. Leave one set to None to switch it off.
+                    </p>
+                    <p>
+                        Who gets a button and who can see a library are set separately. Somebody can be allowed to soft delete
+                        a title without being able to see the soft deleted titles. Bringing a title back needs both the button
+                        and access to the library it's in.
+                    </p>
+                </div>
+
+                <div id="shelves"></div>
+
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">Everything</h3>
+                    <div class="selectContainer">
+                        <label class="selectLabel" for="restoreLibrary">Restore to</label>
+                        <select is="emby-select" id="restoreLibrary" class="emby-select-withcolor emby-select"></select>
+                        <div class="fieldDescription">Titles moved through this plugin go back where they came from. This is only for titles put in the archive or the soft delete library some other way.</div>
+                    </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="enforceViewerAccess" />
+                            <span>Set each user's library access to match</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Each library above is opened to the people allowed to see it and closed to everybody else, in every app.
+                            Somebody on "all libraries" who may not see one of them is given every other library instead, including
+                            libraries added later, and gets "all libraries" back once they're allowed to see both. Turn this off to
+                            manage library access by hand.
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                        <span>Save</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        (function () {
+            var pluginId = '6f3c2a4e-8b1d-4f7a-9c2e-5a1b7d3e9f40';
+            var page = document.querySelector('#archiveConfigPage');
+            var SHELVES = [
+                {key: 'Archive', title: 'Archive', button: 'Move to Archive', personDefault: true},
+                {key: 'SoftDelete', title: 'Soft Delete', button: 'Soft Delete', personDefault: false}
+            ];
+
+            function escape(text) {
+                return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+            }
+
+            function bare(id) {
+                return String(id || '').replace(/-/g, '').toLowerCase();
+            }
+
+            function libraryOptions(libraries, selected) {
+                var found = libraries.filter(function (l) { return bare(l.Id) === bare(selected); })[0];
+                return '<option value=""' + (found ? '' : ' selected') + '>None</option>' + libraries.map(function (l) {
+                    return '<option value="' + escape(l.Id) + '"' + (found && found.Id === l.Id ? ' selected' : '') + '>' + escape(l.Name) + '</option>';
+                }).join('');
+            }
+
+            function userList(users, selected, cls) {
+                var wanted = (selected || []).map(bare);
+                return users.map(function (u) {
+                    var checked = wanted.indexOf(bare(u.Id)) >= 0 ? ' checked' : '';
+                    var note = u.IsAdministrator ? ' <span class="fieldDescription">(administrator)</span>' : '';
+                    return '<label style="display:block"><input is="emby-checkbox" type="checkbox" class="' + cls + '" data-user-id="' + escape(u.Id) + '"' + checked + ' />'
+                        + '<span>' + escape(u.Name) + note + '</span></label>';
+                }).join('');
+            }
+
+            function checkbox(cls, label, checked, description) {
+                return '<div class="checkboxContainer' + (description ? ' checkboxContainer-withDescription' : '') + '"><label>'
+                    + '<input is="emby-checkbox" type="checkbox" class="' + cls + '"' + (checked ? ' checked' : '') + ' />'
+                    + '<span>' + label + '</span></label>'
+                    + (description ? '<div class="fieldDescription checkboxFieldDescription">' + description + '</div>' : '')
+                    + '</div>';
+            }
+
+            function shelfSection(shelf, settings, choices) {
+                settings = settings || {};
+                return '<div class="verticalSection" data-shelf="' + shelf.key + '">'
+                    + '<h3 class="sectionTitle">' + shelf.title + '</h3>'
+                    + '<div class="selectContainer"><label class="selectLabel">Library</label>'
+                    + '<select is="emby-select" class="shelfLibrary emby-select-withcolor emby-select">' + libraryOptions(choices.Libraries, settings.LibraryId) + '</select>'
+                    + '<div class="fieldDescription">Titles are moved into this library\'s first folder.</div></div>'
+                    + '<h4>Who gets the &ldquo;' + shelf.button + '&rdquo; button</h4>'
+                    + checkbox('adminsCanManage', 'Every administrator', settings.AdministratorsCanManage !== false)
+                    + '<div class="checkboxList paperList" style="padding: .5em 1em;">' + userList(choices.Users, settings.ManagerUserIds, 'manager') + '</div>'
+                    + '<h4>Who can see the ' + shelf.title.toLowerCase() + ' library</h4>'
+                    + checkbox('adminsCanView', 'Every administrator', settings.AdministratorsCanView !== false)
+                    + '<div class="checkboxList paperList" style="padding: .5em 1em;">' + userList(choices.Users, settings.ViewerUserIds, 'viewer') + '</div>'
+                    + checkbox('includeInPersonBrowse', 'Show these titles when browsing an actor, director or crew member',
+                        settings.IncludeInPersonBrowse === undefined ? shelf.personDefault : settings.IncludeInPersonBrowse,
+                        'For people who can see this library, on clients that support the plugin.')
+                    + checkbox('hideFromLatest', 'Keep this library out of its viewers\' Latest rows', settings.HideFromLatest !== false)
+                    + '</div>';
+            }
+
+            function readShelf(section, previous) {
+                var ids = function (cls) {
+                    return Array.prototype.map.call(section.querySelectorAll('input.' + cls + ':checked'), function (i) {
+                        return i.getAttribute('data-user-id');
+                    });
+                };
+                var checked = function (cls) { return section.querySelector('input.' + cls).checked; };
+                var next = previous || {};
+                next.LibraryId = section.querySelector('select.shelfLibrary').value;
+                next.ManagerUserIds = ids('manager');
+                next.ViewerUserIds = ids('viewer');
+                next.AdministratorsCanManage = checked('adminsCanManage');
+                next.AdministratorsCanView = checked('adminsCanView');
+                next.IncludeInPersonBrowse = checked('includeInPersonBrowse');
+                next.HideFromLatest = checked('hideFromLatest');
+                return next;
+            }
+
+            page.addEventListener('pageshow', function () {
+                Dashboard.showLoadingMsg();
+                Promise.all([
+                    ApiClient.getPluginConfiguration(pluginId),
+                    ApiClient.getJSON(ApiClient.getUrl('Archive/Admin/Choices'))
+                ]).then(function (results) {
+                    var config = results[0];
+                    var choices = results[1];
+                    page.querySelector('#shelves').innerHTML = SHELVES.map(function (shelf) {
+                        return shelfSection(shelf, config[shelf.key], choices);
+                    }).join('');
+                    page.querySelector('#restoreLibrary').innerHTML = libraryOptions(choices.Libraries, config.DefaultRestoreLibraryId);
+                    page.querySelector('#enforceViewerAccess').checked = config.EnforceViewerAccess;
+                    Dashboard.hideLoadingMsg();
+                }).catch(function () {
+                    Dashboard.hideLoadingMsg();
+                });
+            });
+
+            page.querySelector('#archiveConfigForm').addEventListener('submit', function (e) {
+                e.preventDefault();
+                var sections = {};
+                SHELVES.forEach(function (shelf) {
+                    sections[shelf.key] = page.querySelector('[data-shelf="' + shelf.key + '"]');
+                });
+                var archiveLibrary = sections.Archive.querySelector('select.shelfLibrary').value;
+                if (archiveLibrary && archiveLibrary === sections.SoftDelete.querySelector('select.shelfLibrary').value) {
+                    Dashboard.alert('The archive and the soft delete library need to be different libraries.');
+                    return false;
+                }
+
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    SHELVES.forEach(function (shelf) {
+                        config[shelf.key] = readShelf(sections[shelf.key], config[shelf.key]);
+                    });
+                    config.DefaultRestoreLibraryId = page.querySelector('#restoreLibrary').value;
+                    config.EnforceViewerAccess = page.querySelector('#enforceViewerAccess').checked;
+                    return ApiClient.updatePluginConfiguration(pluginId, config);
+                }).then(function (result) {
+                    Dashboard.processPluginConfigurationUpdateResult(result);
+                });
+                return false;
+            });
+        })();
+    </script>
+</div>
+</body>
+</html>

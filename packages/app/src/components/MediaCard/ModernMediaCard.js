@@ -426,8 +426,12 @@ const ModernMediaCard = ({
 			)}
 
 			<div className={css.title}>{displayTitle}</div>
+			{/* On a person's page the character they played, or their job, stays put whatever has focus. */}
+			{item?._personRole && <div className={css.secondaryTitle}>{item._personRole}</div>}
 			{coreLook ? (
 				metadata ? <div className={css.secondaryTitle}>{metadata}</div> : null
+			) : item?._personRole ? (
+				isFocused && metadata ? <div className={css.secondaryTitle}>{metadata}</div> : null
 			) : isFocused ? (
 				episodeLabels ? (
 					<>
