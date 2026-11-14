@@ -39,6 +39,27 @@ export const modernRowSpacing = (settings) => {
 	return offset < 20 ? Math.round((offset + 40) * 34 / 60) : Math.max(34, offset);
 };
 
+// The space below each home row. The other clients size the padding sliders in their own units,
+// so the stored value is turned into it here. Classic rows count from the slider's lowest step,
+// so they sit a little closer at every setting. Full screen rows pace themselves.
+export const homeRowSpacing = (settings) => {
+	if (settings.fullScreenRows) return null;
+	return settings.homeRowsStyle !== 'v1'
+		? modernRowSpacing(settings)
+		: Math.max(0, (settings.classicHomeRowsPadding ?? 30) - 10);
+};
+
+// A Carousel row is a Modern row with the focused title's panel under its cards. Music rows, My
+// Media and the Live TV tiles keep plain Modern cards, and Studios stays Classic in every style.
+export const isCarouselRow = (row, settings) => settings.homeRowsStyle === 'carousel' &&
+	row.id !== 'studios' && row.type !== 'square' && !row.isLibraryRow && !row.isLiveTvRow;
+
+// Same stops as .scrim in CarouselPanel.module.less.
+export const CAROUSEL_PANEL_SCRIM = [
+	{to: 'top', rgb: '16, 18, 24', stops: [[0, 0.7], [0.35, 0]]},
+	{to: 'right', rgb: '16, 18, 24', stops: [[0, 1], [0.34, 1], [0.46, 0.9], [0.6, 0.5], [0.78, 0]]}
+];
+
 export const getEpisodeLabels = (item) => {
 	if (!item) return null;
 	if (item.Type === 'Episode') {

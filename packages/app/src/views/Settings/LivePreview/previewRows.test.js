@@ -145,24 +145,62 @@ describe('settings live preview rows', () => {
 		TRICKPLAY_KEYS.forEach((key) => {
 			expect(describeRow(`setting-${key}`, defaultSettings)).toMatchObject({scene: 'player', stage: 'trickplay'});
 		});
-		// A tile in the section that doesn't change the look still keeps it, and says it isn't shown.
-		expect(describeRow('setting-trickPlayPauseWhileScrubbing', defaultSettings)).toMatchObject({scene: null, stage: 'trickplay'});
+		expect(describeRow('setting-trickPlayPauseWhileScrubbing', defaultSettings)).toMatchObject({key: 'trickPlayPauseWhileScrubbing', scene: 'player', stage: 'trickplay'});
 		// The rest of the player screen keeps its own moments.
 		expect(describeRow('setting-showDescriptionOnPause', defaultSettings).stage).toBeNull();
 		expect(describeRow('setting-loadingAnimation', defaultSettings)).toMatchObject({key: 'loadingAnimation', scene: 'player', stage: 'loading'});
 	});
 
+	test('the skip and next episode settings show the player at their own moments', () => {
+		['introAction', 'nextUpBehavior', 'nextUpCountdownStyle', 'nextUpTimeout', 'replaceSkipOutroWithNextUp', 'showNextAirDate'].forEach((key) => {
+			const row = describeRow(`setting-${key}`, defaultSettings);
+			expect(row).toMatchObject({key, scene: 'player', stage: null});
+			expect(sceneOfRow(row)).toBe('player');
+		});
+		// The slider names no choices, and the countdown picker marks the saved one.
+		expect(describeRow('setting-nextUpTimeout', defaultSettings).options).toEqual([]);
+		expect(describeRow('setting-nextUpCountdownStyle', {...defaultSettings, nextUpCountdownStyle: 'timer'}).saved).toBe(1);
+	});
+
 	test('the player buttons link and the chapter marks show the player', () => {
 		expect(describeRow('setting-osdButtons', defaultSettings)).toMatchObject({key: 'osdButtons', scene: 'player', stage: null});
 		expect(describeRow('setting-showChapterMarkers', defaultSettings)).toMatchObject({scene: 'player', stage: null});
-		// The player draws its seek buttons without their lengths.
-		expect(describeRow('setting-skipBackLength', defaultSettings).scene).toBeNull();
-		expect(describeRow('setting-skipForwardLength', defaultSettings).scene).toBeNull();
+	});
+
+	test('the skip lengths, the outro action and the date format show the player', () => {
+		['skipBackLength', 'skipForwardLength', 'outroAction', 'dateFormat'].forEach((key) => {
+			const row = describeRow(`setting-${key}`, defaultSettings);
+			expect(row).toMatchObject({key, scene: 'player', stage: null});
+			expect(sceneOfRow(row)).toBe('player');
+		});
+		expect(describeRow('setting-skipBackLength', {...defaultSettings, skipBackLength: 5000}).saved).toBe(2);
+		expect(describeRow('setting-outroAction', {...defaultSettings, outroAction: 'none'}).saved).toBe(2);
+	});
+
+	test('OLED Mode, the browsing blur, poster labels and My Media\'s cards show on home, and Item Count on the media bar', () => {
+		['oledMode', 'backdropBlurHome', 'showPosterLabels', 'modernCardsOnMyMediaRow', 'featuredItemCount'].forEach((key) => {
+			expect(describeRow(`setting-${key}`, defaultSettings)).toMatchObject({key, scene: 'home', stage: null});
+		});
+		// The labels and My Media are drawn on Home's own rows, since the sample ones have neither.
+		expect(HOME_LOOK_KEYS).toEqual(expect.arrayContaining(['showPosterLabels', 'modernCardsOnMyMediaRow']));
+		expect(MEDIA_BAR_KEYS).toContain('featuredItemCount');
+	});
+
+	test('the settings the preview can\'t draw leave it alone', () => {
+		// A second subtitle line needs a track picked in the player, and the chat needs a watch party.
+		['secondarySubtitlesEnabled', 'watchPartyChatOverlay'].forEach((key) => {
+			expect(describeRow(`setting-${key}`, defaultSettings)).toMatchObject({key, scene: null, stage: null});
+		});
+	});
+
+	test('UI Scaling shows on home', () => {
+		expect(describeRow('setting-uiScale', defaultSettings)).toMatchObject({key: 'uiScale', scene: 'home', stage: null});
 	});
 
 	test('every subtitle appearance tile keeps the player on the subtitle look', () => {
-		expect(SUBTITLE_LOOK_KEYS).toHaveLength(21);
-		expect(SUBTITLE_HDR_KEYS).toEqual(expect.arrayContaining(['subtitleHdrSeparate', 'subtitleColorHdr', 'subtitlePositionAbsoluteHdr']));
+		expect(SUBTITLE_LOOK_KEYS).toHaveLength(29);
+		expect(SUBTITLE_HDR_KEYS).toEqual(expect.arrayContaining(['subtitleHdrSeparate', 'subtitleColorHdr', 'subtitlePositionAbsoluteHdr', 'subtitleBoldHdr']));
+		expect(SUBTITLE_HDR_KEYS).not.toContain('subtitleFont');
 		SUBTITLE_LOOK_KEYS.forEach((key) => {
 			expect(describeRow(`setting-${key}`, defaultSettings)).toMatchObject({scene: 'player', stage: 'subtitles'});
 		});
@@ -184,12 +222,11 @@ describe('settings live preview rows', () => {
 		expect(describeRow('setting-screensaver', defaultSettings)).toMatchObject({key: 'screensaver', scene: 'home', stage: 'screensaver'});
 	});
 
-	test('the seasonal effect and density show on home, and the focus follower leaves the preview alone', () => {
-		expect(SEASONAL_KEYS).toEqual(['seasonalTheme', 'seasonalDensity']);
+	test('the seasonal effect, its density and the focus follower show on home', () => {
+		expect(SEASONAL_KEYS).toEqual(['seasonalTheme', 'seasonalDensity', 'seasonalFollower']);
 		SEASONAL_KEYS.forEach((key) => {
 			expect(describeRow(`setting-${key}`, defaultSettings)).toMatchObject({key, scene: 'home', stage: null});
 		});
-		expect(describeRow('setting-seasonalFollower', defaultSettings)).toMatchObject({scene: null, stage: null});
 	});
 
 	test('the video, music and book library settings all show the library', () => {
@@ -205,8 +242,7 @@ describe('settings live preview rows', () => {
 	});
 
 	test('every Calendar screen tile the calendar draws shows it, and the others leave the preview alone', () => {
-		const releaseTypes = ['radarrCalendarShowCinema', 'radarrCalendarShowDigital', 'radarrCalendarShowPhysical',
-			'calendarWeekStart', 'calendarSelectAction'];
+		const releaseTypes = ['radarrCalendarShowCinema', 'radarrCalendarShowDigital', 'radarrCalendarShowPhysical', 'calendarSelectAction'];
 		const calendar = SETTINGS_SCHEMA.flatMap((category) => category.subcategories).find((sub) => sub.id === 'calendar');
 		const tiles = calendar.rows.filter((row) => row.kind !== KIND.SECTION).map((row) => row.key || row.id);
 		expect(tiles.filter((key) => releaseTypes.indexOf(key) < 0).sort()).toEqual([...CALENDAR_KEYS].sort());

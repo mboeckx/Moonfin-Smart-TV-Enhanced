@@ -1,6 +1,6 @@
 import {KIND, SETTINGS_SCHEMA, resolve, spotlightIdOf} from '../settingsSchema';
 import {ratingKey} from '../../../utils/ratingSources';
-import {SUBTITLE_STYLE_KEYS, hdrKeyFor} from '../../../utils/subtitleConstants';
+import {SUBTITLE_SHARED_STYLE_KEYS, SUBTITLE_STYLE_KEYS, hdrKeyFor} from '../../../utils/subtitleConstants';
 
 // The ratings rows a surface keeps for itself, the links to its source list and reset among
 // them. Episode ratings are left out since the previews draw a film.
@@ -9,8 +9,8 @@ const ratingRows = (surface) => ['mdblistEnabled', 'ratingSources', 'showRatingL
 
 // Settings whose home preview is the media bar rather than the navbar and rows.
 export const MEDIA_BAR_KEYS = [
-	'featuredBarStyle', 'mediaBarRowPeek', 'mediaBarOverlayColor', 'mediaBarOverlayOpacity', 'mediaBarNewReleaseBanner', 'mediaBarNewReleaseDays',
-	...ratingRows('mediaBar')
+	'featuredBarStyle', 'featuredItemCount', 'mediaBarRowPeek', 'mediaBarOverlayColor', 'mediaBarOverlayOpacity', 'mediaBarNewReleaseBanner',
+	'mediaBarNewReleaseDays', ...ratingRows('mediaBar')
 ];
 
 // The home rows' own ratings, which the modern rows draw under the focused card.
@@ -25,26 +25,26 @@ export const NAV_BUTTON_KEYS = [
 // The settings that change how the loading animation, the scrub thumbnails and the
 // screensaver look, each drawn on the stage rather than in a preview of its own.
 export const LOADING_KEYS = ['loadingAnimationImage', 'loadingAnimationSize', 'loadingAnimationPosition', 'loadingAnimationSpeed', 'showLoadingAnimationText'];
-export const TRICKPLAY_KEYS = ['trickPlayMode', 'trickPlayPreviewScale', 'trickPlayVerticalPosition', 'trickPlayFollowScrub'];
+export const TRICKPLAY_KEYS = ['trickPlayMode', 'trickPlayPreviewScale', 'trickPlayVerticalPosition', 'trickPlayFollowScrub', 'trickPlayPauseWhileScrubbing'];
 // The subtitle appearance settings, drawn on the player's subtitle line. The HDR ones draw it in
 // the HDR style.
 export const SUBTITLE_HDR_KEYS = ['subtitleHdrSeparate', ...SUBTITLE_STYLE_KEYS.map(hdrKeyFor)];
-export const SUBTITLE_LOOK_KEYS = [...SUBTITLE_STYLE_KEYS, ...SUBTITLE_HDR_KEYS];
+export const SUBTITLE_LOOK_KEYS = [...SUBTITLE_STYLE_KEYS, ...SUBTITLE_SHARED_STYLE_KEYS, ...SUBTITLE_HDR_KEYS];
 export const SCREENSAVER_KEYS = [
 	'screensaverEnabled', 'screensaverDimmingLevel', 'screensaverBackdrop', 'screensaverComponent', 'screensaverMovement',
 	'screensaverSize', 'screensaverPosition'
 ];
-// The Calendar screen's settings and its Libraries link. The Radarr release types are shared with the
-// Upcoming Movies row, week start only changes the month grid and the select action only acts on a press,
-// so those are left out.
+// The Calendar screen's settings and its Libraries link. Week start draws the month grid. The Radarr
+// release types are shared with the Upcoming Movies row and the select action only acts on a press, so
+// those are left out.
 export const CALENDAR_KEYS = [
-	'calendarStyle', 'calendarScope', 'calendarShowEpisodes', 'calendarShowMovies', 'calendarLibraries',
+	'calendarStyle', 'calendarWeekStart', 'calendarScope', 'calendarShowEpisodes', 'calendarShowMovies', 'calendarLibraries',
 	'calendarIncludeUnmonitored', 'calendarShowSpecials', 'calendarShowBadges', 'calendarColorBy', 'calendarImageType',
 	'calendarSpoilerSafe', 'calendarRequestButton'
 ];
-// The seasonal effect's settings, which draw the effect over home. The focus follower is left out,
-// since nothing in the preview holds focus for it to follow.
-export const SEASONAL_KEYS = ['seasonalTheme', 'seasonalDensity'];
+// The seasonal effect's settings, which draw the effect over home with the follower on the card
+// the preview holds in focus.
+export const SEASONAL_KEYS = ['seasonalTheme', 'seasonalDensity', 'seasonalFollower'];
 // The library settings. The music and book styles draw their own libraries and the rest the video library.
 export const LIBRARY_KEYS = [
 	'libraryStyle', 'musicLibraryStyle', 'bookLibraryStyle', 'groupItemsIntoCollections', 'showMediaDetailsOnLibraryPage',
@@ -68,9 +68,10 @@ const ROW_OPTION_KEYS = [
 // own rows since the sample ones can't show them. The links stand in for the Rows, image type
 // and Seasonal Row screens.
 export const HOME_LOOK_KEYS = [
-	'homeRows', 'rowImageTypes', 'homeRowsImageType', 'seasonalRow', 'mergeContinueWatchingNextUp', 'mergeRecentRowsByType',
+	'homeRows', 'rowImageTypes', 'homeRowsImageType', 'seasonalRow', 'mergeContinueWatchingNextUp', 'mergeRecentRowsByType', 'hideWatchedInRecentRows',
 	'displayRewatchRow', 'watchedIndicatorBehavior', 'useSeriesThumbnails', 'cardFocusZoom', 'classicHomeRowsPadding',
-	'modernHomeRowsPadding', 'homeRowOverlay'
+	'modernHomeRowsPadding', 'homeRowOverlay', 'showPosterLabels', 'modernCardsOnMyMediaRow',
+	'hideHomeWatchProgress', 'hideHomeUnwatchedCount'
 ];
 
 // The screens and sections whose every tile keeps the stage on one look, with the scene it's
@@ -99,6 +100,9 @@ export const SCENE_BY_KEY = {
 	navbarColor: 'home',
 	navbarOpacity: 'home',
 	focusBorderColor: 'home',
+	oledMode: 'home',
+	uiScale: 'home',
+	backdropBlurHome: 'home',
 	homeRowsStyle: 'home',
 	homeRowsPosterSize: 'home',
 	fullScreenRows: 'home',
@@ -122,14 +126,18 @@ export const SCENE_BY_KEY = {
 	showDescriptionOnPause: 'player',
 	showChapterMarkers: 'player',
 	osdButtons: 'player',
+	skipBackLength: 'player',
+	skipForwardLength: 'player',
 	...sceneFor([
 		'progressBarTime', 'playbackTimeAboveLeft', 'playbackTimeAboveCenter', 'playbackTimeAboveRight',
 		'playbackTimeBelowLeft', 'playbackTimeBelowCenter', 'playbackTimeBelowRight'
 	], 'player'),
 	subtitleMode: 'player',
 	subtitleLanguage: 'player',
-	introAction: 'player',
-	nextUpBehavior: 'player',
+	...sceneFor([
+		'introAction', 'outroAction', 'nextUpBehavior', 'nextUpCountdownStyle', 'nextUpTimeout', 'replaceSkipOutroWithNextUp', 'showNextAirDate',
+		'dateFormat'
+	], 'player'),
 	...sceneFor([...LOADING_KEYS, 'loadingAnimation', ...TRICKPLAY_KEYS], 'player'),
 	...sceneFor([...SUBTITLE_LOOK_KEYS, 'subtitleCustomization'], 'player'),
 	...sceneFor([...SCREENSAVER_KEYS, 'screensaver'], 'home'),

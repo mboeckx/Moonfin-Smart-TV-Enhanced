@@ -30,7 +30,7 @@ export const classicCardSize = (shape, posterSize) => {
 	return {width: Math.round(width * multiplier), height: Math.round(height * multiplier)};
 };
 
-const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'poster', onSelect, onFocusItem, showServerBadge = false, eagerLoad = false, deferImage = false, seerrSeasonStatus, spotlightId, onSpotlightLeft, onSpotlightRight, menuOptions, size, current = false, homeText = false, overlay = null, showInfo = true, posterLabels = false}) => {
+const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'poster', onSelect, onFocusItem, showServerBadge = false, eagerLoad = false, deferImage = false, seerrSeasonStatus, spotlightId, onSpotlightLeft, onSpotlightRight, menuOptions, size, current = false, homeText = false, overlay = null, showInfo = true, posterLabels = false, hideWatchProgress = false, hideUnwatchedCount = false, seerrMarkLeft = false}) => {
 	const {settings} = useSettings();
 	const focusTimeoutRef = useRef(null);
 
@@ -183,10 +183,10 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 		onPreviewBlur();
 	}, [onMenuMouseLeave, onPreviewBlur]);
 
-	const progress = item.UserData?.PlayedPercentage || 0;
+	const progress = hideWatchProgress ? 0 : item.UserData?.PlayedPercentage || 0;
 	const watchedBehavior = settings.watchedIndicatorBehavior || 'always';
 	const showIndicators = watchedBehavior === 'always' || watchedBehavior === 'hideCount' || (watchedBehavior === 'episodesOnly' && item.Type === 'Episode');
-	const unplayedCount = item.UserData?.UnplayedItemCount;
+	const unplayedCount = hideUnwatchedCount ? 0 : item.UserData?.UnplayedItemCount;
 	const showUnplayedCount = showIndicators && watchedBehavior !== 'hideCount' && !item.UserData?.Played && unplayedCount > 0;
 
 	const seerrStyle = seerrBadgeStyle(settings);
@@ -306,7 +306,7 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 						)}
 
 						{item._seerr && item._seerrMissing ? (
-							<div className={`${css.seerrBadge} ${css.seerrMissing}`}>
+							<div className={`${css.seerrBadge} ${css.seerrMissing} ${seerrMarkLeft ? css.seerrLeft : ''}`}>
 								<SeerrIcon />
 							</div>
 						) : seerrStyle === 'badge' && item._seerr && [2, 3, 4, 5].includes(item.mediaInfo?.status) ? (
@@ -318,7 +318,7 @@ const MediaCard = ({item, serverUrl, cardType = 'portrait', rowImageType = 'post
 
 						{showIndicators && showsWatchedCheck(item) && (
 							<div className={css.watchedBadge}>
-								<svg viewBox="0 0 24 24"><path fill="white" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+								<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
 							</div>
 						)}
 

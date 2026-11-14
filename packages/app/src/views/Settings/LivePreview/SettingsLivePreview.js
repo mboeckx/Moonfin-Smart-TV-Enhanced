@@ -32,15 +32,16 @@ export const SCENES = ['home', 'details', 'player', 'search'];
 // The calendar's and library's code and styles load the first time their scene shows, as they do
 // for the screens.
 const CalendarPage = lazy(() => import('../../Calendar'));
+const CalendarMonthPage = lazy(() => import('../../Calendar/CalendarMonth'));
 const LibraryPage = lazy(() => import('../../Library'));
 
 // The first library of one of [types] in the order the server lists them, which is the user's own.
 const firstLibrary = (libraries, types) => (libraries || [])
 	.find((library) => types.indexOf((library.CollectionType || '').toLowerCase()) >= 0) || null;
 
-// The settings each scene drawn by a real screen tries before they're saved, which are its styles.
-// The rest wait, since trying one of them can make the screen load again.
-const TRIED_KEYS = {calendar: ['calendarStyle'], library: ['libraryStyle', 'musicLibraryStyle', 'bookLibraryStyle']};
+// The settings each scene drawn by a real screen tries before they're saved: its styles, and the
+// calendar's scope and week start. The rest wait, since trying one of them can make the screen load again.
+const TRIED_KEYS = {calendar: ['calendarStyle', 'calendarScope', 'calendarWeekStart'], library: ['libraryStyle', 'musicLibraryStyle', 'bookLibraryStyle']};
 
 export const sceneChipId = (scene) => `preview-scene-${scene}`;
 
@@ -121,11 +122,12 @@ const DetailsScene = () => {
 	return <DetailStylePreview variant={settings.detailScreenStyle || 'v9'} />;
 };
 
-// The real seasonal effect as it falls over home, in the effect and density being tried. Home's
-// own effect behind Settings steps aside while this one is up.
+// The real seasonal effect as it falls over home, in the effect and density being tried, with its
+// follower on the card the preview holds in focus. Home's own effect behind Settings steps aside
+// while this one is up.
 const SeasonalScene = () => {
 	const {settings} = useSettings();
-	return <SeasonalTheme theme={settings.seasonalTheme} density={settings.seasonalDensity} follower={false} settingsPreview />;
+	return <SeasonalTheme theme={settings.seasonalTheme} density={settings.seasonalDensity} follower={settings.seasonalFollower} settingsPreview />;
 };
 
 // The screensaver as it comes up over home, or nothing while it's switched off.
@@ -152,7 +154,10 @@ const ScreensaverScene = () => {
 // The status dot and line of a setting that needs something else turned on first.
 const BLOCKED_COLOR = '#FFC107';
 
-const PLAYER_MOMENTS = {introAction: 'intro', nextUpBehavior: 'end', showDescriptionOnPause: 'paused'};
+const PLAYER_MOMENTS = {
+	introAction: 'intro', nextUpCountdownStyle: 'countdown', outroAction: 'outro', replaceSkipOutroWithNextUp: 'outro', nextUpBehavior: 'end',
+	nextUpTimeout: 'end', showNextAirDate: 'airDate', dateFormat: 'airDate', showDescriptionOnPause: 'paused'
+};
 // The subtitle look is judged with the controls away, the way most of a film is watched.
 const STAGE_MOMENTS = {loading: 'loading', trickplay: 'seek', subtitles: 'watching'};
 
@@ -163,10 +168,11 @@ const SceneView = ({scene, row, hasLiveTv, library, homeRows}) => {
 	if (scene === 'details') return <DetailsScene />;
 	if (scene === 'search') return <KeyboardPreview />;
 	if (scene === 'calendar') {
+		// Week start only changes the month grid, so that's drawn while it has focus.
 		return (
 			<SettingsScreenPreview hasLiveTv={hasLiveTv}>
 				<Suspense fallback={null}>
-					<CalendarPage settingsPreview />
+					{focusKey === 'calendarWeekStart' ? <CalendarMonthPage settingsPreview /> : <CalendarPage settingsPreview />}
 				</Suspense>
 			</SettingsScreenPreview>
 		);
@@ -186,9 +192,10 @@ const SceneView = ({scene, row, hasLiveTv, library, homeRows}) => {
 	if (MEDIA_BAR_KEYS.indexOf(focusKey) >= 0) return <MediaBarScene rows={homeRows} />;
 	// The left rail only paints its color and shows its clock while it's open.
 	const railOpen = ['navbarColor', 'navbarOpacity', 'showClock', 'clockDisplay'].indexOf(focusKey) >= 0;
+	const seasonal = SEASONAL_KEYS.indexOf(focusKey) >= 0;
 	return (
 		<>
-			<SettingsHomePreview railOpen={railOpen} hasLiveTv={hasLiveTv} over={SEASONAL_KEYS.indexOf(focusKey) >= 0 ? <SeasonalScene /> : null} rows={homeRows} focusCard={focusKey === 'focusBorderColor'} />
+			<SettingsHomePreview railOpen={railOpen} hasLiveTv={hasLiveTv} over={seasonal ? <SeasonalScene /> : null} rows={homeRows} focusCard={focusKey === 'focusBorderColor' || seasonal} atUiScale={focusKey === 'uiScale'} />
 			{stage === 'screensaver' && <ScreensaverScene />}
 		</>
 	);
