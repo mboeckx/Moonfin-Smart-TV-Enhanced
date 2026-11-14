@@ -1,0 +1,133 @@
+name: Jellyfin Plugin
+
+# Builds the Archive plugin for Jellyfin. Kept apart from the app's Build workflow so the two can
+# be changed and merged separately.
+#
+# Every pull request and push to main that touches the plugin builds it and keeps the zip as an
+# artifact. Pushing a tag like archive-plugin-v1.2.0 also publishes it:
+#   - a release for that tag, holding the zip
+#   - the plugin repository manifest, kept on the release tagged jellyfin-plugin-repository, so
+#     a Jellyfin server that adds this URL as a repository installs and updates the plugin itself:
+#     https://github.com/<owner>/<repo>/releases/download/jellyfin-plugin-repository/manifest.json
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, like 1.2.0 (leave empty for the one in plugin.json). Manual runs never publish.'
+        required: false
+  push:
+    branches: [main]
+    tags:
+      - 'archive-plugin-v[0-9]+.[0-9]+.[0-9]+*'
+    paths:
+      - 'server-plugin/**'
+      - 'scripts/build-jellyfin-plugin.js'
+      - '.github/workflows/jellyfin-plugin.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'server-plugin/**'
+      - 'scripts/build-jellyfin-plugin.js'
+      - '.github/workflows/jellyfin-plugin.yml'
+
+permissions:
+  contents: write
+
+# Two publishes at once would each add their version to the manifest they read and drop the other's.
+concurrency:
+  group: ${{ startsWith(github.ref, 'refs/tags/') && 'jellyfin-plugin-publish' || format('jellyfin-plugin-{0}', github.ref) }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  REPOSITORY_TAG: jellyfin-plugin-repository
+
+jobs:
+  build:
+    name: Build Jellyfin plugin
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PUBLISH: ${{ startsWith(github.ref, 'refs/tags/archive-plugin-v') }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Work out the version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ "$PUBLISH" = "true" ]; then
+            version="${GITHUB_REF_NAME#archive-plugin-v}"
+          elif [ -n "$INPUT_VERSION" ]; then
+            version="${INPUT_VERSION#v}"
+          else
+            version="$(node -p "require('./server-plugin/Jellyfin.Plugin.Archive/plugin.json').version")"
+          fi
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+(\.[0-9]+){2,3}$'; then
+            echo "::error::Not a version: $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building version $version"
+
+      # The manifest holds every version published so far, so this build is added to the last one.
+      - name: Fetch the plugin repository manifest
+        if: env.PUBLISH == 'true'
+        run: |
+          mkdir -p repository
+          if gh release view "$REPOSITORY_TAG" > /dev/null 2>&1; then
+            gh release download "$REPOSITORY_TAG" --pattern manifest.json --dir repository || true
+          fi
+          [ -f repository/manifest.json ] || echo '[]' > repository/manifest.json
+
+      - name: Build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          args=("$VERSION" --out out)
+          if [ "$PUBLISH" = "true" ]; then
+            args+=(--manifest repository/manifest.json \
+              --source-url-base "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}")
+          fi
+          node scripts/build-jellyfin-plugin.js "${args[@]}"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: jellyfin-plugin
+          path: out/Jellyfin.Plugin.Archive_*.zip
+
+      - name: Publish the release
+        if: env.PUBLISH == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          changelog="$(node -p "require('./server-plugin/Jellyfin.Plugin.Archive/plugin.json').changelog")"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" out/Jellyfin.Plugin.Archive_*.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" out/Jellyfin.Plugin.Archive_*.zip \
+              --title "Archive plugin for Jellyfin $VERSION" \
+              --notes "$changelog" \
+              --latest=false
+          fi
+
+      - name: Publish the plugin repository manifest
+        if: env.PUBLISH == 'true'
+        run: |
+          if ! gh release view "$REPOSITORY_TAG" > /dev/null 2>&1; then
+            gh release create "$REPOSITORY_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "Jellyfin plugin repository" \
+              --notes "Add https://github.com/${GITHUB_REPOSITORY}/releases/download/${REPOSITORY_TAG}/manifest.json as a repository in Jellyfin (Dashboard → Plugins → Repositories) to install and update the Archive plugin. This release only holds that file; the plugin itself is on the archive-plugin-v releases." \
+              --latest=false
+          fi
+          gh release upload "$REPOSITORY_TAG" repository/manifest.json --clobber
