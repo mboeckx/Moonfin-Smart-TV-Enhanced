@@ -174,9 +174,9 @@ describe('SettingsLivePreview', () => {
 		expect(rings()).toBe(0);
 	});
 
-	test('Focus Border Color rings the first card in its color, in either row style', () => {
+	test('Focus Border Color rings the first card in its color, in every row style', () => {
 		const rings = () => Array.from(document.querySelectorAll('.frame div')).filter((node) => node.style.border.indexOf('3px solid') === 0);
-		for (const homeRowsStyle of ['v2', 'v1']) {
+		for (const homeRowsStyle of ['v2', 'v1', 'carousel']) {
 			const {unmount} = draw({homeRowsStyle, focusBorderColor: '#FF0000'}, 'setting-focusBorderColor', 'home');
 			expect(rings().map((ring) => ring.style.borderColor)).toEqual(['rgb(255, 0, 0)']);
 			unmount();
@@ -204,6 +204,38 @@ describe('SettingsLivePreview', () => {
 			draw({homeRowsStyle, hideHomeMediaDescription: true}, 'setting-hideHomeMediaDescription', 'home');
 			expect(descriptions()).toBe(0);
 			cleanup();
+		}
+	});
+
+	test('Carousel rows leave the cards bare and show each row\'s first title in a panel under them', () => {
+		const shown = (text) => screen.queryAllByText(text).length;
+		draw({homeRowsStyle: 'v2'}, 'setting-homeRowsStyle', 'home');
+		// Eight cards a row cycle the four sample films, across three rows.
+		expect(shown('Film 0')).toBe(6);
+		cleanup();
+		draw({homeRowsStyle: 'carousel'}, 'setting-homeRowsStyle', 'home');
+		// Only the first row's panel names Film 0, the next two lead with Film 3 and Film 2.
+		expect(shown('Film 0')).toBe(1);
+		expect(shown('Film 3')).toBe(1);
+		expect(shown('A story.')).toBe(3);
+		cleanup();
+		draw({homeRowsStyle: 'carousel', hideHomeMediaDescription: true}, 'setting-hideHomeMediaDescription', 'home');
+		expect(shown('A story.')).toBe(0);
+	});
+
+	test('a Carousel panel shows media pills for a film or an episode, and none for a show', () => {
+		const pills = () => screen.queryAllByText('HDR10').length;
+		const saved = mockItems[0].type;
+		try {
+			// Only the first row's panel shows Film 0.
+			for (const [type, count] of [['Movie', 1], ['Episode', 1], ['Series', 0]]) {
+				mockItems[0].type = type;
+				draw({homeRowsStyle: 'carousel'}, 'setting-homeRowsStyle', 'home');
+				expect(pills()).toBe(count);
+				cleanup();
+			}
+		} finally {
+			mockItems[0].type = saved;
 		}
 	});
 
@@ -695,13 +727,53 @@ describe('SettingsLivePreview', () => {
 			expect(await screen.findByText('Starts in')).toBeTruthy();
 			expect(screen.queryByText('Upcoming')).toBeNull();
 			cleanup();
-			// Its other settings wait until they're saved, or My shows would empty the list here.
+			// The scope being tried filters it too, and the user follows nothing here.
 			draw({}, 'setting-calendarScope', 'calendar', {trying: {key: 'calendarScope', value: 'myShows', index: 1}});
+			expect(await screen.findByText('Nothing coming up')).toBeTruthy();
+			cleanup();
+			// Its other settings wait until they're saved.
+			draw({}, 'setting-calendarShowEpisodes', 'calendar', {trying: {key: 'calendarShowEpisodes', value: false, index: 1}});
 			await waitFor(() => expect(screen.getAllByText('Night Shift').length).toBeGreaterThan(0));
 			expect(focus).not.toHaveBeenCalled();
 		} finally {
 			focus.mockRestore();
 		}
+	});
+
+	test('Week Start draws the month grid starting on the day being tried, and nothing in it takes focus', async () => {
+		mockSeerr = {...mockSeerr, pluginInfo: {calendarAvailable: true}};
+		// The mocks reset between tests, and only the first test to draw the calendar keeps its load.
+		require('../../../services/calendarApi').loadCalendar.mockImplementation(() => Promise.resolve({entries: [mockEpisode()], problem: null}));
+		const focus = jest.spyOn(Spotlight, 'focus');
+		const firstWeekday = () => find('.weekdays').firstChild.textContent;
+		try {
+			draw({calendarWeekStart: 'sunday'}, 'setting-calendarWeekStart', 'calendar');
+			await waitFor(() => expect(find('.weekdays')).not.toBeNull());
+			expect(firstWeekday()).toBe('Sun');
+			expect(screen.getByText('Shows on the Calendar preview')).toBeTruthy();
+			expect(find('.page').getAttribute('data-spotlight-container-disabled')).toBe('true');
+			cleanup();
+			draw({calendarWeekStart: 'sunday'}, 'setting-calendarWeekStart', 'calendar', {trying: {key: 'calendarWeekStart', value: 'monday', index: 2}});
+			await waitFor(() => expect(find('.weekdays')).not.toBeNull());
+			expect(firstWeekday()).toBe('Mon');
+			expect(focus).not.toHaveBeenCalled();
+		} finally {
+			focus.mockRestore();
+		}
+	});
+
+	test('UI Scaling draws Home at the scale being tried', () => {
+		const screenInner = () => find('.screenInner');
+		draw({uiScale: 1}, 'setting-uiScale', 'home', {trying: {key: 'uiScale', value: 1.2, index: 8}});
+		expect(screen.getByText('Shows on the Home preview')).toBeTruthy();
+		expect(screenInner().style.width).toBe('800px');
+		// Saved, it's drawn at that scale while the row has focus, and at the screen's own size elsewhere.
+		cleanup();
+		draw({uiScale: 0.8}, 'setting-uiScale', 'home');
+		expect(screenInner().style.width).toBe('1200px');
+		cleanup();
+		draw({uiScale: 0.8}, 'setting-oledMode', 'home');
+		expect(screenInner().style.width).toBe('960px');
 	});
 
 	test('the Library chip only shows with a video, music or book library, and comes after Calendar', () => {
@@ -1096,6 +1168,20 @@ describe('Home\'s own rows', () => {
 			rerender(<SettingsLivePreview scene='home' row={row} trying={{key: 'watchedIndicatorBehavior', value, index}} onPickScene={() => {}} onLeaveChips={() => {}} />);
 			expect(shown()).toEqual(expected[value]);
 		});
+	});
+
+	test('Hide Watch Progress and Hide Unwatched Count start at the first row wearing them and take off only their own mark', () => {
+		const shown = () => ({
+			progress: Boolean(cardOf('Heat').querySelector('div[style*="width: 40%"]')),
+			count: within(cardOf('Fargo')).queryByText('3') !== null
+		});
+		draw(home({hideHomeWatchProgress: true}), 'setting-hideHomeWatchProgress', 'home');
+		expect(rowTitles()).toEqual(['Continue Watching', 'Next Up']);
+		expect(shown()).toEqual({progress: false, count: true});
+		cleanup();
+		draw(home({hideHomeUnwatchedCount: true}), 'setting-hideHomeUnwatchedCount', 'home');
+		expect(rowTitles()).toEqual(['Continue Watching', 'Next Up']);
+		expect(shown()).toEqual({progress: true, count: false});
 	});
 
 	test('Display Series Thumbnails starts at the first row with an episode and swaps its still for the series art, in either style', () => {

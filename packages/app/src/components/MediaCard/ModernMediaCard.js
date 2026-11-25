@@ -114,7 +114,10 @@ const ModernMediaCard = ({
 	ratingsSurface,
 	hideOverview = false,
 	coreLook = false,
-	posterLabels = false
+	posterLabels = false,
+	hideWatchProgress = false,
+	hideUnwatchedCount = false,
+	carousel = false
 }) => {
 	const {settings} = useSettings();
 	const focusTimeoutRef = useRef(null);
@@ -180,10 +183,10 @@ const ModernMediaCard = ({
 		onPreviewBlur();
 	}, [onMenuMouseLeave, onPreviewBlur]);
 
-	const progress = item?.UserData?.PlayedPercentage || 0;
+	const progress = hideWatchProgress ? 0 : item?.UserData?.PlayedPercentage || 0;
 	const watchedBehavior = settings.watchedIndicatorBehavior || 'always';
 	const showIndicators = watchedBehavior === 'always' || watchedBehavior === 'hideCount' || (watchedBehavior === 'episodesOnly' && item?.Type === 'Episode');
-	const unplayedCount = item?.UserData?.UnplayedItemCount;
+	const unplayedCount = hideUnwatchedCount ? 0 : item?.UserData?.UnplayedItemCount;
 	const showUnplayedCount = showIndicators && watchedBehavior !== 'hideCount' && !item?.UserData?.Played && unplayedCount > 0;
 	const seerrStyle = seerrBadgeStyle(settings);
 	const bannerStatus = seerrStyle === 'banner' ? seerrTitleStatus(item) : null;
@@ -202,6 +205,8 @@ const ModernMediaCard = ({
 	}, [item?.Overview, shouldShowOverview, item?._external]);
 
 	const isSquareItem = item?.Type === 'MusicAlbum' || item?.Type === 'Audio';
+	// A genre card is its name, so it shows it in every row style.
+	const isGenre = item?.Type === 'Genre' || item?.Type === 'MusicGenre';
 	const {imageHeight, expandedWidth, cardWidth} = modernCardMetrics({
 		posterSize: settings.homeRowsPosterSize,
 		isSquareItem,
@@ -345,7 +350,7 @@ const ModernMediaCard = ({
 								}}
 							/>
 						)}
-						{(item?.Type === 'Genre' || item?.Type === 'MusicGenre') && (
+						{isGenre && (
 							<>
 								<div className={css.genreOverlay} />
 								<div className={css.genreTitle}>{item?.Name?.toUpperCase()}</div>
@@ -358,7 +363,7 @@ const ModernMediaCard = ({
 							<svg className={css.placeholderIcon} viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true">
 								<path d="M480-480q-66 0-113-47t-47-113q0-66 47-113t113-47q66 0 113 47t47 113q0 66-47 113t-113 47ZM160-160v-112q0-34 17.5-62.5T224-378q62-31 126-46.5T480-440q66 0 130 15.5T736-378q29 15 46.5 43.5T800-272v112H160Z"/>
 							</svg>
-						) : (
+						) : carousel && !isGenre ? null : (
 							<span className={css.placeholderTitle}>{item?.Name}</span>
 						)}
 					</div>
@@ -395,7 +400,7 @@ const ModernMediaCard = ({
 
 				{showIndicators && showsWatchedCheck(item) && (
 					<div className={css.watchedBadge}>
-						<svg viewBox="0 0 24 24"><path fill="white" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+						<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
 					</div>
 				)}
 
@@ -425,10 +430,10 @@ const ModernMediaCard = ({
 				<div className={css.focusRing} style={{height: `${imageHeight + 16}px`}} />
 			)}
 
-			<div className={css.title}>{displayTitle}</div>
+			{!carousel && <div className={css.title}>{displayTitle}</div>}
 			{/* On a person's page the character they played, or their job, stays put whatever has focus. */}
-			{item?._personRole && <div className={css.secondaryTitle}>{item._personRole}</div>}
-			{coreLook ? (
+			{!carousel && item?._personRole && <div className={css.secondaryTitle}>{item._personRole}</div>}
+			{carousel ? null : coreLook ? (
 				metadata ? <div className={css.secondaryTitle}>{metadata}</div> : null
 			) : item?._personRole ? (
 				isFocused && metadata ? <div className={css.secondaryTitle}>{metadata}</div> : null
@@ -445,7 +450,7 @@ const ModernMediaCard = ({
 				<div className={css.secondaryTitle}>{episodeLabels ? episodeLabels.short : item.Subtitle}</div>
 			) : null}
 
-			{expanded && (
+			{expanded && !carousel && (
 				<div className={css.extendedSection} style={{width: `${extendedSectionWidth}px`}}>
 					<RatingsRow
 						item={item}
