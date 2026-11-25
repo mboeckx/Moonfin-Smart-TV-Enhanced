@@ -183,6 +183,16 @@ describe('settings schema', () => {
 		expect(note.when({...xbox, settings: {...defaultSettings, xboxPassthrough: true, xboxNativePlayer: false}})).toBe(true);
 	});
 
+	test('a search for silent, silence or no sound finds Passthrough', () => {
+		const searchFor = (query, context) => matchSettings(buildSettingsIndex(SETTINGS_SCHEMA, context, {resolve, spotlightIdOf}), query)
+			.map((entry) => entry.spotlightId);
+		const xbox = {...ctx, isWebOS: false, isXbox: true};
+		for (const query of ['silent', 'silence', 'no sound']) {
+			expect(searchFor(query, ctx)).toContain('setting-audioPassthroughMode');
+			expect(searchFor(query, xbox)).toContain('setting-xboxPassthrough');
+		}
+	});
+
 	test('Xbox passthrough is offered only with the console player', () => {
 		const toggle = allRows().find(({row}) => row.key === 'xboxPassthrough').row;
 		const xbox = {...ctx, isWebOS: false, isXbox: true};
@@ -192,12 +202,32 @@ describe('settings schema', () => {
 		expect(toggle.when(ctx)).toBeFalsy();
 	});
 
+	test('Xbox Dolby Vision is offered only with the console player, on a console and TV that report it', () => {
+		const toggle = allRows().find(({row}) => row.key === 'xboxDolbyVision').row;
+		const xbox = {...ctx, isWebOS: false, isXbox: true, consoleDolbyVision: true};
+		expect(defaultSettings.xboxDolbyVision).toBe(true);
+		expect(toggle.when(xbox)).toBe(true);
+		expect(toggle.when({...xbox, consoleDolbyVision: false})).toBe(false);
+		expect(toggle.when({...xbox, settings: {...defaultSettings, xboxNativePlayer: false}})).toBe(false);
+		expect(toggle.when({...ctx, consoleDolbyVision: true})).toBeFalsy();
+
+		const toggleXboxDolbyVision = jest.fn();
+		toggle.onToggle({...xbox, actions: {toggleXboxDolbyVision}});
+		expect(toggleXboxDolbyVision).toHaveBeenCalledTimes(1);
+	});
+
 	test('Show Libraries Individually is offered only while libraries show in the navigation bar', () => {
 		const toggle = allRows().find(({row}) => row.key === 'showLibrariesIndividually').row;
 		expect(defaultSettings.showLibrariesIndividually).toBe(false);
 		expect(toggle.when(ctx)).toBe(true);
 		expect(toggle.when({...ctx, settings: {...defaultSettings, navbarPosition: 'left'}})).toBe(true);
 		expect(toggle.when({...ctx, settings: {...defaultSettings, showLibrariesInToolbar: false}})).toBe(false);
+	});
+
+	test('Studio Row Sorting picks Name for a saved sort it no longer offers', () => {
+		const picker = allRows().find(({row}) => row.key === 'studiosRowSortBy').row;
+		expect(picker.value({...ctx, settings: {...defaultSettings, studiosRowSortBy: 'DateCreated'}})).toBe('SortName');
+		expect(picker.value({...ctx, settings: {...defaultSettings, studiosRowSortBy: 'Random'}})).toBe('Random');
 	});
 
 	test('Card image only shows while the saved calendar style is Countdown, the one style that draws it', () => {

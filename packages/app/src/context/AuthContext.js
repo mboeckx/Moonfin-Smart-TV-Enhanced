@@ -206,6 +206,7 @@ export const AuthProvider = ({children}) => {
 							await multiServerManager.setActiveServer(restoreTarget.serverId, restoreTarget.userId);
 						}
 						restoreTarget = {...restoreTarget, url: await addressFor(restoreTarget)};
+						restoreTarget.serverType = await multiServerManager.checkServerType(restoreTarget.serverId, restoreTarget.url, restoreTarget.serverType || 'jellyfin');
 						jellyfinApi.setServer(restoreTarget.url);
 						jellyfinApi.setServerType(restoreTarget.serverType || 'jellyfin');
 						jellyfinApi.setAuth(restoreTarget.userId, restoreTarget.accessToken);
@@ -419,6 +420,7 @@ export const AuthProvider = ({children}) => {
 			const saved = await multiServerManager.getActiveServer();
 			if (!saved) return false;
 			const active = {...saved, url: await addressFor(saved)};
+			active.serverType = await multiServerManager.checkServerType(active.serverId, active.url, active.serverType || 'jellyfin');
 
 			// Update API
 			jellyfinApi.setServer(active.url);

@@ -16,6 +16,7 @@ import {collapseLatestTvItems} from '../../utils/latestMediaRowNormalizer';
 import {isPickedRow, isPickedRowShown, isSameServer} from '../../utils/pickedRows';
 import mapBounded from '../../utils/mapBounded';
 import {studioLogoIndex} from '../Details/studioLogos';
+import {studioRowSortBy} from '../../utils/studioRowSort';
 import {FULL_ROW_READ, pageableRow, readFoldedHead} from './rowPaging';
 import * as gamesApi from '../../services/gamesApi';
 import {isGameLibrary, refreshGameLibraries, resolveGameLibraryId} from '../../utils/gameLibrary';
@@ -313,7 +314,7 @@ export const withStudioLogos = (studios, logoList, serverUrl, token) => {
 export const loadStudios = async (ctx) => {
 	const {api, appendRows, studiosEnabled, settings, serverUrl} = ctx;
 	if (!studiosEnabled) return;
-	const sortBy = apiSortBy(settings.studiosRowSortBy || 'SortName');
+	const sortBy = studioRowSortBy(settings.studiosRowSortBy);
 	try {
 		const logos = settings.useMoonfinPlugin && api.getStudioLogos ? api.getStudioLogos().catch(() => null) : null;
 		const result = await api.getStudios(20, sortBy, resolveSortOrder(sortBy, settings.studiosRowSortOrder)).catch(() => null);
@@ -473,6 +474,10 @@ export const loadGenres = async (ctx) => {
 	}
 };
 
+export const onNowRow = (result) => (result?.Items?.length > 0
+	? {id: 'onnow', title: $L('On Now'), items: result.Items, type: 'landscape'}
+	: null);
+
 export const loadPlaylistsAndMusic = async (ctx) => {
 	const {api, appendRows, audioAlbumsEnabled, audioArtistsEnabled, audioPlaylistsEnabled, audioRowsSortBy, audioRowsSortOrder, onNowEnabled, playlistsSortBy, playlistsSortOrder, recordingsEnabled, resumeAudioEnabled, settings} = ctx;
 	const readArtists = (limit) => readMusicArtists(api, audioRowsSortBy, audioRowsSortOrder, limit);
@@ -542,14 +547,8 @@ export const loadPlaylistsAndMusic = async (ctx) => {
 				type: 'landscape'
 			});
 		}
-		if (onNowResult?.Items?.length > 0) {
-			rows.push({
-				id: 'onnow',
-				title: $L('On Now'),
-				items: onNowResult.Items,
-				type: 'landscape'
-			});
-		}
+		const onNow = onNowRow(onNowResult);
+		if (onNow) rows.push(onNow);
 		appendRows(rows);
 	} catch (e) {
 		console.warn('[Browse] Failed to load playlists/music:', e);

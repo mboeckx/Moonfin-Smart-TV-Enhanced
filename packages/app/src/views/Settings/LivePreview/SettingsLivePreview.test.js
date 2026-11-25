@@ -8,6 +8,7 @@ import {FALL_COUNTS} from '../../../components/SeasonalTheme/seasonalParticles';
 import {seekBackIcon, seekForwardIcon} from '../../Player/PlayerConstants';
 import {getPerfTier} from '../../../utils/perfTier';
 import {describeRow} from './previewRows';
+import {NavbarPreview} from '../../SetupWizard/SetupPreviews';
 import SettingsLivePreview from './SettingsLivePreview';
 
 // The CLI ships a second copy of React, so the components' JSX goes through the copy under test.
@@ -71,8 +72,11 @@ jest.mock('../../../services/posterBadgesApi', () => ({
 }));
 let mockParentalFilter = require('../../../utils/parentalFilter').parentalFilterFromRatings([]);
 jest.mock('../../../hooks/useParentalFilter', () => () => ({parentalFilter: mockParentalFilter}));
-// Home's card pulls in the context menu and its Sandstone screens, and the preview only reads its size.
-jest.mock('../../../components/MediaCard/MediaCard', () => ({classicCardSize: () => ({width: 0, height: 0})}));
+// Home's card pulls in the context menu and its Sandstone screens, and the preview only reads its size,
+// so this hands back the Default sizes.
+jest.mock('../../../components/MediaCard/MediaCard', () => ({
+	classicCardSize: (shape) => ({portrait: {width: 240, height: 360}, landscape: {width: 384, height: 216}, square: {width: 240, height: 240}, banner: {width: 1168, height: 216}}[shape])
+}));
 jest.mock('../../../components/LoadingSpinner', () => () => null);
 // The real layer fades its picture in once it loads, so here it only says what it was handed.
 jest.mock('../../../components/BackdropLayer', () => {
@@ -251,18 +255,18 @@ describe('SettingsLivePreview', () => {
 		}
 	});
 
-	test('Item Count gives the bar a page mark for each item being tried, and the Banner bar seven at most', () => {
+	test('Item Count gives the bar a page mark for each item being tried, the Banner bar seven at most and MakD five', () => {
 		// Each bar spaces its marks its own way, which tells them apart from the rest of the bar.
 		const marks = (gap) => Array.from(document.querySelectorAll('.frame div'))
 			.filter((node) => node.style.marginLeft === gap && node.style.marginRight === gap).length;
-		for (const [featuredBarStyle, gap, banner] of [['moonfin', '4px', false], ['makd', '5px', false], ['aya', '2.5px', false], ['banner', '2px', true]]) {
+		for (const [featuredBarStyle, gap, most] of [['moonfin', '4px', Infinity], ['makd', '2.5px', 5], ['aya', '2.5px', Infinity], ['banner', '2px', 7]]) {
 			const {rerender} = draw({featuredBarStyle, featuredItemCount: 10}, 'setting-featuredItemCount', 'home');
 			expect(screen.getByText('Shows on the Home preview')).toBeTruthy();
-			expect(marks(gap)).toBe(banner ? 7 : 10);
+			expect(marks(gap)).toBe(Math.min(10, most));
 			const row = describeRow('setting-featuredItemCount', mockSettings);
 			for (const value of [5, 20]) {
 				rerender(<SettingsLivePreview scene='home' row={row} trying={{key: 'featuredItemCount', value, index: 0}} onPickScene={() => {}} onLeaveChips={() => {}} />);
-				expect(marks(gap)).toBe(banner ? Math.min(value, 7) : value);
+				expect(marks(gap)).toBe(Math.min(value, most));
 			}
 			cleanup();
 		}
@@ -285,6 +289,75 @@ describe('SettingsLivePreview', () => {
 		unmount();
 		draw({navbarPosition: 'left', showClock: false}, 'setting-showClock', 'home');
 		expect(rail().queryByText(/^\d{1,2}:\d{2}/)).toBeNull();
+	});
+
+	test('the top bar style being tried takes the classic pill\'s place over Home\'s rows', () => {
+		const frame = () => within(find('.frame'));
+		const row = describeRow('setting-topNavbarStyle', {...defaultSettings});
+		const {rerender} = draw({}, 'setting-topNavbarStyle', 'home');
+		const tryStyle = (value) => rerender(
+			<SettingsLivePreview scene='home' row={row} trying={{key: 'topNavbarStyle', value, index: 0}} onPickScene={() => {}} onLeaveChips={() => {}} />
+		);
+		expect(screen.getByText('Shows on the Home preview')).toBeTruthy();
+		// The classic pill only draws icons while the labels are folded away.
+		expect(frame().queryByText('Genres')).toBeNull();
+		expect(find('.frame .tab')).toBeNull();
+
+		tryStyle('tabline');
+		expect(find('.frame .scrim')).not.toBeNull();
+		expect(find('.frame .current').textContent).toBe('Home');
+		const lines = Array.from(document.querySelectorAll('.frame .line'));
+		expect(lines.filter((line) => line.style.background).length).toBe(1);
+		// Search moves out of the tabs to an icon on the right.
+		expect(frame().queryByText('Search')).toBeNull();
+		expect(frame().getByText('Genres')).toBeTruthy();
+		expect(frame().getByText('Continue Watching')).toBeTruthy();
+
+		tryStyle('atlas');
+		expect(find('.frame .scrim')).toBeNull();
+		expect(find('.frame .tabCurrent').textContent).toBe('Home');
+		expect(frame().getByText('Search')).toBeTruthy();
+		expect(frame().queryByText('Settings')).toBeNull();
+		// Only the grouped libraries open a panel with nothing else set up.
+		expect(Array.from(document.querySelectorAll('.frame .chevron')).map((chevron) => chevron.parentNode.textContent)).toEqual(['Libraries']);
+		expect(frame().getByText('Continue Watching')).toBeTruthy();
+
+		tryStyle('classic');
+		expect(find('.frame .tab')).toBeNull();
+		expect(frame().queryByText('Genres')).toBeNull();
+	});
+
+	test('the sidebar style being tried draws its resting control in place of the rail', () => {
+		const frame = () => within(find('.frame'));
+		const row = describeRow('setting-sidebarStyle', {...defaultSettings, navbarPosition: 'left'});
+		const {rerender} = draw({navbarPosition: 'left'}, 'setting-sidebarStyle', 'home');
+		const tryStyle = (value) => rerender(
+			<SettingsLivePreview scene='home' row={row} trying={{key: 'sidebarStyle', value, index: 0}} onPickScene={() => {}} onLeaveChips={() => {}} />
+		);
+		expect(screen.getByText('Shows on the Home preview')).toBeTruthy();
+		// The classic rail keeps the user's initial at its top.
+		expect(frame().getByText('A')).toBeTruthy();
+
+		tryStyle('reel');
+		expect(frame().queryByText('A')).toBeNull();
+		expect(find('.frame .restButton')).not.toBeNull();
+		expect(document.querySelectorAll('.frame .rest .dot')).toHaveLength(6);
+		expect(frame().getByText('Continue Watching')).toBeTruthy();
+
+		tryStyle('mosaic');
+		expect(find('.frame .restButton')).toBeNull();
+		expect(find('.frame .menuButton')).not.toBeNull();
+		expect(frame().getByText('Continue Watching')).toBeTruthy();
+	});
+
+	test('the setup wizard\'s navigation preview draws the saved bar and sidebar styles', () => {
+		mockSettings = {...defaultSettings, topNavbarStyle: 'atlas', sidebarStyle: 'mosaic'};
+		const {unmount} = render(<NavbarPreview position='top' />);
+		expect(find('.tabCurrent').textContent).toBe('Home');
+		unmount();
+		render(<NavbarPreview position='left' />);
+		expect(find('.menuButton')).not.toBeNull();
+		expect(find('.tabCurrent')).toBeNull();
 	});
 
 	test('the stage gives up width so the inspector fits, and settles on one size', () => {
@@ -1324,7 +1397,7 @@ describe('Home\'s own rows', () => {
 		};
 		draw(home({mediaBarRowPeek: true, featuredBarStyle: 'moonfin'}), 'setting-mediaBarRowPeek', 'home');
 		// The title band and half of a Classic poster, up from the bottom of the 540 tall screen.
-		expect(peekTop()).toBe(`${540 - (24 + 19 + 5 + 60)}px`);
+		expect(peekTop()).toBe(`${540 - (24 + 19 + 5 + 90)}px`);
 		cleanup();
 		draw(home({mediaBarRowPeek: true, featuredBarStyle: 'banner'}), 'setting-mediaBarRowPeek', 'home');
 		expect(peekTop()).toBeNull();

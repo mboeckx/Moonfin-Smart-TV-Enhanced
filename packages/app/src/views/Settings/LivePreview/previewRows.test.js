@@ -130,8 +130,12 @@ describe('settings live preview rows', () => {
 		expect(describeRow('subcat-player', defaultSettings)).toMatchObject({path: 'Playback', description: ''});
 	});
 
-	test('expanded rows and every navbar button switch show on home', () => {
+	test('expanded rows, the bar and sidebar styles and every navbar button switch show on home', () => {
 		expect(SCENE_BY_KEY.fullScreenRows).toBe('home');
+		expect(SCENE_BY_KEY.topNavbarStyle).toBe('home');
+		expect(SCENE_BY_KEY.sidebarStyle).toBe('home');
+		expect(describeRow('setting-sidebarStyle', {...defaultSettings, navbarPosition: 'left'}).options.map((option) => option.value))
+			.toEqual(['classic', 'reel', 'mosaic']);
 		expect(NAV_BUTTON_KEYS).toEqual(expect.arrayContaining(['showGenresButton', 'showLiveTvButton', 'showLibrariesInToolbar', 'showLibrariesIndividually', 'syncplayEnabled', 'showSyncPlayButton', 'showSeerrButton', 'showServerMessagesButton', 'showFriendsButton']));
 		NAV_BUTTON_KEYS.forEach((key) => expect(SCENE_BY_KEY[key]).toBe('home'));
 	});
@@ -232,7 +236,7 @@ describe('settings live preview rows', () => {
 	test('the video, music and book library settings all show the library', () => {
 		expect(LIBRARY_KEYS).toEqual([
 			'libraryStyle', 'musicLibraryStyle', 'bookLibraryStyle', 'groupItemsIntoCollections', 'showMediaDetailsOnLibraryPage',
-			'libraryCardTitles', 'hideBackdropsInLibraries', 'useDetailedSubHeadings'
+			'libraryCardTitles', 'hideBackdropsInLibraries', 'useDetailedSubHeadings', 'hideLibraryWatchProgress', 'hideLibraryUnwatchedCount'
 		]);
 		LIBRARY_KEYS.forEach((key) => {
 			const row = describeRow(`setting-${key}`, defaultSettings);

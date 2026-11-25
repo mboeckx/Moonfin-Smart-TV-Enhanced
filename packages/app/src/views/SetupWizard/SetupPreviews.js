@@ -5,7 +5,7 @@
 // real screen's proportions. The artwork comes from the viewer's own library,
 // with drawn stand ins until it arrives.
 
-import {Fragment, lazy, Suspense, useState, useEffect, useMemo, useRef, useCallback} from 'react';
+import {Fragment, createContext, lazy, memo, Suspense, useContext, useState, useEffect, useMemo, useRef, useCallback} from 'react';
 import $L from '@enact/i18n/$L';
 import SpotlightContainerDecorator from '@enact/spotlight/SpotlightContainerDecorator';
 
@@ -20,22 +20,26 @@ import RatingsRow from '../../components/RatingsRow';
 import MediaBarNewReleaseLabel from '../../components/MediaBarNewReleaseLabel';
 import PosterLabels from '../../components/PosterLabels';
 import {iconViewBox} from '../../components/icons/iconViewBox';
+import {AppsIcon, ChevronDownIcon, SearchIcon, SettingsIcon} from '../../components/icons/navIcons';
+import {MaterialIcon} from '../../components/icons/materialIcons';
 import {getRtFallbackIcon} from '../../components/icons/rtIcons';
 import {buildDisplayRatings, isMdblistEnabled} from '../../services/mdblistApi';
 import {resolveFocusBorderColor, toCssColor, toRgbTriplet, radiusToCss} from '../../theme/themeSpec';
-import {resolveOverlayColor} from '../../theme/overlayColors';
+import {makdTint, resolveOverlayColor} from '../../theme/overlayColors';
 import {resolveThemeById} from '../../theme/themeRegistry';
 import {arrange, countSplit, applyButtonLimit, DETAIL_BUTTONS, DETAIL_ORDER_KEY, DETAIL_HIDDEN_KEY} from '../../utils/buttonLayout';
 import {formatClockTime} from '../../utils/clock';
+import {formatPlaybackEndsAt} from '../../utils/playbackTimeLabels';
 import {DETAIL_METADATA, DETAIL_METADATA_ORDER_KEY, DETAIL_METADATA_HIDDEN_KEY} from '../../utils/detailMetadataLayout';
 import {formatFileSize} from '../../utils/formatFileSize';
 import {homeBackdropStyle} from '../../utils/homeBackdropStyle';
 import {applyOledMode} from '../../utils/oledMode';
 import {normalizeRatingStyle} from '../../utils/personalRating';
-import {rootScale} from '../../utils/rootScale';
+import {rem, rootScale} from '../../utils/rootScale';
 import {memoryCache} from '../Browse/browseCache';
-import {CAROUSEL_PANEL_SCRIM, homeRowSpacing} from '../../components/MediaCard/modernCardLayout';
-import {rowPeekHeight} from '../Browse/rowPeek';
+import {classicCardSize} from '../../components/MediaCard/MediaCard';
+import {CAROUSEL_PANEL_SCRIM, homeRowSpacing, modernCardMetrics} from '../../components/MediaCard/modernCardLayout';
+import {classicShape, rowImageType, rowPeekHeight} from '../Browse/rowPeek';
 import {genreGlowRgb} from '../Browse/galleryGlow';
 import {DETAIL_ICON_PATHS} from '../Details/detailIcons';
 import {getMediaBadges} from '../Details/detailsMedia';
@@ -45,6 +49,11 @@ import {premiereDim, premiereScrim} from '../Details/premiere/premiereRules';
 import {QUICK_LOOK_BUTTON_CAP, quickLookSurface} from '../Details/quickLook/quickLookRules';
 import {FROST_BUTTON_CAP} from '../Details/frost/frostRules';
 import frostCss from '../Details/frost/FrostDetailContent.module.less';
+import navBarCss from '../../components/NavBar/NavBar.module.less';
+import atlasCss from '../../components/NavStyles/AtlasBar.module.less';
+import mosaicCss from '../../components/NavStyles/MosaicNav.module.less';
+import reelCss from '../../components/NavStyles/ReelNav.module.less';
+import tablineCss from '../../components/NavStyles/TablineBar.module.less';
 import {scrimStyle} from '../../utils/scrimImage';
 import {serverBlurredUrl} from '../../utils/serverBlur';
 import {splitNouveauActions} from '../Details/nouveau/nouveauActionSplit';
@@ -124,10 +133,12 @@ export const usePreviewPalette = () => {
 			backgroundA: (a) => withAlpha(colors.background, a),
 			surfaceA: (a) => withAlpha(colors.surface, a),
 			overlayA: (a) => withAlpha(overlayHex, a * overlayOpacity),
+			makdA: (a) => withAlpha(makdTint(overlayHex), a * overlayOpacity),
 			// The rail wears the navbar color on every theme, and only the top bar clears it for
 			// a theme asking for a transparent nav surface, the same as the real ones.
 			navbarRail: navbarOverlay,
 			navbarSurface: theme.transparentNavbarSurface ? 'transparent' : navbarOverlay,
+			navBorder: theme.borders.navBorder ? `${theme.borders.navBorder.width}px solid ${toCssColor(theme.borders.navBorder.color)}` : null,
 			navColorForSlot: (slot) => (navCycle.length > 0 ? toCssColor(navCycle[slot % navCycle.length]) : null),
 			cardRadius: radiusToCss(theme.borders.cardRadius),
 			cardRadiusRing: grownRadius(theme.borders.cardRadius, 3.5),
@@ -184,6 +195,9 @@ const useFitScale = (designW, designH) => {
 	return [ref, scale];
 };
 
+// How wide a screen lays its content out, which a UI scale narrows.
+const ScreenWidth = createContext(DESIGN_W);
+
 // [zoom] lays the screen out that much bigger, the way a UI scale does, so less of it fits.
 const PreviewScreen = ({zoom = 1, children}) => {
 	const t = usePreviewPalette();
@@ -191,7 +205,7 @@ const PreviewScreen = ({zoom = 1, children}) => {
 	return (
 		<div ref={ref} className={css.screenOuter}>
 			<div className={css.screenInner} style={{width: DESIGN_W / zoom, height: DESIGN_H / zoom, transform: `scale(${scale * zoom})`, backgroundColor: t.background}}>
-				{children}
+				<ScreenWidth.Provider value={DESIGN_W / zoom}>{children}</ScreenWidth.Provider>
 			</div>
 		</div>
 	);
@@ -363,7 +377,7 @@ const MetadataWrap = ({item, t, parts = metaParts(item)}) => {
 };
 
 // One mark per item Item Count gives the bar, up to [max].
-const Dots = ({max = Infinity, active, inactive, inactiveAlpha, gap = 4, pillActive = false, height, t}) => {
+const Dots = ({max = Infinity, active, inactive, inactiveAlpha, gap = 4, pillActive = false, height, activeScale, t}) => {
 	const {settings} = useSettings();
 	const count = Math.min(settings.featuredItemCount || 10, max);
 	const dots = [];
@@ -379,7 +393,8 @@ const Dots = ({max = Infinity, active, inactive, inactiveAlpha, gap = 4, pillAct
 					marginLeft: gap,
 					marginRight: gap,
 					borderRadius: pillActive ? 3 : '50%',
-					backgroundColor: i === 0 ? t.onSurface : t.onSurfaceA(inactiveAlpha)
+					backgroundColor: i === 0 ? t.onSurface : t.onSurfaceA(inactiveAlpha),
+					transform: i === 0 && activeScale ? `scale(${activeScale})` : undefined
 				}}
 			/>
 		);
@@ -543,6 +558,8 @@ const RowCard = ({item, height, aspect, imageUrl, progress, focused = false, cla
 const FocusedRowCard = ({item, posterHeight, carousel = false, t}) => {
 	const {settings} = useSettings();
 	const width = posterHeight * 16 / 9;
+	// The ratings and overview run to the end of the row, as on Home.
+	const detailsWidth = useContext(ScreenWidth) - ROW_LEFT_INSET - 20;
 	return (
 		<div style={{width, flexShrink: 0, marginRight: 12}}>
 			<div style={{position: 'relative', width, height: posterHeight}} data-held-focus>
@@ -564,8 +581,8 @@ const FocusedRowCard = ({item, posterHeight, carousel = false, t}) => {
 						</div>
 					)}
 					<div style={{position: 'relative', width, height: 76, marginTop: 4}}>
-						<div style={{position: 'absolute', left: 0, top: 0, width: width * 2.4}}>
-							<PreviewRatings item={item} surface='homeRows' compact singleLineWidth={width * 2.4} zoom={0.5 * ROW_SCALE} />
+						<div style={{position: 'absolute', left: 0, top: 0, width: detailsWidth}}>
+							<PreviewRatings item={item} surface='homeRows' compact singleLineWidth={detailsWidth} zoom={0.5 * ROW_SCALE} />
 							{item.overview && !settings.hideHomeMediaDescription && (
 								<div style={{marginTop: 4, fontSize: 12, lineHeight: 1.4, color: t.onSurfaceA(0.7), textShadow: TEXT_SHADOW, ...clampLines(3)}}>
 									{item.overview}
@@ -692,13 +709,14 @@ const HomeRow = ({title, items, t, modern, shape = 'portrait', offset = 0, withF
 	);
 };
 
-// Card Size as a scale of Default, the size the rows are drawn at otherwise.
-const POSTER_SIZE_SCALE = {small: 0.8, default: 1, large: 1.2, xlarge: 1.4, grandparents: 2};
-
-// The poster and thumb heights the rows' cards draw at, in the card size being looked at.
+// The poster and thumb heights Home's own cards draw at in the card size being looked at, halved
+// for this half size screen.
 const rowCardHeights = (settings, modern) => {
-	const sizeScale = POSTER_SIZE_SCALE[settings.homeRowsPosterSize] || 1;
-	return {posterHeight: (modern ? 240 : 150) * ROW_SCALE * sizeScale, thumbHeight: 110 * ROW_SCALE * sizeScale};
+	const posterSize = settings.homeRowsPosterSize;
+	return {
+		posterHeight: (modern ? modernCardMetrics({posterSize}).imageHeight : classicCardSize('portrait', posterSize).height) / 2,
+		thumbHeight: classicCardSize('landscape', posterSize).height / 2
+	};
 };
 
 // [rows] are Home's own rows, each {id, title, items, shape}, drawn in place of the sample ones
@@ -710,7 +728,10 @@ const HomeRowsColumn = ({items, rows, t, modern, focusFirst = false, carousel: c
 	const {posterHeight, thumbHeight} = rowCardHeights(settings, modern);
 	// The space Home leaves below each row, at the design screen's half size. Expanded Rows gives
 	// each row a screen of its own, so the next one starts below the frame.
-	const spacing = homeRowSpacing({...settings, homeRowsStyle: modern ? 'v2' : 'v1'});
+	const rowSettings = {...settings, homeRowsStyle: modern ? 'v2' : 'v1'};
+	const spacing = homeRowSpacing(rowSettings);
+	// A sample row takes the shape Home gives the row it stands for.
+	const sampleShape = (row, cardType) => classicShape(cardType, rowImageType(row, rowSettings));
 	const rowGap = spacing === null ? DESIGN_H : spacing / 2;
 	const first = rows ? rows[0].items[0] : items[0];
 	return (
@@ -757,11 +778,11 @@ const HomeRowsColumn = ({items, rows, t, modern, focusFirst = false, carousel: c
 				</Fragment>
 			)) : (
 				<>
-					<HomeRow title={$L('Continue Watching')} items={items} t={t} modern={modern} shape='landscape' withFocus={focusFirst} posterHeight={posterHeight} thumbHeight={thumbHeight} carousel={carousel} />
+					<HomeRow title={$L('Continue Watching')} items={items} t={t} modern={modern} shape={sampleShape({id: 'resume'}, 'landscape')} withFocus={focusFirst} posterHeight={posterHeight} thumbHeight={thumbHeight} carousel={carousel} />
 					<div style={{height: rowGap}} />
-					<HomeRow title={$L('Recently Added')} items={items} t={t} modern={modern} offset={3} posterHeight={posterHeight} thumbHeight={thumbHeight} carousel={carousel} />
+					<HomeRow title={$L('Recently Added')} items={items} t={t} modern={modern} shape={sampleShape({isLatestRow: true}, 'portrait')} offset={3} posterHeight={posterHeight} thumbHeight={thumbHeight} carousel={carousel} />
 					<div style={{height: rowGap}} />
-					<HomeRow title={$L('Next Up')} items={items} t={t} modern={modern} shape='landscape' offset={6} posterHeight={posterHeight} thumbHeight={thumbHeight} carousel={carousel} />
+					<HomeRow title={$L('Next Up')} items={items} t={t} modern={modern} shape={sampleShape({id: 'nextup'}, 'landscape')} offset={6} posterHeight={posterHeight} thumbHeight={thumbHeight} carousel={carousel} />
 				</>
 			)}
 		</div>
@@ -819,33 +840,75 @@ const MoonfinBar = ({items, t, rowPeek = 0}) => {
 	);
 };
 
+// makd's v6 Classic on the half size screen, so every measure is the TV's halved.
+const MAKD_FADE = 'linear-gradient(to top, transparent 2%, rgba(0, 0, 0, 0.5) 6%, #000 8%)';
+const MakdSep = () => (
+	<svg width={5} height={5} viewBox='0 0 24 24' style={{flexShrink: 0, margin: '0 5px'}} aria-hidden='true'>
+		<circle cx='12' cy='12' r='8' fill='rgba(255, 255, 255, 0.55)' />
+	</svg>
+);
+const makdCircle = {width: 25, height: 25, borderRadius: '50%', border: '1px solid rgba(255, 255, 255, 0.35)', backgroundColor: 'rgba(0, 0, 0, 0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box'};
+
 const MakdBar = ({items, t, rowPeek = 0}) => {
+	const {settings} = useSettings();
 	const item = items[0];
-	const contentWidth = Math.min(560, Math.max(280, DESIGN_W * 0.42));
+	const contentBottom = rowPeek + 17.5;
+	const info = [];
+	if (item.communityRating) {
+		info.push(
+			<span key='stars' style={{display: 'flex', alignItems: 'center'}}>
+				<MaterialIcon name='star' style={{width: 14, height: 14, marginRight: 1.75, color: '#f2b01e'}} />
+				{item.communityRating.toFixed(1)}
+			</span>
+		);
+	}
+	if (item.year) info.push(<span key='year'>{item.year}</span>);
+	if (item.officialRating) {
+		info.push(<span key='age' style={{borderRadius: 2.5, backgroundColor: 'rgba(255, 255, 255, 0.8)', color: '#000', fontWeight: 600, padding: '0 5px'}}>{item.officialRating}</span>);
+	}
+	const endsAt = item.type !== 'Series' && item.runtimeMinutes
+		? formatPlaybackEndsAt(item.runtimeMinutes * 60, settings.clockDisplay, settings.timeOffsetHours)
+		: '';
+	if (endsAt) info.push(<span key='ends'>{endsAt}</span>);
+	const separated = (nodes) => nodes.reduce((all, node, i) => (i > 0 ? [...all, <MakdSep key={`s${i}`} />, node] : [node]), []);
+	const font = {fontFamily: "'Archivo Narrow', 'Roboto', sans-serif", fontSize: 10, color: '#fff', display: 'flex', alignItems: 'center', flexWrap: 'wrap'};
 	return (
 		<div style={{position: 'relative', width: '100%', height: '100%'}}>
-			<Artwork url={item.backdropUrl} t={t} />
-			<div style={{...ABS_FILL, backgroundColor: 'rgba(0, 0, 0, 0.64)'}} />
-			<div style={{position: 'absolute', left: 50, top: DESIGN_H * 0.22}}>
-				<LogoOrTitle
-					item={item}
-					width={Math.min(640, Math.max(220, DESIGN_W * 0.45))}
-					height={Math.min(300, Math.max(90, DESIGN_H * 0.35))}
-					fallbackStyle={{fontSize: 30, fontWeight: 800, lineHeight: 1.05, color: t.onSurface, textShadow: TEXT_SHADOW}}
-				/>
-				<MediaBarNewReleaseLabel release={item.newRelease} small />
+			<div style={{...ABS_FILL, WebkitMaskImage: MAKD_FADE, maskImage: MAKD_FADE}}>
+				<Artwork url={item.backdropUrl} position='center 20%' t={t} />
+				<div style={{...ABS_FILL, backgroundColor: t.makdA(0.4)}} />
+				<div style={{...ABS_FILL, background: `linear-gradient(130deg, ${t.makdA(1.3)} 10%, ${t.makdA(0.7)} 30%, ${t.makdA(0)} 100%)`}} />
 			</div>
-			<div style={{position: 'absolute', left: 50, bottom: 20 + rowPeek, width: contentWidth}}>
-				<MetadataWrap item={item} t={t} />
-				<PreviewRatings item={item} surface='mediaBar' compact />
+			<div style={{position: 'absolute', left: DESIGN_W * 0.04, bottom: contentBottom, width: DESIGN_W * 0.46, display: 'flex', flexDirection: 'column', alignItems: 'flex-start'}}>
+				<div style={{marginBottom: 4}}>
+					<LogoOrTitle
+						item={item}
+						width={DESIGN_W * 0.46}
+						height={DESIGN_H * 0.22}
+						fallbackStyle={{fontSize: 40, fontWeight: 400, lineHeight: 1.1, color: '#fff'}}
+					/>
+				</div>
+				<MediaBarNewReleaseLabel release={item.newRelease} small />
+				{info.length > 0 && <div style={{...font, fontWeight: 500, marginTop: 9}}>{separated(info)}</div>}
+				{item.genres.length > 0 && (
+					<div style={{...font, marginTop: 9}}>{separated(item.genres.slice(0, 3).map((genre) => <span key={genre}>{genre}</span>))}</div>
+				)}
 				{item.overview && (
-					<div style={{marginTop: 10, fontSize: 14, lineHeight: 1.38, color: t.onSurfaceA(0.88), ...clampLines(3)}}>
+					<div style={{marginTop: 9, fontFamily: "'NotoSans', 'Roboto', sans-serif", fontSize: 10, lineHeight: 1.35, color: '#fff', ...clampLines(3)}}>
 						{item.overview}
 					</div>
 				)}
+				<div style={{display: 'flex', alignItems: 'center', marginTop: 13}}>
+					<div style={makdCircle}><MIcon name='info' size={11} color='#fff' /></div>
+					<div style={{display: 'flex', alignItems: 'center', height: 25, marginLeft: 7.5, padding: '0 6.3px', borderRadius: 4, backgroundColor: '#fff', color: '#000', fontFamily: "'Archivo Narrow', 'Roboto', sans-serif", fontSize: 9, fontWeight: 700}}>
+						<MIcon name='play_arrow' size={11} color='#000' style={{marginRight: 3}} />
+						{$L('Play')}
+					</div>
+					<div style={{...makdCircle, marginLeft: 7.5}}><MIcon name='favorite' size={11} color='#fff' /></div>
+				</div>
 			</div>
-			<div style={{position: 'absolute', right: 20, bottom: 24 + rowPeek}}>
-				<Dots active={9} inactive={7} inactiveAlpha={0.45} gap={5} t={t} />
+			<div style={{position: 'absolute', right: DESIGN_W * 0.03, bottom: contentBottom}}>
+				<Dots max={5} active={5} inactive={5} inactiveAlpha={0.6} gap={2.5} activeScale={1.7} t={t} />
 			</div>
 		</div>
 	);
@@ -1072,7 +1135,7 @@ const BannerBar = ({items, t}) => {
 	if (item.officialRating) parts.push(item.officialRating);
 	return (
 		<div style={{width: '100%', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden'}}>
-			<div style={{padding: '0 16px 8px 16px', flexShrink: 0}}>
+			<div style={{padding: '0 24px 8px 24px', flexShrink: 0}}>
 				<div style={{position: 'relative', height: 320, borderRadius: 14, overflow: 'hidden'}}>
 					<Artwork url={item.backdropUrl} t={t} />
 					<div style={{...ABS_FILL, background: 'linear-gradient(to right, rgba(0, 0, 0, 0.902), rgba(0, 0, 0, 0))'}} />
@@ -1087,7 +1150,7 @@ const BannerBar = ({items, t}) => {
 						<div style={{marginTop: 6, fontSize: 12, fontWeight: 600, color: t.onSurfaceA(0.75)}}>
 							{parts.join('  ·  ')}
 						</div>
-						<PreviewRatings item={item} surface='mediaBar' compact />
+						<PreviewRatings item={item} surface='mediaBar' compact labels={false} badges={false} />
 					</div>
 					<div style={{position: 'absolute', top: 12, right: 16}}>
 						<Dots max={7} active={16} inactive={6} inactiveAlpha={0.4} gap={2} pillActive t={t} />
@@ -1199,11 +1262,130 @@ const NavbarRows = ({items, rows, t, topInset = 12, modern = true, focusFirst = 
 	</div>
 );
 
+// The other bar and sidebar styles draw from their own stylesheets, laid out at the 1920 wide size
+// those are written for and scaled onto this half size screen. The build turns their px into rem,
+// so the root font is divided back out, the way the preview's own drawing ignores it too.
+const RealNavLayer = ({children}) => {
+	const screenWidth = useContext(ScreenWidth);
+	return (
+		<div
+			style={{
+				position: 'absolute',
+				top: 0,
+				left: 0,
+				width: rem(screenWidth * 2),
+				height: rem(screenWidth * 2 * DESIGN_H / DESIGN_W),
+				transform: `scale(${1 / (2 * rootScale())})`,
+				transformOrigin: '0 0',
+				pointerEvents: 'none'
+			}}
+		>
+			{children}
+		</div>
+	);
+};
+
+// A real button sizes its border box, so the divs standing in for the user and Mosaic buttons do too.
+const BUTTON_BOX = {boxSizing: 'border-box'};
+
+// The real navbar's user button, which Tabline and Atlas share, without the focus.
+const PreviewUserButton = () => {
+	const {settings} = useSettings();
+	const {avatarUrl, initial, onError} = useUserAvatar();
+	const style = {opacity: (settings.userOpacity ?? 85) / 100};
+	return (
+		<div className={`${navBarCss.navBtn} ${navBarCss.navBtnIcon} ${navBarCss.userBtn}`} style={BUTTON_BOX}>
+			{avatarUrl
+				? <img className={navBarCss.userAvatarImg} src={avatarUrl} alt='' style={style} onError={onError} />
+				: <div className={navBarCss.userAvatar} style={style}>{initial}</div>}
+		</div>
+	);
+};
+
+const TablinePreview = ({buttons, clock, t}) => (
+	<RealNavLayer>
+		<div className={tablineCss.bar}>
+			<div className={tablineCss.scrim} />
+			<div className={tablineCss.row}>
+				<div className={tablineCss.tabs}>
+					{buttons.filter((button) => button.id !== 'search').map((button) => {
+						const current = button.id === 'home';
+						return (
+							<div key={button.id} className={current ? `${tablineCss.tab} ${tablineCss.current}` : tablineCss.tab}>
+								<span>{button.label}</span>
+								<span className={tablineCss.line} style={current ? {background: t.accent} : null} />
+							</div>
+						);
+					})}
+				</div>
+				<div className={tablineCss.right}>
+					<div className={tablineCss.iconButton}><SearchIcon className={tablineCss.icon} /></div>
+					{clock && <div className={tablineCss.clock}>{clock}</div>}
+					<PreviewUserButton />
+				</div>
+			</div>
+		</div>
+	</RealNavLayer>
+);
+
+// The same tabs atlasPanelKind opens a panel under, matched by the preview's own button ids.
+const ATLAS_PANEL_IDS = ['livetv', 'seerr', 'libraries'];
+const opensAtlasPanel = (button) => ATLAS_PANEL_IDS.indexOf(button.id) >= 0 || button.id.indexOf('library-') === 0;
+
+const AtlasPreview = ({buttons, clock, t}) => (
+	<RealNavLayer>
+		<div className={atlasCss.bar} style={{background: t.navbarSurface, borderBottom: t.navBorder || '1px solid rgba(255, 255, 255, 0.06)'}}>
+			<div className={atlasCss.avatar}><PreviewUserButton /></div>
+			<div className={atlasCss.tabs}>
+				{buttons.filter((button) => button.id !== 'settings').map((button) => {
+					const Icon = button.Icon;
+					return (
+						<div key={button.id} className={button.id === 'home' ? `${atlasCss.tab} ${atlasCss.tabCurrent}` : atlasCss.tab}>
+							<Icon className={atlasCss.tabIcon} />
+							<span className={atlasCss.tabLabel}>{button.label}</span>
+							{opensAtlasPanel(button) && <span className={atlasCss.chevron}><ChevronDownIcon className={atlasCss.chevronIcon} /></span>}
+						</div>
+					);
+				})}
+			</div>
+			{clock && <div className={atlasCss.clock}>{clock}</div>}
+			<div className={atlasCss.iconButton}><SettingsIcon className={atlasCss.icon} /></div>
+		</div>
+	</RealNavLayer>
+);
+
+const REEL_DOTS_ABOVE = ['dot1', 'dot2', 'dot3'];
+const REEL_DOTS_BELOW = ['dot3', 'dot2', 'dot1'];
+
+// Home is the page on screen, so its icon sits in the ring.
+const ReelPreview = ({buttons}) => {
+	const Icon = buttons[0].Icon;
+	return (
+		<RealNavLayer>
+			<div className={reelCss.rest}>
+				{REEL_DOTS_ABOVE.map((dot) => <span key={`above-${dot}`} className={`${reelCss.dot} ${reelCss[dot]}`} />)}
+				<div className={reelCss.restButton}><Icon className={reelCss.restIcon} /></div>
+				{REEL_DOTS_BELOW.map((dot) => <span key={`below-${dot}`} className={`${reelCss.dot} ${reelCss[dot]}`} />)}
+			</div>
+		</RealNavLayer>
+	);
+};
+
+const MosaicPreview = () => (
+	<RealNavLayer>
+		<div className={mosaicCss.menuButton} style={BUTTON_BOX}><AppsIcon className={mosaicCss.menuIcon} /></div>
+	</RealNavLayer>
+);
+
+const TOP_BAR_PREVIEWS = {tabline: TablinePreview, atlas: AtlasPreview};
+const SIDEBAR_PREVIEWS = {reel: ReelPreview, mosaic: MosaicPreview};
+
 // The toolbar draws no band of its own. An avatar sits on the left, the
 // buttons live in one translucent pill in the middle, and the clock keeps the
 // right, all floating straight over the content. Everything is drawn at half the real
 // bar's size, since the design screen is half of 1920, and the pill stops at the real one's
-// 1400px cap and clips where the real one scrolls.
+// 1400px cap and clips where the real one scrolls. Tabline and Atlas draw over the same band
+// instead, since Home leaves its rows where they are under every bar style.
 const TopNavbarPreview = ({items, rows, t, userName, modern, focusFirst, hasLiveTv}) => {
 	const {settings} = useSettings();
 	const buttons = useNavButtons(false, hasLiveTv);
@@ -1212,31 +1394,37 @@ const TopNavbarPreview = ({items, rows, t, userName, modern, focusFirst, hasLive
 	// Home pins a focused row just under the bar, which is what leaves a Carousel row room for its
 	// whole panel, so Carousel rows come up into the band's empty lower part to sit under the pill.
 	const carousel = rows ? rows[0].carousel : settings.homeRowsStyle === 'carousel';
+	const StyledBar = TOP_BAR_PREVIEWS[settings.topNavbarStyle];
 	return (
-		<div style={{width: '100%', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden'}}>
+		<div style={{width: '100%', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: StyledBar ? 'relative' : undefined}}>
 			<div style={{height: 95, flexShrink: 0, marginBottom: carousel ? -75 : 0, padding: '27px 24px', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-				<div style={{position: 'absolute', left: 24, top: '50%', transform: 'translateY(-50%)'}}>
-					<NavAvatar name={userName} size={32} />
-				</div>
-				<div style={{backgroundColor: t.navbarSurface, borderRadius: 36, display: 'flex', maxWidth: 700, overflow: 'hidden'}}>
-					{buttons.map((button, i) => (
-						<div key={button.id} style={{minWidth: 35, height: 35, marginLeft: i === 0 ? 0 : 1, padding: expanded ? '0 12px' : 0, boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-							<NavButtonIcon button={button} color={navIconColor(t, i)} size={18} />
-							{expanded && (
-								<span style={{marginLeft: 5, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', color: t.onSurfaceA(0.8)}}>
-									{button.label}
-								</span>
-							)}
+				{!StyledBar && (
+					<>
+						<div style={{position: 'absolute', left: 24, top: '50%', transform: 'translateY(-50%)'}}>
+							<NavAvatar name={userName} size={32} />
 						</div>
-					))}
-				</div>
-				{clock && (
-					<div style={{position: 'absolute', right: 24, top: '50%', transform: 'translateY(-50%)', fontSize: 14, fontWeight: 600, color: t.onSurfaceA(0.8)}}>
-						{clock}
-					</div>
+						<div style={{backgroundColor: t.navbarSurface, borderRadius: 36, display: 'flex', maxWidth: 700, overflow: 'hidden'}}>
+							{buttons.map((button, i) => (
+								<div key={button.id} style={{minWidth: 35, height: 35, marginLeft: i === 0 ? 0 : 1, padding: expanded ? '0 12px' : 0, boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+									<NavButtonIcon button={button} color={navIconColor(t, i)} size={18} />
+									{expanded && (
+										<span style={{marginLeft: 5, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', color: t.onSurfaceA(0.8)}}>
+											{button.label}
+										</span>
+									)}
+								</div>
+							))}
+						</div>
+						{clock && (
+							<div style={{position: 'absolute', right: 24, top: '50%', transform: 'translateY(-50%)', fontSize: 14, fontWeight: 600, color: t.onSurfaceA(0.8)}}>
+								{clock}
+							</div>
+						)}
+					</>
 				)}
 			</div>
 			{items && <NavbarRows items={items} rows={rows} t={t} modern={modern} focusFirst={focusFirst} />}
+			{StyledBar && <StyledBar buttons={buttons} clock={clock} t={t} />}
 		</div>
 	);
 };
@@ -1247,50 +1435,54 @@ const TopNavbarPreview = ({items, rows, t, userName, modern, focusFirst, hasLive
 // Like the real rail, the user keeps the top and the clock the bottom, the
 // buttons center between them, and a list too long to fit runs off the bottom
 // rather than over the user. The clock only shows while the rail is open, though
-// its room is kept either way.
+// its room is kept either way. Reel and Mosaic draw their resting control instead, and keep the
+// rail's room too, since Home does.
 const LeftNavbarPreview = ({items, rows, t, userName, modern, open = false, focusFirst, hasLiveTv}) => {
 	const {settings} = useSettings();
 	const buttons = useNavButtons(true, hasLiveTv);
 	const clock = settings.showClock === false ? null : formatClockTime(new Date(), settings.clockDisplay);
+	const StyledNav = SIDEBAR_PREVIEWS[settings.sidebarStyle];
 	return (
 		<div style={{position: 'relative', width: '100%', height: '100%', display: 'flex', overflow: 'hidden'}}>
 			<div style={{width: 72, flexShrink: 0}} />
 			{items && <NavbarRows items={items} rows={rows} t={t} topInset={24} modern={modern} focusFirst={focusFirst} />}
-			<div
-				style={{
-					position: 'absolute',
-					top: 0,
-					bottom: 0,
-					left: 0,
-					width: open ? 240 : 72,
-					background: open ? `linear-gradient(to right, ${t.navbarRail} 0%, ${t.navbarRail} 94%, transparent 100%)` : 'none',
-					display: 'flex',
-					flexDirection: 'column'
-				}}
-			>
-				<div style={{flexShrink: 0, padding: '12px 0 6px 23px'}}>
-					<NavAvatar name={userName} size={26} />
-				</div>
-				<div style={{flex: '1 1 auto', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column'}}>
-					<div style={{flexShrink: 0, margin: 'auto 0'}}>
-						{buttons.map((button, i) => (
-							<div key={button.id} style={{height: 40, paddingLeft: 24, display: 'flex', alignItems: 'center'}}>
-								<NavButtonIcon button={button} color={navIconColor(t, i)} />
-								{open && (
-									<span style={{marginLeft: 14, fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: t.onSurfaceA(0.8)}}>
-										{button.label}
-									</span>
-								)}
-							</div>
-						))}
+			{StyledNav ? <StyledNav buttons={buttons} /> : (
+				<div
+					style={{
+						position: 'absolute',
+						top: 0,
+						bottom: 0,
+						left: 0,
+						width: open ? 240 : 72,
+						background: open ? `linear-gradient(to right, ${t.navbarRail} 0%, ${t.navbarRail} 94%, transparent 100%)` : 'none',
+						display: 'flex',
+						flexDirection: 'column'
+					}}
+				>
+					<div style={{flexShrink: 0, padding: '12px 0 6px 23px'}}>
+						<NavAvatar name={userName} size={26} />
 					</div>
-				</div>
-				{clock && (
-					<div style={{flexShrink: 0, padding: '8px 0 10px', textAlign: 'center', fontSize: 9, fontWeight: 500, whiteSpace: 'nowrap', color: 'rgba(255, 255, 255, 0.5)', opacity: open ? 1 : 0}}>
-						{clock}
+					<div style={{flex: '1 1 auto', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column'}}>
+						<div style={{flexShrink: 0, margin: 'auto 0'}}>
+							{buttons.map((button, i) => (
+								<div key={button.id} style={{height: 40, paddingLeft: 24, display: 'flex', alignItems: 'center'}}>
+									<NavButtonIcon button={button} color={navIconColor(t, i)} />
+									{open && (
+										<span style={{marginLeft: 14, fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: t.onSurfaceA(0.8)}}>
+											{button.label}
+										</span>
+									)}
+								</div>
+							))}
+						</div>
 					</div>
-				)}
-			</div>
+					{clock && (
+						<div style={{flexShrink: 0, padding: '8px 0 10px', textAlign: 'center', fontSize: 9, fontWeight: 500, whiteSpace: 'nowrap', color: 'rgba(255, 255, 255, 0.5)', opacity: open ? 1 : 0}}>
+							{clock}
+						</div>
+					)}
+				</div>
+			)}
 		</div>
 	);
 };
@@ -1671,10 +1863,13 @@ const FallbackMediaBar = ({mode, t}) => {
 	}
 	if (mode === 'makd') {
 		return (
-			<div style={{width: '100%', height: '100%', ...fallBackdrop(t), display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-				<div style={{width: '56%', height: '62%', padding: 6, backgroundColor: t.onSurfaceA(0.1), borderRadius: 6, border: `1px solid ${t.onSurfaceA(0.16)}`, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end'}}>
-					<FallBar width={34} height={4} color={strong} />
-					<FallBar width={20} height={4} color={weak} style={{marginTop: 3}} />
+			<div style={{width: '100%', height: '100%', ...fallBackdrop(t), display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', padding: '0 0 35% 4%', boxSizing: 'border-box'}}>
+				<FallBar width={34} height={6} color={strong} />
+				<FallBar width={24} height={3} color={weak} style={{marginTop: 4}} />
+				<div style={{display: 'flex', marginTop: 4}}>
+					<FallBar width={6} height={6} color={weak} style={{borderRadius: '50%'}} />
+					<FallBar width={14} height={6} color={strong} style={{marginLeft: 3}} />
+					<FallBar width={6} height={6} color={weak} style={{borderRadius: '50%', marginLeft: 3}} />
 				</div>
 			</div>
 		);
@@ -2435,7 +2630,7 @@ export const DetailStylePreview = ({variant}) => {
 // either style, and the backdrop from that card when it has one. [focusCard] holds the first card in
 // focus in Classic rows too, so Focus Border Color has a ring to show on. [atUiScale] draws it at the
 // UI scale being looked at.
-export const SettingsHomePreview = ({railOpen = false, hasLiveTv = false, over = null, rows = null, focusCard = false, atUiScale = false}) => {
+export const SettingsHomePreview = memo(({railOpen = false, hasLiveTv = false, over = null, rows = null, focusCard = false, atUiScale = false}) => {
 	const t = usePreviewPalette();
 	const {user} = useAuth();
 	const {settings} = useSettings();
@@ -2459,7 +2654,7 @@ export const SettingsHomePreview = ({railOpen = false, hasLiveTv = false, over =
 		</>
 	), [position, modern, railOpen, t, user?.Name, hasLiveTv, over, backdrop, blur, fed, rows, focusFirst]);
 	return <LivePreview render={render} fallback={<FallbackNavbar position={position} t={t} />} ownRows={Boolean(rows)} zoom={atUiScale ? settings.uiScale || 1 : 1} />;
-};
+});
 
 // A layer laid out at the window's size and scaled onto the design screen, the way the player's
 // controls are, since the app's own screens size themselves from the window.
@@ -2513,10 +2708,10 @@ const PlayerLoading = () => (
 // intro with its skip prompt up whatever the intro action, outro is the start of the credits,
 // and airDate is the end of an episode the library has nothing after. [hdr] draws the
 // subtitles in their HDR style.
-export const PlayerPreview = ({moment = 'middle', hdr = false}) => {
+export const PlayerPreview = memo(({moment = 'middle', hdr = false}) => {
 	if (moment === 'loading') return <PlayerLoading />;
 	return <PlayerControlsPreview moment={moment} hdr={hdr} />;
-};
+});
 
 const PlayerControlsPreview = ({moment, hdr}) => {
 	const t = usePreviewPalette();
@@ -2596,7 +2791,7 @@ const PlayerControlsPreview = ({moment, hdr}) => {
 						<div style={{position: 'absolute', left: 48, top: 110, width: 460}}>
 							<div style={{...SHADOWED, fontSize: 13, fontWeight: 700, textTransform: 'uppercase'}}>{$L('Paused')}</div>
 							<div style={{...SHADOWED, marginTop: 8, fontSize: 32, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{item ? item.title : ''}</div>
-							<div style={{...SHADOWED, marginTop: 8, fontSize: 15, lineHeight: 1.4, ...clampLines(4)}}>{item ? item.overview : ''}</div>
+							<div style={{...SHADOWED, marginTop: 8, fontSize: 15, fontWeight: 500, lineHeight: 1.4, ...clampLines(8)}}>{item ? item.overview : ''}</div>
 						</div>
 					</div>
 				)}
@@ -2627,7 +2822,7 @@ const KEYBOARD_LOOKS = {
 };
 
 // Search with its keyboard open, drawn the way the chosen keyboard style sits on screen.
-export const KeyboardPreview = () => {
+export const KeyboardPreview = memo(() => {
 	const t = usePreviewPalette();
 	const {settings} = useSettings();
 	const items = usePreviewItems();
@@ -2684,6 +2879,6 @@ export const KeyboardPreview = () => {
 			</div>
 		</PreviewScreen>
 	);
-};
+});
 
 export {MIcon as SetupIcon};

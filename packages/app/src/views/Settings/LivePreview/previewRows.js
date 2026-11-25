@@ -10,7 +10,7 @@ const ratingRows = (surface) => ['mdblistEnabled', 'ratingSources', 'showRatingL
 // Settings whose home preview is the media bar rather than the navbar and rows.
 export const MEDIA_BAR_KEYS = [
 	'featuredBarStyle', 'featuredItemCount', 'mediaBarRowPeek', 'mediaBarOverlayColor', 'mediaBarOverlayOpacity', 'mediaBarNewReleaseBanner',
-	'mediaBarNewReleaseDays', ...ratingRows('mediaBar')
+	'mediaBarNewReleaseDays', 'mediaBarNewReleaseKinds', 'mediaBarNewMovieDays', 'mediaBarNewMovieDetail', ...ratingRows('mediaBar')
 ];
 
 // The home rows' own ratings, which the modern rows draw under the focused card.
@@ -48,7 +48,7 @@ export const SEASONAL_KEYS = ['seasonalTheme', 'seasonalDensity', 'seasonalFollo
 // The library settings. The music and book styles draw their own libraries and the rest the video library.
 export const LIBRARY_KEYS = [
 	'libraryStyle', 'musicLibraryStyle', 'bookLibraryStyle', 'groupItemsIntoCollections', 'showMediaDetailsOnLibraryPage',
-	'libraryCardTitles', 'hideBackdropsInLibraries', 'useDetailedSubHeadings'
+	'libraryCardTitles', 'hideBackdropsInLibraries', 'useDetailedSubHeadings', 'hideLibraryWatchProgress', 'hideLibraryUnwatchedCount'
 ];
 
 // The Row Options settings for the rows they sort, which draw Home with the D-pad on the first
@@ -95,6 +95,8 @@ export const SCENE_BY_KEY = {
 	showClock: 'home',
 	clockDisplay: 'home',
 	navbarPosition: 'home',
+	topNavbarStyle: 'home',
+	sidebarStyle: 'home',
 	navbarAlwaysExpanded: 'home',
 	...sceneFor(NAV_BUTTON_KEYS, 'home'),
 	navbarColor: 'home',

@@ -56,9 +56,10 @@ describe('SkeletonHomeRow', () => {
 		render(<SkeletonHomeRow cardWidth={240} imageHeight={360} count={3} />);
 
 		expect(all('.homeCard')).toHaveLength(3);
-		expect(find('.homeCard .box').style.height).toBe('360px');
+		expect(find('.homeCard').style.width).toBe('10rem');
+		expect(find('.homeCard .box').style.height).toBe('15rem');
 		expect(find('.homeCard .box').style.borderRadius).toBe('8px');
-		expect(find('.classicTitleBar').style.width).toBe('180px');
+		expect(find('.classicTitleBar').style.width).toBe('7.5rem');
 		expect(find('.modernSubtitleBar')).toBeNull();
 	});
 
@@ -67,8 +68,8 @@ describe('SkeletonHomeRow', () => {
 
 		expect(all('.homeCard')).toHaveLength(8);
 		expect(find('.homeCard .box').style.borderRadius).toBe('12px');
-		expect(find('.modernTitleBar').style.width).toBe('180px');
-		expect(find('.modernSubtitleBar').style.width).toBe('120px');
+		expect(find('.modernTitleBar').style.width).toBe('7.5rem');
+		expect(find('.modernSubtitleBar').style.width).toBe('5rem');
 	});
 });
 
@@ -124,13 +125,18 @@ describe('DetailSkeleton', () => {
 		expect(drawn('unknown')).toEqual({classic: 0, modern: 1, spotlight: 0, nouveau: 0, minimalist: 0});
 	});
 
-	test('moves the content over for a navbar on the left', () => {
+	test('moves the content over for a navbar on the left, and less for a sidebar with no rail', () => {
 		const rem = (px) => px / 24 + 'rem';
-		const {unmount} = render(<DetailSkeleton detailStyle="v2" />);
-		expect(find('.content').style.paddingLeft).toBe(rem(58));
-		unmount();
-
-		render(<DetailSkeleton detailStyle="v2" sidebar />);
-		expect(find('.content').style.paddingLeft).toBe(rem(174));
+		const left = (props) => {
+			const {unmount} = render(<DetailSkeleton {...props} />);
+			const padding = find('.content').style.paddingLeft;
+			unmount();
+			return padding;
+		};
+		expect(left({detailStyle: 'v2'})).toBe(rem(58));
+		expect(left({detailStyle: 'v2', sideRoom: 'rail'})).toBe(rem(174));
+		expect(left({detailStyle: 'v2', sideRoom: 'control'})).toBe(rem(120));
+		// Premiere's own inset already clears the resting control.
+		expect(left({detailStyle: 'v7', sideRoom: 'control'})).toBe(rem(154));
 	});
 });

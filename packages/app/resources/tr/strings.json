@@ -1255,7 +1255,7 @@
     "It comes straight out of your score bank.": "Doğrudan skor bakiyenizden düşülür.",
     "Items watched": "İzlenen öğeler",
     "It's spent as soon as you confirm.": "Onayladığınız anda harcanır.",
-    "Jellyfin Recommends": "Jellyfin Önerileri",
+    "Server Recommends": "Sunucu Önerileri",
     "Late night sessions": "Gece geç saat oturumları",
     "Leaderboard": "Lider Tablosu",
     "Libraries visited": "Ziyaret edilen kütüphane",
@@ -2261,5 +2261,9 @@
     "The server is busy or still starting. Try again later.": "Sunucu meşgul veya hâlâ başlıyor. Daha sonra tekrar deneyin.",
     "Fast Forward": "İleri Sar",
     "Three-lane runner": "Üç şeritli koşu oyunu",
-    "Cable Crawl": "Kablo Yılanı"
+    "Cable Crawl": "Kablo Yılanı",
+    "Carousel": "Atlıkarınca",
+    "Dolby Vision": "Dolby Vision",
+    "Unavailable": "Kullanılamıyor",
+    "Not changed on {servers}": "{servers} üzerinde değiştirilmedi"
 }

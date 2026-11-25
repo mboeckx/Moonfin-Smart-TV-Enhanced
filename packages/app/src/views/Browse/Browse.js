@@ -16,7 +16,7 @@ import LibraryButtonRow from '../../components/LibraryButtonRow';
 import WatchingNowRow from '../../components/WatchingNowRow';
 import {SkeletonShimmer, skeletonTitleWidths} from '../../components/Skeleton';
 import {getImageUrl, getBackdropId} from '../../utils/helpers';
-import {loadNewReleases} from '../../utils/mediaBarNewRelease';
+import {loadNewReleases, newReleaseKindsOf} from '../../utils/mediaBarNewRelease';
 import {createApiForServer} from '../../services/jellyfinApi';
 import {channelForProgram, isLiveTvProgram} from '../../utils/liveTvLibrary';
 import {focusedCardIndex, cardToRestore, focusedRowIndex, rowToRestore} from '../../utils/rowFocusMemory';
@@ -234,20 +234,24 @@ const Browse = ({
 	// first slide.
 	const [newReleases, setNewReleases] = useState(null);
 	const newReleaseBanner = settings.mediaBarNewReleaseBanner;
-	const newReleaseDays = settings.mediaBarNewReleaseDays;
+	const {
+		mediaBarNewReleaseDays: newReleaseDays, mediaBarNewReleaseKinds: newReleaseKinds,
+		mediaBarNewMovieDays: newMovieDays, mediaBarNewMovieDetail: newMovieTagline
+	} = settings;
 	useEffect(() => {
 		if (!newReleaseBanner || !showFeaturedBar || featuredItems.length === 0) return undefined;
 		let cancelled = false;
 		const apiFor = (item) => (item._serverUrl && item._serverAccessToken
 			? createApiForServer(item._serverUrl, item._serverAccessToken, item._serverUserId)
 			: api);
-		loadNewReleases(featuredItems, newReleaseDays, apiFor).then((releases) => {
+		const options = {days: newReleaseDays, movieDays: newMovieDays, kinds: newReleaseKindsOf(newReleaseKinds), tagline: newMovieTagline !== false};
+		loadNewReleases(featuredItems, options, apiFor).then((releases) => {
 			if (!cancelled) setNewReleases(releases);
 		});
 		return () => {
 			cancelled = true;
 		};
-	}, [api, featuredItems, newReleaseBanner, newReleaseDays, showFeaturedBar]);
+	}, [api, featuredItems, newReleaseBanner, newReleaseDays, newMovieDays, newMovieTagline, newReleaseKinds, showFeaturedBar]);
 	const shownReleases = newReleaseBanner ? newReleases : null;
 
 	const mergeContinueWatchingNextUp = mergesContinueWatchingNextUp(settings);
@@ -728,6 +732,8 @@ const Browse = ({
 		}
 	}, [handleSelectSeerrItem, handleSelectItem]);
 
+	const handlePlayFeaturedItem = useCallback((item) => handleSelectItem(item, true), [handleSelectItem]);
+
 	// The rows ignore a changed callback, so one drawn while Home sat hidden behind Details kept a
 	// handler that cant navigate. These always call the current one.
 	const latestSelectRef = useRef(null);
@@ -831,14 +837,16 @@ const Browse = ({
 		? rowPeekHeight(settings, filteredRows[0])
 		: 0;
 
-	// Rows mode leaves the scroller wherever the last row pinned it, and the peek shows its top.
+	const bannerOverRows = browseMode === 'featured' && settings.featuredBarStyle === 'banner';
+
+	// Rows mode leaves the scroller wherever the last row pinned it, and the peek and the Banner bar show its top.
 	useLayoutEffect(() => {
 		const container = contentRowsRef.current;
-		if (!rowPeek || !container) return;
+		if (!(rowPeek || bannerOverRows) || !container) return;
 		// A row glide still under way would write its offset back over this on its next frame.
 		stopScrollAnimation(container);
 		container.scrollTop = 0;
-	}, [rowPeek]);
+	}, [rowPeek, bannerOverRows]);
 
 	const navOffsetClass = settings.navbarPosition === 'left' ? css.sidebarOffset : css.topbarOffset;
 	const rowsClipClass = showTopInfoArea ? '' : css.rowsClipTop;
@@ -932,6 +940,7 @@ const Browse = ({
 							settingsLoaded={settingsLoaded}
 							getItemServerUrl={getItemServerUrl}
 							onSelectItem={handleSelectExternalItem}
+							onPlayItem={handlePlayFeaturedItem}
 							onNavigateDown={handleNavigateDownFromFeatured}
 							onFeaturedFocus={handleFeaturedFocusCallback}
 						/>
@@ -974,6 +983,7 @@ const Browse = ({
 					style={rowPeek ? {height: rem(rowPeek)} : undefined}
 					data-pointer-rows
 				>
+					<div className={css.rowsTrack}>
 					{filteredRows.map((row, index) => {
 						if (row.isPlaceholder || index >= mountedRows) {
 							return (
@@ -1132,6 +1142,7 @@ const Browse = ({
 					{filteredRows.length === 0 && (
 						<div className={css.empty}>{$L('No content found')}</div>
 					)}
+					</div>
 				</div>
 				</MediaPreviewContext.Provider>
 			</div>
