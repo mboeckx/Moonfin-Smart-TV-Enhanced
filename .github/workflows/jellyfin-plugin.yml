@@ -123,11 +123,16 @@ jobs:
       - name: Publish the plugin repository manifest
         if: env.PUBLISH == 'true'
         run: |
+          # The workflow's token may not be allowed to create a release with a new tag, so when
+          # this one is missing the run says how to make it by hand rather than failing on a 403.
           if ! gh release view "$REPOSITORY_TAG" > /dev/null 2>&1; then
-            gh release create "$REPOSITORY_TAG" \
+            if ! gh release create "$REPOSITORY_TAG" \
               --target "$GITHUB_SHA" \
               --title "Jellyfin plugin repository" \
               --notes "Add https://github.com/${GITHUB_REPOSITORY}/releases/download/${REPOSITORY_TAG}/manifest.json as a repository in Jellyfin (Dashboard → Plugins → Repositories) to install and update the Archive plugin. This release only holds that file; the plugin itself is on the archive-plugin-v releases." \
-              --latest=false
+              --latest=false; then
+              echo "::error title=No plugin repository release::GitHub didn't let this workflow create the ${REPOSITORY_TAG} release. Create it once by hand: Releases → Draft a new release → new tag '${REPOSITORY_TAG}' on main, untick 'Set as the latest release', publish. Then re-run this job's failed steps."
+              exit 1
+            fi
           fi
           gh release upload "$REPOSITORY_TAG" repository/manifest.json --clobber
