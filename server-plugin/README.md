@@ -103,7 +103,12 @@ touches it, and keeps the zip as an artifact. To publish a version:
    ```
 
 The workflow then makes a release for the tag with the zip, and adds the version to the plugin
-repository manifest, which it keeps on the `jellyfin-plugin-repository` release. Servers that have
+repository manifest, which it keeps on the `jellyfin-plugin-repository` release.
+
+The first time, create the `jellyfin-plugin-repository` release by hand, since GitHub may not let the
+workflow make a release with a new tag: *Releases → Draft a new release*, new tag
+`jellyfin-plugin-repository` on `main`, untick *Set as the latest release*, publish. If you tagged a
+version before doing that, re-run the workflow's failed jobs afterwards. Servers that have
 the repository pick the new version up on their next plugin update check. Neither release is
 marked as the repository's latest, so they don't get in the way of the app's own releases.
 
