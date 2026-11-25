@@ -2,6 +2,7 @@ import $L from '@enact/i18n/$L';
 import {SUBTITLE_FONTS} from '../../services/subtitleFonts';
 
 import {PLAYBACK_TIME_DISPLAYS, PLAYBACK_TIME_SLOTS} from '../../utils/playbackTimeLabels';
+import {NEW_EPISODES, NEW_MOVIE, NEW_SEASON, NEW_SERIES} from '../../utils/mediaBarNewRelease';
 
 // Every list is a function so $L runs when the settings screen opens rather than when
 // this module is imported, which is before i18n has loaded its bundle.
@@ -27,7 +28,7 @@ export const getMediaBarSourceOptions = () => [
 	{ value: 'random', label: $L('Random') },
 	{ value: 'recentlyAdded', label: $L('Recently Added') },
 	{ value: 'recentlyReleased', label: $L('Recently Released') },
-	{ value: 'newReleases', label: $L('New Seasons & Episodes') }
+	{ value: 'newReleases', label: $L('New Releases') }
 ];
 
 export const getDateFormatOptions = () => [
@@ -42,6 +43,22 @@ export const getNewReleaseDaysOptions = () => [
 	{ value: 30, label: $L('30 days') },
 	{ value: 60, label: $L('60 days') },
 	{ value: 90, label: $L('90 days') }
+];
+
+export const getNewMovieDaysOptions = () => [
+	{ value: 30, label: $L('30 days') },
+	{ value: 60, label: $L('60 days') },
+	{ value: 90, label: $L('90 days') },
+	{ value: 120, label: $L('120 days') },
+	{ value: 180, label: $L('180 days') },
+	{ value: 365, label: $L('365 days') }
+];
+
+export const getNewReleaseKindOptions = () => [
+	{ value: NEW_SERIES, label: $L('New Series') },
+	{ value: NEW_SEASON, label: $L('New Season') },
+	{ value: NEW_EPISODES, label: $L('New Episodes') },
+	{ value: NEW_MOVIE, label: $L('New Movie') }
 ];
 
 export const getFeaturedBarStyleOptions = () => [
@@ -242,6 +259,30 @@ export const getNavPositionOptions = () => [
 	{ value: 'left', label: $L('Left Sidebar') }
 ];
 
+export const getTopNavbarStyleOptions = () => [
+	{ value: 'classic', label: $L('Classic') },
+	{ value: 'tabline', label: $L('Tabline') },
+	{ value: 'atlas', label: $L('Atlas') }
+];
+
+export const topNavbarStyleHint = (style) => ({
+	classic: $L('The standard bar'),
+	tabline: $L('Text tabs with an underline, no pill'),
+	atlas: $L('Tabs open a panel with shortcuts and artwork')
+})[style];
+
+export const getSidebarStyleOptions = () => [
+	{ value: 'classic', label: $L('Classic') },
+	{ value: 'reel', label: $L('Reel') },
+	{ value: 'mosaic', label: $L('Mosaic') }
+];
+
+export const sidebarStyleHint = (style) => ({
+	classic: $L('The standard sidebar'),
+	reel: $L('A wheel that turns through the destinations'),
+	mosaic: $L('A panel of tiles with library artwork')
+})[style];
+
 export const getWatchedIndicatorOptions = () => [
 	{ value: 'always', label: $L('Always') },
 	{ value: 'hideCount', label: $L('Hide Unwatched Count') },
@@ -296,13 +337,6 @@ export const getBookLibraryStyleOptions = () => [
 	{ value: 'bookstore', label: $L('Bookstore') }
 ];
 
-export const getKeyboardStyleOptions = () => [
-	{ value: 'native', label: $L('Native') },
-	{ value: 'classic', label: $L('Classic') },
-	{ value: 'glass', label: $L('Glass') },
-	{ value: 'docked', label: $L('Docked') }
-];
-
 export const getMusicLibraryStyleOptions = () => [
 	{ value: 'classic', label: $L('Classic') },
 	{ value: 'quickAccess', label: $L('Quick Access') },
@@ -346,6 +380,12 @@ export const getHomeRowSortOptions = () => [
 	{ value: 'CommunityRating', label: $L('Community Rating') }
 ];
 
+// Jellyfin lists studios by name only, so these are the orders the Studios row can give.
+export const getStudioSortOptions = () => [
+	{ value: 'SortName', label: $L('Name') },
+	{ value: 'Random', label: $L('Random') }
+];
+
 // Playlist and collection rows can also follow the curated arrangement
 export const getPlaylistCollectionSortOptions = () => [
 	{ value: 'PlaylistOrder', label: $L('Playlist Order') },
@@ -360,7 +400,7 @@ export const getGenresRowItemFilterOptions = () => [
 
 export const getRecommendationSystemSourceOptions = () => [
 	{ value: 'local', label: $L('Moonfin Recommends') },
-	{ value: 'server', label: $L('Jellyfin Recommends') },
+	{ value: 'server', label: $L('Server Recommends') },
 	{ value: 'online', label: $L('TMDb Similarity') },
 	{ value: 'hybrid', label: $L('Hybrid') }
 ];

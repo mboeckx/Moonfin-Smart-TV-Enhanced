@@ -1689,7 +1689,7 @@
     "Like": "Gefällt mir",
     "Featurettes": "Featurettes",
     "Just now": "Gerade eben",
-    "Jellyfin Recommends": "Jellyfin Empfehlungen",
+    "Server Recommends": "Server-Empfehlungen",
     "Kids Mode": "Kinderfreundlicher Modus",
     "Failed to cancel recording": "Aufnahme konnte nicht abgebrochen werden",
     "In Progress": "Begonnen, aber nicht abgeschlossen",
@@ -1775,5 +1775,7 @@
     "Monday": "Montag",
     "Grandparents": "Großeltern",
     "On Now": "Im Jetzt",
-    "Block content with the following ratings:": "Inhalte mit folgenden Altersfreigaben blockieren:"
+    "Block content with the following ratings:": "Inhalte mit folgenden Altersfreigaben blockieren:",
+    "Dolby Vision": "Dolby Vision",
+    "Unavailable": "Nicht verfügbar"
 }

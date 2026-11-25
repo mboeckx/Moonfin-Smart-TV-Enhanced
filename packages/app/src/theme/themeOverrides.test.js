@@ -1,6 +1,6 @@
 import {applyThemeOverrides, buildThemeOverrideCss, registerThemeSheet} from './themeOverrides';
 import {resolveThemeById} from './themeRegistry';
-import {contrastRatio, inkOn, resolveFocusBorderColor, toCssColor, MIN_BUTTON_CONTRAST} from './themeSpec';
+import {contrastRatio, inkOn, resolveFocusBorderColor, toCssColor, MIN_BUTTON_CONTRAST, toRgbTriplet} from './themeSpec';
 
 describe('buildThemeOverrideCss', () => {
 	it('scopes every rule to the active theme id', () => {
@@ -96,6 +96,16 @@ describe('buildThemeOverrideCss', () => {
 		expect(buildThemeOverrideCss(theme)).toContain('background-color: rgba(107, 114, 128, 0.375)');
 	});
 
+	it('shades and washes the MakD bar in charcoal tinted by the overlay setting, at makd\'s strength by default', () => {
+		const theme = resolveThemeById('moonfin');
+		const black = buildThemeOverrideCss(theme, {mediaBarOverlayColor: 'black', mediaBarOverlayOpacity: 50});
+		expect(black).toMatch(/makdShade[^{]*\{ background: rgba\(20, 20, 20, 0\.2\); \}/);
+		expect(black).toContain('linear-gradient(130deg, rgba(20, 20, 20, 0.65) 10%, rgba(20, 20, 20, 0.35) 30%, rgba(20, 20, 20, 0) 100%)');
+		expect(buildThemeOverrideCss(theme, {mediaBarOverlayColor: 'black', mediaBarOverlayOpacity: 100})).toContain('linear-gradient(130deg, rgb(20, 20, 20) 10%');
+		// Neon Magenta stays a dark plum rather than flooding the art pink
+		expect(buildThemeOverrideCss(theme, {mediaBarOverlayColor: 'neonPulseMagenta', mediaBarOverlayOpacity: 50})).toMatch(/makdShade[^{]*\{ background: rgba\(97, 34, 64, 0\.2\); \}/);
+	});
+
 	it('prefers the focus border color setting over the theme focus border', () => {
 		const theme = resolveThemeById('moonfin');
 		expect(buildThemeOverrideCss(theme, {focusBorderColor: '#ff0000'})).toContain('rgb(255, 0, 0)');
@@ -116,6 +126,46 @@ describe('buildThemeOverrideCss', () => {
 		expect(buildThemeOverrideCss(theme, {focusBorderColor: ''})).toContain(`${prefix} .ring { border-color: ${themeColor}; }`);
 	});
 
+	it('draws Switch User in the theme accent, inside the switcher only, and keeps Sign Out All Users red', () => {
+		const theme = resolveThemeById('moonfin');
+		const accent = toCssColor(theme.colors.accent);
+		const prefix = "html[data-theme-id='moonfin'][data-theme-id]";
+		const lines = buildThemeOverrideCss(theme).split('\n');
+		expect(lines).toContain(`${prefix} .layer .dotOn { background: ${accent}; }`);
+		expect(lines).toContain(`${prefix} .layer .lineAccent { color: ${accent}; }`);
+		// Moonfin's white onAccent can't be read on its cyan, so the check takes dark ink
+		expect(contrastRatio(theme.colors.accent, theme.colors.onAccent)).toBeLessThan(MIN_BUTTON_CONTRAST);
+		expect(lines).toContain(`${prefix} .layer .badgeActive { background-color: ${accent}; color: rgba(0, 0, 0, 0.92); }`);
+		expect(lines.some((line) => line.includes(' .layer .pill:not(.pillDanger):focus {') && line.includes(`border-color: ${accent};`))).toBe(true);
+		// Login's user picker shares the carousel and stays unthemed
+		expect(lines.some((line) => ['dotOn', 'lineAccent', 'badgeActive'].some((name) => line.startsWith(`${prefix} .${name} `)))).toBe(false);
+	});
+
+	it('draws the shared dialogs in the theme and keeps their destructive buttons red', () => {
+		// Moonfin's accent and surface match the baked fallbacks, so 8-Bit Hero shows the theme is followed
+		for (const id of ['moonfin', '8bit_hero']) {
+			const theme = resolveThemeById(id);
+			const accent = toCssColor(theme.colors.accent);
+			const prefix = `html[data-theme-id='${id}'][data-theme-id]`;
+			const lines = buildThemeOverrideCss(theme).split('\n');
+			expect(lines).toContain(`${prefix} .rowIconSelected { color: ${accent}; }`);
+			expect(lines).toContain(`${prefix} .alertAction:not(.alertActionDestructive) { color: ${accent}; }`);
+			// A colour on every action would outrank the module's red for the destructive ones
+			expect(lines.some((line) => line.includes(`${prefix} .alertAction {`) || line.includes(`${prefix} .alertAction:focus {`))).toBe(false);
+			expect(lines.some((line) => line.startsWith(`${prefix} .alert {`) && line.includes(`background: rgb(${toRgbTriplet(theme.colors.surface)});`))).toBe(true);
+			expect(lines).toContain(`${prefix} .alert .cancelMessage { color: rgba(${toRgbTriplet(theme.colors.onSurface)}, 0.7); }`);
+		}
+	});
+
+	it('keeps Switch User text light on its dark scrim when the theme\'s onSurface is dark', () => {
+		const moonfin = resolveThemeById('moonfin');
+		const theme = {...moonfin, colors: {...moonfin.colors, onSurface: '#FF1A1C2C'}};
+		const prefix = "html[data-theme-id='moonfin'][data-theme-id]";
+		const lines = buildThemeOverrideCss(theme).split('\n');
+		expect(lines).toContain(`${prefix} .layer .screen, ${prefix} .layer .name { color: rgba(255, 255, 255, 1); }`);
+		expect(lines).toContain(`${prefix} .layer .signedInAs, ${prefix} .layer .line { color: rgba(255, 255, 255, 0.65); }`);
+	});
+
 	it('draws the watched badge in the theme on the screens that load on demand', () => {
 		const theme = resolveThemeById('moonfin');
 		const names = ['badgeScreenOne', 'badgeScreenTwo'];
@@ -130,18 +180,51 @@ describe('buildThemeOverrideCss', () => {
 		}
 	});
 
+	const playerSheet = {liveBtn: 'liveBtn', chapterItem: 'chapterItem', trackItem: 'trackItem', progressBar: 'progressBar', progressFill: 'progressFill', progressBuffered: 'progressBuffered', seekIndicator: 'seekIndicator', liveProgressFill: 'liveProgressFill', subtitleText: 'subtitleText'};
+
 	it('rings the screens that load on demand once they hand their stylesheets over', async () => {
 		const theme = resolveThemeById('moonfin');
 		applyThemeOverrides(theme, {focusBorderColor: '#ff0000'});
 		expect(document.getElementById('moonfin-theme-overrides').textContent).not.toContain('chapterItem');
-		registerThemeSheet('player', {liveBtn: 'liveBtn', chapterItem: 'chapterItem', trackItem: 'trackItem'});
+		registerThemeSheet('player', playerSheet);
 		registerThemeSheet('playerOverlays', {offsetBtn: 'offsetBtn', actionBtn: 'actionBtn', settingItem: 'settingItem', sliderItem: 'sliderItem'});
 		await Promise.resolve();
-		const lines = document.getElementById('moonfin-theme-overrides').textContent.split('\n');
+		const lines = document.getElementById('moonfin-theme-overrides-later').textContent.split('\n');
+		// Only the new screens' rules, not the whole theme again.
+		expect(lines.some((line) => line.includes('#root'))).toBe(false);
 		const prefix = "html[data-theme-id='moonfin'][data-theme-id]";
 		expect(lines).toContain(`${prefix} .liveBtn:hover, ${prefix} .liveBtn:focus, ${prefix} .chapterItem:hover, ${prefix} .chapterItem:focus { border-color: rgb(255, 0, 0); }`);
 		expect(lines).toContain(`${prefix} .sliderItem:focus-within { border-color: rgb(255, 0, 0); }`);
 		expect(lines).toContain(`${prefix} .trackItem:focus { background: rgba(0, 164, 220, 0.3); }`);
+		expect(lines).toContain(`${prefix} .progressBar { background: rgb(64, 64, 64); }`);
+		expect(lines).toContain(`${prefix} .progressFill { background: rgb(0, 164, 220); }`);
+		expect(lines).toContain(`${prefix} .progressBuffered { background: rgba(64, 64, 64, 0.8); }`);
+		expect(lines).toContain(`${prefix} .seekIndicator { background: rgb(0, 164, 220); }`);
+		expect(lines).toContain(`${prefix} .progressBar:focus .seekIndicator { background: #ffffff; }`);
+		expect(lines).toContain(`${prefix} .liveProgressFill { background: rgb(0, 164, 220); }`);
+	});
+
+	it('draws each part of the seek bar from its own theme color', () => {
+		const theme = resolveThemeById('8bit_hero');
+		const {accent, rangeTrack, rangeProgress, rangeThumb} = theme.colors;
+		expect(new Set([accent, rangeTrack, rangeProgress, rangeThumb]).size).toBe(4);
+		registerThemeSheet('player', playerSheet);
+		const lines = buildThemeOverrideCss(theme).split('\n');
+		const prefix = "html[data-theme-id='8bit_hero'][data-theme-id]";
+		expect(lines).toContain(`${prefix} .progressBar { background: ${toCssColor(rangeTrack)}; }`);
+		expect(lines).toContain(`${prefix} .progressFill { background: ${toCssColor(rangeProgress)}; }`);
+		expect(lines).toContain(`${prefix} .progressBuffered { background: rgba(51, 60, 87, 0.8); }`);
+		expect(lines).toContain(`${prefix} .seekIndicator { background: ${toCssColor(rangeThumb)}; }`);
+		expect(lines).toContain(`${prefix} .progressBar:focus .seekIndicator { background: #ffffff; }`);
+		expect(lines).toContain(`${prefix} .liveProgressFill { background: ${toCssColor(accent)}; }`);
+	});
+
+	it("keeps the theme's face for the Latin text in a Japanese subtitle line", () => {
+		registerThemeSheet('player', playerSheet);
+		const japanese = (id) => buildThemeOverrideCss(resolveThemeById(id)).split('\n').filter((line) => line.includes(':lang(ja)'));
+		expect(japanese('neon_pulse')).toEqual([`html[data-theme-id='neon_pulse'][data-theme-id] .subtitleText:lang(ja) { font-family: 'NotoSansJP', 'NeonPulseBody', sans-serif; }`]);
+		expect(japanese('8bit_hero')).toEqual([`html[data-theme-id='8bit_hero'][data-theme-id] .subtitleText:lang(ja) { font-family: 'NotoSansJP', 'EightBitHero', sans-serif; }`]);
+		expect(japanese('moonfin')).toEqual([]);
 	});
 });
 

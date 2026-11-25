@@ -6,17 +6,38 @@ import {normalizeRatingStyle, personalRatingOf} from '../../utils/personalRating
 import {getRtFallbackIcon} from '../icons/rtIcons';
 import css from './RatingsRow.module.less';
 
+// Every line that renders together is measured in one pass before the frame is drawn, since measuring each
+// right after resetting its zoom made the browser lay the page out again per line, about 130 ms a move in the
+// settings preview on webOS 3.
+const pendingFits = new Set();
+const flushFits = () => {
+	const rows = Array.from(pendingFits);
+	pendingFits.clear();
+	rows.forEach((row) => {
+		row.style.zoom = '';
+	});
+	const sizes = rows.map((row) => [row.scrollWidth, row.clientWidth]);
+	rows.forEach((row, i) => {
+		const [scroll, client] = sizes[i];
+		if (scroll > client) row.style.zoom = String(client / scroll);
+	});
+};
+const fitLater = (row) => {
+	if (!pendingFits.size) Promise.resolve().then(flushFits);
+	pendingFits.add(row);
+};
+
 // surface is 'homeRows' or 'mediaBar' for the screens that keep their own ratings settings.
 // inline keeps the full size chips on one line with each label after its value.
 // sampleRatings stands in for the plugin's answer, so the settings preview never asks the server.
 // A screen with no room for the sources' names turns labels off.
 // columns is Frost's strip, a column per source with its name over its score. The names show there
 // whatever the label setting says, since the strip is nothing without them.
-const RatingsRow = ({item, serverUrl, compact = false, singleLineWidth, pluginEnabled = true, surface, inline = false, sampleRatings, labels = true, columns = false}) => {
+const RatingsRow = ({item, serverUrl, compact = false, singleLineWidth, pluginEnabled = true, surface, inline = false, sampleRatings, labels = true, badges = true, columns = false}) => {
 	const settings = ratingSettingsFor(useSettings().settings, surface);
 	const showLabels = labels && settings.showRatingLabels !== false;
 	// Badges only choose the chip chrome around each rating. Off means plain, not hidden.
-	const showBadges = settings.showRatingBadges !== false;
+	const showBadges = badges && settings.showRatingBadges !== false;
 	const enabledSources = settings.mdblistRatingSources;
 	const [allRatings, setAllRatings] = useState([]);
 	const mountedRef = useRef(true);
@@ -93,12 +114,7 @@ const RatingsRow = ({item, serverUrl, compact = false, singleLineWidth, pluginEn
 	// Zoom rather than a scale transform, so the line gives back its height too.
 	// The icons size to their images, so each one that loads fits the line again.
 	const fitSingleLine = useCallback(() => {
-		const row = singleLineRef.current;
-		if (!row) return;
-		row.style.zoom = '';
-		if (row.scrollWidth > row.clientWidth) {
-			row.style.zoom = String(row.clientWidth / row.scrollWidth);
-		}
+		if (singleLineRef.current) fitLater(singleLineRef.current);
 	}, []);
 	useLayoutEffect(fitSingleLine, [fitSingleLine, singleLineWidth, displayRatings, personalRating, communityRating, showCriticRating, showLabels, showBadges]);
 

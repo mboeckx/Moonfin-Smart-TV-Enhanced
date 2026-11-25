@@ -33,7 +33,9 @@ const mockSettings = {
 	mediaBarShowRatingLabels: false,
 	mediaBarShowRatingBadges: true
 };
-jest.mock('../../context/SettingsContext', () => ({useSettings: () => ({settings: mockSettings})}));
+// Tests swap in a new settings object like the app does, since the surface copies are kept per object.
+let mockCurrent = mockSettings;
+jest.mock('../../context/SettingsContext', () => ({useSettings: () => ({settings: mockCurrent})}));
 
 const movie = {Id: 'm1', Type: 'Movie', CommunityRating: 7.4, CriticRating: 91};
 
@@ -88,15 +90,14 @@ describe('RatingsRow plugin ratings on a surface', () => {
 				{source: 'imdb', value: 7.9, score: 79}
 			]})
 		}));
-		const saved = mockSettings.homeRowsMdblistRatingSources;
-		mockSettings.homeRowsMdblistRatingSources = ['imdb', 'tomatoes'];
+		mockCurrent = {...mockSettings, homeRowsMdblistRatingSources: ['imdb', 'tomatoes']};
 		try {
 			render(<RatingsRow item={{...movie, Id: 'm2', ProviderIds: {Tmdb: '19995'}}} serverUrl='http://server' surface='homeRows' />);
 			await screen.findByText('7.9');
 			const values = screen.getAllByRole('img').map((img) => img.getAttribute('alt'));
 			expect(values).toEqual(['IMDb', 'Rotten Tomatoes']);
 		} finally {
-			mockSettings.homeRowsMdblistRatingSources = saved;
+			mockCurrent = mockSettings;
 		}
 	});
 });
@@ -113,8 +114,7 @@ describe('RatingsRow sample ratings', () => {
 
 	test('stand in for the plugin, in the surface order, without asking the server', () => {
 		global.fetch = jest.fn();
-		const saved = mockSettings.homeRowsMdblistRatingSources;
-		mockSettings.homeRowsMdblistRatingSources = ['tomatoes', 'imdb'];
+		mockCurrent = {...mockSettings, homeRowsMdblistRatingSources: ['tomatoes', 'imdb']};
 		try {
 			render(<RatingsRow item={{...movie, Id: 'm3', ProviderIds: {Tmdb: '603'}}} serverUrl='http://server' surface='homeRows' sampleRatings={sample} />);
 			const values = screen.getAllByRole('img').map((img) => img.getAttribute('alt'));
@@ -122,7 +122,7 @@ describe('RatingsRow sample ratings', () => {
 			expect(screen.getByText('88%')).toBeTruthy();
 			expect(global.fetch).not.toHaveBeenCalled();
 		} finally {
-			mockSettings.homeRowsMdblistRatingSources = saved;
+			mockCurrent = mockSettings;
 		}
 	});
 
@@ -131,5 +131,32 @@ describe('RatingsRow sample ratings', () => {
 		expect(screen.queryByText('88%')).toBeNull();
 		expect(screen.getByText('91%')).toBeTruthy();
 		expect(screen.getByText('7.4')).toBeTruthy();
+	});
+});
+
+describe('RatingsRow single line', () => {
+	test('fits every line drawn together, each measured with its zoom reset', async () => {
+		const reads = [];
+		const scrollWidth = jest.spyOn(window.HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function () {
+			reads.push(this.style.zoom);
+			return 300;
+		});
+		const clientWidth = jest.spyOn(window.HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => 200);
+		try {
+			const {container} = render(
+				<div>
+					<RatingsRow item={movie} serverUrl='http://server' pluginEnabled={false} compact singleLineWidth={200} />
+					<RatingsRow item={{...movie, Id: 'm4'}} serverUrl='http://server' pluginEnabled={false} compact singleLineWidth={200} />
+				</div>
+			);
+			await Promise.resolve();
+			const lines = Array.from(container.firstChild.children);
+			expect(lines).toHaveLength(2);
+			lines.forEach((line) => expect(Number(line.style.zoom)).toBeCloseTo(200 / 300, 5));
+			expect(reads).toEqual(['', '']);
+		} finally {
+			scrollWidth.mockRestore();
+			clientWidth.mockRestore();
+		}
 	});
 });

@@ -1,4 +1,4 @@
-import {Fragment, Suspense, lazy, useCallback, useState, useEffect, useLayoutEffect, useMemo, useRef} from 'react';
+import {Fragment, Suspense, lazy, memo, useCallback, useState, useEffect, useLayoutEffect, useMemo, useRef} from 'react';
 import {
 	hashPin, isPinShaped, pinMatches, lockoutRemaining, registerFailedAttempt, clearedLockout, tooManyAttempts, KIDS_PIN
 } from '../../utils/pinLockout';
@@ -34,7 +34,8 @@ import {checkForUpdatesDetailed} from '../../services/versionChecker';
 import QrLinkView from './QrLinkView';
 import {formatPlaybackTimeSlot} from '../../utils/playbackTimeLabels';
 import {getSubtitleOverlayStyle, getSubtitleTextStyle} from '../../utils/subtitleConstants';
-import {getImageTypeOptions, getLabel, getSubtitleLanguageOptions, getTranscodeAudioCodecOptions} from './settingsOptions';
+import {getImageTypeOptions, getLabel, getNewReleaseKindOptions, getSubtitleLanguageOptions, getTranscodeAudioCodecOptions} from './settingsOptions';
+import {NEW_RELEASE_KINDS, newReleaseKindsOf} from '../../utils/mediaBarNewRelease';
 import {MAX_SUBTITLE_DOWNLOAD_LANGUAGES} from '../Player/remoteSubtitleUtils';
 import {SCHEMA_BY_KEY, SETTINGS_SCHEMA, resolve, spotlightIdOf} from './settingsSchema';
 import {MIN_QUERY_LENGTH, buildSettingsIndex, matchSettings, resultSpotlightId} from './settingsSearch';
@@ -169,14 +170,14 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 	// Category labels do not depend on anything but the locale, so they resolve without
 	// the settings context, which is not built until further down. The gate only reads the
 	// settings, which are in hand, and the search index already honours it the same way.
-	const categories = SETTINGS_SCHEMA
+	const categories = useMemo(() => SETTINGS_SCHEMA
 		.filter((category) => !category.when || category.when({settings}))
 		.map((category) => ({
 			id: category.id,
 			label: resolve(category.label),
 			description: resolve(category.description),
 			icon: category.icon
-		}));
+		})), [settings]);
 
 	const [searchQuery, setSearchQuery] = useState('');
 	const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -430,6 +431,13 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 		clearCapabilitiesCache();
 	}, [settings.experimentalTruehd, updateSetting]);
 
+	// The Xbox profile keeps what it detected, so the next playback only follows the new
+	// choice once it is thrown away
+	const toggleXboxDolbyVision = useCallback(() => {
+		updateSetting('xboxDolbyVision', settings.xboxDolbyVision === false);
+		clearCapabilitiesCache();
+	}, [settings.xboxDolbyVision, updateSetting]);
+
 	const handleOptionSelect = useCallback(
 		(settingKey, value) => {
 			if (settingKey === '__themeSelection') {
@@ -459,6 +467,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 		const result = await checkForUpdatesDetailed();
 		if (result.status === 'update') {
 			setUpdateCheckMessage($L('Version {version} is available').replace('{version}', result.latestVersion));
+			window.dispatchEvent(new CustomEvent('moonfin:show-update'));
 		} else if (result.status === 'current') {
 			setUpdateCheckMessage($L('You are on the latest version'));
 		} else {
@@ -537,6 +546,17 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			returnFocusTo: 'setting-subtitleDownloadLanguages'
 		});
 	}, [openChecklist, settings.subtitleDownloadLanguages, updateSetting]);
+
+	// Stored as a comma list in a set order, so the same picks always read the same.
+	const openNewReleaseKinds = useCallback(() => {
+		openChecklist({
+			title: $L('Labels'),
+			options: getNewReleaseKindOptions(),
+			picked: newReleaseKindsOf(settings.mediaBarNewReleaseKinds),
+			onSave: (picked) => updateSetting('mediaBarNewReleaseKinds', NEW_RELEASE_KINDS.filter((kind) => picked.includes(kind)).join(',')),
+			returnFocusTo: 'setting-mediaBarNewReleaseKinds'
+		});
+	}, [openChecklist, settings.mediaBarNewReleaseKinds, updateSetting]);
 
 	// Only the codecs this device's transcode can turn into something else are offered
 	const openTranscodeAudioCodecs = useCallback(async () => {
@@ -1123,6 +1143,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 		isTizen: isTizen(),
 		isVega: isVega(),
 		isXbox: isXbox(),
+		consoleDolbyVision: !!capabilities?.consoleDolbyVision,
 		serverUrl,
 		serverVersion,
 		availableThemes,
@@ -1151,6 +1172,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			openLibraryOrder,
 			openParentalControls,
 			openSubtitleDownloadLanguages,
+			openNewReleaseKinds,
 			openTranscodeAudioCodecs,
 			openQrLink,
 			openRatingSources,
@@ -1172,6 +1194,7 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			openScreen,
 			resetRatingsSettings,
 			toggleExperimentalTruehd,
+			toggleXboxDolbyVision,
 			setSetting: updateSetting,
 			setSettings: updateSettings,
 			refreshPlugin,
@@ -1182,10 +1205,10 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 			openDeviceProbe: canProbeDevice ? openDeviceProbe : null
 		}
 	}), [
-		settings, capabilities, seerr, achievements, romm, seerrLabel, isSeerr, hasLiveTv, posterLabelsAvailable, archiveViewable, serverType, serverUrl, ratingsResetArmed, resetRatingsSettings, toggleExperimentalTruehd, updateSetting, updateSettings, refreshPlugin, calendarLibraries,
+		settings, capabilities, seerr, achievements, romm, seerrLabel, isSeerr, hasLiveTv, posterLabelsAvailable, archiveViewable, serverType, serverUrl, ratingsResetArmed, resetRatingsSettings, toggleExperimentalTruehd, toggleXboxDolbyVision, updateSetting, updateSettings, refreshPlugin, calendarLibraries,
 		serverVersion, availableThemes, activeThemeId, openThemes, openThemeStore, openHomeRows,
 		openDetailButtons, openOsdButtons, openDetailMetadata, openDetailSections, openDiagnostics,
-		signInPin, toggleSignInPin, changeSignInPin, removeSignInPin, openKidsMode, openLibraries, openLibraryOrder, openParentalControls, openSubtitleDownloadLanguages, openTranscodeAudioCodecs, openQrLink, openRatingSources, openRowImageTypes, openExcludedGenres, openMediaBarLibraries,
+		signInPin, toggleSignInPin, changeSignInPin, removeSignInPin, openKidsMode, openLibraries, openLibraryOrder, openParentalControls, openSubtitleDownloadLanguages, openNewReleaseKinds, openTranscodeAudioCodecs, openQrLink, openRatingSources, openRowImageTypes, openExcludedGenres, openMediaBarLibraries,
 		openMediaBarCollections, openMediaBarExternalLists, openScreensaverLibraries, openScreensaverCollections, openScreensaverGenres, openCalendarLibraries,
 		openImdbLists, openSeasonalRow, openExternalTmdbLists, openExternalCalendars,
 		openExternalCustomRows, openSeerrHomeRows, openScreen, onRunSetupWizard, canProbeDevice, afterHours.press, watchParties,
@@ -1764,4 +1787,4 @@ const Settings = ({ onBack, onLibrariesChanged, onRunSetupWizard, onSelectItem, 
 	);
 };
 
-export default Settings;
+export default memo(Settings);
