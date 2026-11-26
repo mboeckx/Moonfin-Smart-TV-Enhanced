@@ -36,6 +36,10 @@ Delete**. Any other client can use the HTTP API below.
   on "all libraries" who may not see one of them is given every *other* library instead,
   including libraries added later. They get "all libraries" back once they're allowed to see both.
   Turn **Set each user's library access to match** off to manage access yourself.
+- **Can keep a library out of chosen people's library list.** They still have access, so its
+  titles open from search, actor pages and links and they can bring a title back, but they don't
+  get it as a library to browse. The plugin does this through each user's own "hide from My
+  Media", and only takes off what it put there.
 - Optionally keeps each library out of its viewers' **Latest** rows, and off people's pages in
   clients that support the plugin.
 - Moonfin also leaves both out of its screensaver. People who can see the archive can turn

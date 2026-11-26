@@ -81,6 +81,12 @@ public class ArchiveState
     /// so they get every new library too and get "all libraries" back once they may view everything.
     /// </summary>
     public List<Guid> RestrictedUsers { get; set; } = new();
+
+    /// <summary>
+    /// Gets or sets, per user, the shelf libraries the plugin put on their "hide from My Media" list,
+    /// so it takes away only what it added.
+    /// </summary>
+    public Dictionary<Guid, List<Guid>> HiddenFromLibraryList { get; set; } = new();
 }
 
 /// <summary>Reads and writes <see cref="ArchiveState"/> as a JSON file in the plugin's data folder.</summary>
