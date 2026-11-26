@@ -3,8 +3,9 @@ name: Jellyfin Plugin
 # Builds the Archive plugin for Jellyfin. Kept apart from the app's Build workflow so the two can
 # be changed and merged separately.
 #
-# Every pull request and push to main that touches the plugin builds it and keeps the zip as an
-# artifact. Pushing a tag like archive-plugin-v1.2.0 also publishes it:
+# Every pull request that touches the plugin builds it and keeps the zip as an artifact. Merges to
+# main are built and released by the Main Release workflow, which also publishes a new plugin
+# version to the repository. Pushing a tag like archive-plugin-v1.2.0 still publishes one by hand:
 #   - a release for that tag, holding the zip
 #   - the plugin repository manifest, kept on the release tagged jellyfin-plugin-repository, so
 #     a Jellyfin server that adds this URL as a repository installs and updates the plugin itself:
@@ -17,7 +18,6 @@ on:
         description: 'Version to build, like 1.2.0 (leave empty for the one in plugin.json). Manual runs never publish.'
         required: false
   push:
-    branches: [main]
     tags:
       - 'archive-plugin-v[0-9]+.[0-9]+.[0-9]+*'
     paths:

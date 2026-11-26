@@ -95,26 +95,24 @@ Jellyfin shows.
 
 ## Releasing
 
-The *Jellyfin plugin* workflow builds the plugin on every pull request and push to `main` that
-touches it, and keeps the zip as an artifact. To publish a version:
+Every merge to `main` is released by the *Main Release* workflow: one release holding the Tizen
+app (Regular, Oblong and Legacy) and this plugin's zip. When `plugin.json` holds a version the
+plugin repository doesn't list yet, the same run publishes it there, so servers using the
+repository are offered the update. To release a new plugin version, raise `version` and set
+`changelog` in `Jellyfin.Plugin.Archive/plugin.json` in the pull request; merging it does the rest.
 
-1. Set `version` and `changelog` in `Jellyfin.Plugin.Archive/plugin.json`.
-2. Tag the commit and push the tag:
+Each run makes its own release, tagged `v<app version>-build.<run number>`. If GitHub won't let the
+workflow make a new tag, the run updates a single `main-build` release instead, which has to be
+created by hand once (*Releases → Draft a new release*, new tag `main-build` on `main`, publish).
+A repository secret named `RELEASE_TOKEN`, holding a token that can write contents and workflows,
+lets every run make its own release.
 
-   ```bash
-   git tag archive-plugin-v1.2.0
-   git push origin archive-plugin-v1.2.0
-   ```
+Both need the `jellyfin-plugin-repository` release, which holds the repository manifest. Create it
+by hand once: *Releases → Draft a new release*, new tag `jellyfin-plugin-repository` on `main`,
+untick *Set as the latest release*, publish.
 
-The workflow then makes a release for the tag with the zip, and adds the version to the plugin
-repository manifest, which it keeps on the `jellyfin-plugin-repository` release.
-
-The first time, create the `jellyfin-plugin-repository` release by hand, since GitHub may not let the
-workflow make a release with a new tag: *Releases → Draft a new release*, new tag
-`jellyfin-plugin-repository` on `main`, untick *Set as the latest release*, publish. If you tagged a
-version before doing that, re-run the workflow's failed jobs afterwards. Servers that have
-the repository pick the new version up on their next plugin update check. Neither release is
-marked as the repository's latest, so they don't get in the way of the app's own releases.
+A version can still be published by hand, by pushing a tag like `archive-plugin-v1.2.0`; the
+*Jellyfin Plugin* workflow builds and publishes it.
 
 ## API
 

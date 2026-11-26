@@ -1,0 +1,191 @@
+name: Main Release
+
+# Every change that lands on main becomes a release: the Tizen app (Regular, Oblong and Legacy)
+# and the Archive plugin for Jellyfin, built from that commit.
+#
+# Each run makes a release of its own, tagged v<app version>-build.<run number>. GitHub doesn't
+# always let a workflow make a new tag. Then the run updates one release kept for it instead,
+# tagged main-build, which has to be made by hand once (Releases → Draft a new release → new tag
+# main-build on main → publish). Adding a RELEASE_TOKEN secret, a token that can write contents
+# and workflows, lets every run make its own release.
+#
+# When plugin.json holds a version the Jellyfin plugin repository doesn't list yet, the run
+# publishes it there too, so servers that use the repository are offered the update.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Runs queue up rather than cancel each other, so every merge gets its release and two runs
+# never write the plugin manifest at the same time.
+concurrency:
+  group: main-release
+  cancel-in-progress: false
+
+env:
+  ROLLING_TAG: main-build
+  REPOSITORY_TAG: jellyfin-plugin-repository
+
+jobs:
+  tizen:
+    name: Build Tizen
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --force
+
+      - name: Build Tizen (Regular, Oblong, Legacy)
+        run: npm run build:tizen:all
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-tizen
+          path: Moonfin_Tizen_*.wgt
+
+  plugin:
+    name: Build Jellyfin plugin
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+      version: ${{ steps.check.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Fetch the plugin repository manifest
+        run: |
+          mkdir -p repository
+          if gh release view "$REPOSITORY_TAG" > /dev/null 2>&1; then
+            gh release download "$REPOSITORY_TAG" --pattern manifest.json --dir repository || true
+          fi
+          [ -f repository/manifest.json ] || echo '[]' > repository/manifest.json
+
+      # A version the repository already lists stays as it is, so servers that installed it keep
+      # a checksum that matches.
+      - name: Is this plugin version new?
+        id: check
+        run: |
+          node -e '
+            const fs = require("fs");
+            const plugin = require("./server-plugin/Jellyfin.Plugin.Archive/plugin.json");
+            const parts = String(plugin.version).split(".");
+            while (parts.length < 4) parts.push("0");
+            const version = parts.join(".");
+            const manifest = JSON.parse(fs.readFileSync("repository/manifest.json", "utf8") || "[]");
+            const entry = manifest.find((candidate) => candidate.guid === plugin.guid);
+            const listed = Boolean(entry && (entry.versions || []).some((v) => v.version === version));
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\npublish=${!listed}\n`);
+            console.log(listed ? `Plugin ${version} is already published` : `Plugin ${version} is new and will be published`);
+          '
+
+      - name: Build
+        env:
+          PUBLISH: ${{ steps.check.outputs.publish }}
+        run: |
+          args=(--out out)
+          if [ "$PUBLISH" = "true" ]; then
+            args+=(--manifest repository/manifest.json \
+              --source-url-base "https://github.com/${GITHUB_REPOSITORY}/releases/download/${REPOSITORY_TAG}")
+          fi
+          node scripts/build-jellyfin-plugin.js "${args[@]}"
+          if [ "$PUBLISH" = "true" ]; then cp repository/manifest.json out/manifest.json; fi
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-plugin
+          path: out/*
+
+  release:
+    name: Publish the release
+    needs: [tizen, plugin]
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+      PUBLISH_PLUGIN: ${{ needs.plugin.outputs.publish }}
+      PLUGIN_VERSION: ${{ needs.plugin.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write the release notes
+        id: notes
+        run: |
+          app_version="$(node -p "require('./packages/app/package.json').version")"
+          echo "tag=v${app_version}-build.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "title=Moonfin ${app_version} build ${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          {
+            echo "Built from ${GITHUB_SHA::7} on main."
+            echo
+            git log -1 --format=%B
+            echo
+            echo "**Tizen:** Regular for 2017 and newer sets, Oblong for sets with the oblong icon, Legacy for 2016 sets (Tizen 2.4). The packages are unsigned."
+            echo
+            echo "**Archive plugin for Jellyfin:** ${PLUGIN_VERSION}. Servers that add https://github.com/${GITHUB_REPOSITORY}/releases/download/${REPOSITORY_TAG}/manifest.json as a repository install and update it from there."
+          } > notes.md
+          ls -la dist
+
+      - name: Publish the release
+        env:
+          TAG: ${{ steps.notes.outputs.tag }}
+          TITLE: ${{ steps.notes.outputs.title }}
+        run: |
+          shopt -s nullglob
+          files=(dist/Moonfin_Tizen_*.wgt dist/Jellyfin.Plugin.Archive_*.zip)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::Nothing was built to release."
+            exit 1
+          fi
+
+          if gh release create "$TAG" "${files[@]}" --target "$GITHUB_SHA" --title "$TITLE" --notes-file notes.md; then
+            echo "Released $TAG"
+            exit 0
+          fi
+
+          echo "::warning title=No release of its own::GitHub didn't let this run make the $TAG release, so the ${ROLLING_TAG} release is updated instead. Add a RELEASE_TOKEN secret for a release per run."
+          if ! gh release view "$ROLLING_TAG" > /dev/null 2>&1; then
+            echo "::error title=No ${ROLLING_TAG} release::Create it once by hand: Releases → Draft a new release → new tag '${ROLLING_TAG}' on main → publish. Then re-run this job."
+            exit 1
+          fi
+          # The release holds only the newest build, so the last one's files go first.
+          gh release view "$ROLLING_TAG" --json assets --jq '.assets[].name' | while read -r asset; do
+            [ -n "$asset" ] && gh release delete-asset "$ROLLING_TAG" "$asset" --yes
+          done
+          gh release upload "$ROLLING_TAG" "${files[@]}" --clobber
+          gh release edit "$ROLLING_TAG" --title "$TITLE (latest main build)" --notes-file notes.md
+
+      # The zip goes up before the manifest that points at it, so a server never reads a version
+      # it can't download yet.
+      - name: Publish the plugin to the Jellyfin repository
+        if: env.PUBLISH_PLUGIN == 'true'
+        run: |
+          if ! gh release view "$REPOSITORY_TAG" > /dev/null 2>&1; then
+            echo "::error title=No plugin repository release::Create it once by hand: Releases → Draft a new release → new tag '${REPOSITORY_TAG}' on main, untick 'Set as the latest release', publish. Then re-run this job."
+            exit 1
+          fi
+          gh release upload "$REPOSITORY_TAG" dist/Jellyfin.Plugin.Archive_*.zip --clobber
+          gh release upload "$REPOSITORY_TAG" dist/manifest.json --clobber
+          echo "Published plugin ${PLUGIN_VERSION} to the Jellyfin repository"
