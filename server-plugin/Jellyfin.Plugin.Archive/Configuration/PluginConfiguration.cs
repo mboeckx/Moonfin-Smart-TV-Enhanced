@@ -27,6 +27,13 @@ public class ShelfSettings
     public bool AdministratorsCanView { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets the users who may see it but don't get it as a library of its own to browse. Its
+    /// titles still open from search, people's pages and links, so these users can still bring a
+    /// title back. It is kept out of their library list through Jellyfin's own "hide from My Media".
+    /// </summary>
+    public Guid[] HiddenFromLibraryListUserIds { get; set; } = Array.Empty<Guid>();
+
+    /// <summary>
     /// Gets or sets a value indicating whether titles in it still show when browsing an actor,
     /// director or other crew member, for those who may see it. Clients that support the plugin read this.
     /// </summary>

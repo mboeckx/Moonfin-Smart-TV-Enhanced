@@ -1,5 +1,7 @@
 import {useCallback, useEffect, useMemo, useReducer, useRef, useState} from 'react';
 import {retainPermitted} from '../../services/libraryScope';
+import {readArchiveInfo, withoutShelfItems} from '../../services/archiveApi';
+import {orderMyMedia} from '../../utils/myMediaOrder';
 import {isKidsMode, mergesContinueWatchingNextUp} from '../../utils/kidsMode';
 import {isLiveTvLibrary, librariesForNav} from '../../utils/liveTvLibrary';
 import $L from '@enact/i18n/$L';
@@ -224,10 +226,15 @@ const useBrowseData = ({
 						: api.getRandomItems(s.featuredContentType, count * 2, id));
 					items = pickFrom(await readFeaturedSources(sourceIds, readSource, isUsable, count));
 				} else {
-					const randomItems = await api.getRandomItems(s.featuredContentType, count);
-					items = randomItems?.Items || [];
+					// Twice as many as shown, so the bar stays full once shelved titles are taken out.
+					const randomItems = await api.getRandomItems(s.featuredContentType, count * 2);
+					items = (await withoutShelfItems(api, randomItems?.Items || [])).slice(0, count);
 				}
 			}
+
+			// The Archive plugin's archive and soft delete library never feed the bar, whichever
+			// source picked the titles.
+			items = await withoutShelfItems(api, items);
 
 			if (externalIds.length > 0 && hasSourceFilter) {
 				items = await mixInExternal(items);
@@ -507,6 +514,12 @@ const useBrowseData = ({
 				memoryCache.featuredConfigKey = rememberedConfigKey;
 				dispatch({type: 'SET_FEATURED_ITEMS', items: remembered});
 				fetchFreshFeaturedItems(remembered);
+				// A remembered bar can hold a title archived or soft deleted since it was drawn.
+				withoutShelfItems(api, remembered).then((kept) => {
+					if (cancelled || kept.length === remembered.length || memoryCache.featuredItems !== remembered) return;
+					memoryCache.featuredItems = kept;
+					dispatch({type: 'SET_FEATURED_ITEMS', items: kept});
+				}).catch(() => {});
 				return;
 			}
 			await fetchFreshFeaturedItems(remembered);
@@ -662,7 +675,8 @@ const useBrowseData = ({
 					// Kids Mode sends the guide back home, so leaving its tile here would be a dead end.
 					// Merged libraries put every server's movie and show libraries behind one tile each.
 					const tileLibs = unifiedMode && settings.mergeLibrariesByType ? mergeLibrariesByType(libs) : libs;
-					const libraryItems = librariesForNav(tileLibs, false, {hideLiveTv: isKidsMode(settings)}).map(lib => ({
+					const shelves = await readArchiveInfo(api);
+					const libraryItems = orderMyMedia(librariesForNav(tileLibs, false, {hideLiveTv: isKidsMode(settings)}), shelves).map(lib => ({
 						...lib,
 						Type: 'CollectionFolder',
 						isLibraryTile: true

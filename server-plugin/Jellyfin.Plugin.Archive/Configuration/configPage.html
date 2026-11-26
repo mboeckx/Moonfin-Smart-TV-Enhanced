@@ -20,7 +20,8 @@
                     <p>
                         Who gets a button and who can see a library are set separately. Somebody can be allowed to soft delete
                         a title without being able to see the soft deleted titles. Bringing a title back needs both the button
-                        and access to the library it's in.
+                        and access to the library it's in. Somebody who should bring titles back without browsing the library
+                        can see it but have it kept out of their library list.
                     </p>
                 </div>
 
@@ -111,6 +112,9 @@
                     + '<h4>Who can see the ' + shelf.title.toLowerCase() + ' library</h4>'
                     + checkbox('adminsCanView', 'Every administrator', settings.AdministratorsCanView !== false)
                     + '<div class="checkboxList paperList" style="padding: .5em 1em;">' + userList(choices.Users, settings.ViewerUserIds, 'viewer') + '</div>'
+                    + '<h4>Keep it out of these people\'s library list</h4>'
+                    + '<div class="fieldDescription">For people who can see it but shouldn\'t get it as a library to browse. Its titles still open from search, people\'s pages and links, so they can still bring a title back. Tick nobody to leave it in everyone\'s list.</div>'
+                    + '<div class="checkboxList paperList" style="padding: .5em 1em;">' + userList(choices.Users, settings.HiddenFromLibraryListUserIds, 'hiddenList') + '</div>'
                     + checkbox('includeInPersonBrowse', 'Show these titles when browsing an actor, director or crew member',
                         settings.IncludeInPersonBrowse === undefined ? shelf.personDefault : settings.IncludeInPersonBrowse,
                         'For people who can see this library, on clients that support the plugin.')
@@ -129,6 +133,7 @@
                 next.LibraryId = section.querySelector('select.shelfLibrary').value;
                 next.ManagerUserIds = ids('manager');
                 next.ViewerUserIds = ids('viewer');
+                next.HiddenFromLibraryListUserIds = ids('hiddenList');
                 next.AdministratorsCanManage = checked('adminsCanManage');
                 next.AdministratorsCanView = checked('adminsCanView');
                 next.IncludeInPersonBrowse = checked('includeInPersonBrowse');

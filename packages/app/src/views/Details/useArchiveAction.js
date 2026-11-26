@@ -25,9 +25,8 @@ const MOVED_UNSCANNED = () => ({
 // them to. Each is one button that flips: Move to Archive becomes Restore from Archive on an
 // archived title, and Soft Delete becomes Undo Soft Delete on a soft deleted one.
 //
-// A move takes the files to another library on disk, so the title comes back under a new id. The
-// page opens that one once the server has scanned it in, or, when this viewer may not see where it
-// went, leaves the page the way a delete does.
+// A move takes the files to another library on disk, so the title leaves the list it was opened
+// from and comes back elsewhere under a new id. The page leaves the way a delete does.
 const useArchiveAction = ({item, effectiveApi, onSelectItem, onLeave, showToast}) => {
 	const [status, setStatus] = useState(null);
 	const [busy, setBusy] = useState(null);
@@ -69,22 +68,21 @@ const useArchiveAction = ({item, effectiveApi, onSelectItem, onLeave, showToast}
 			return;
 		}
 
-		const info = await readArchiveInfo(effectiveApi);
-		if (!mountedRef.current) return;
-		if (!canSeePlace(info, to)) {
-			// Gone somewhere this viewer can't follow, so the page goes the way a delete would.
-			showToast?.(MOVED()[to]);
-			onLeave?.();
+		// The title has left the list it was opened from, so the page goes the way a delete does and
+		// that list comes back on the spot it held. Without a way back the page opens it in its new
+		// place instead, when the viewer can see it there.
+		showToast?.(result.state === 'Done' ? MOVED()[to] : MOVED_UNSCANNED()[to]);
+		if (onLeave) {
+			onLeave();
 			return;
 		}
-		if (result.state === 'Done' && result.newItemId) {
-			showToast?.(MOVED()[to]);
+		const info = await readArchiveInfo(effectiveApi);
+		if (!mountedRef.current) return;
+		if (result.state === 'Done' && result.newItemId && canSeePlace(info, to)) {
 			onSelectItem?.({Id: result.newItemId, Type: item.Type, Name: item.Name});
 			return;
 		}
-		// The files have moved, and the server's next scan brings the title up in its new place.
 		setStatus(null);
-		showToast?.(MOVED_UNSCANNED()[to]);
 	}, [busy, item, effectiveApi, onSelectItem, onLeave, showToast]);
 
 	const location = status?.location || PLACE.LIBRARY;

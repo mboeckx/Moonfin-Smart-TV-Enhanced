@@ -1,6 +1,6 @@
 import {
 	PLACE, parseArchiveInfo, readArchiveInfo, resetArchiveInfo, archiveExcludes, isShelfLibrary,
-	withoutShelfLibraries, screensaverHiddenShelves, withoutArchivedForPerson, readArchiveStatus,
+	withoutShelfLibraries, withoutShelfItems, screensaverHiddenShelves, withoutArchivedForPerson, readArchiveStatus,
 	canSeePlace, moveTitle
 } from './archiveApi';
 
@@ -84,6 +84,30 @@ describe('keeping shelves out', () => {
 		const libraries = [{Id: 'movies1'}, {Id: 'arch1'}, {Id: 'bin1'}];
 		expect(withoutShelfLibraries(libraries, info, screensaverHiddenShelves(false))).toEqual([{Id: 'movies1'}]);
 		expect(withoutShelfLibraries(libraries, info, screensaverHiddenShelves(true))).toEqual([{Id: 'movies1'}, {Id: 'arch1'}]);
+	});
+});
+
+describe('withoutShelfItems', () => {
+	const items = [{Id: 'm1'}, {Id: 'm2'}, {Id: 'm3'}];
+
+	test('drops the titles a shelf holds, asking each shelf only about these titles', async () => {
+		const api = fakeApi({inShelf: {arch1: ['m2'], bin1: ['m3']}});
+		expect(await withoutShelfItems(api, items)).toEqual([{Id: 'm1'}]);
+		expect(api.getItems).toHaveBeenCalledWith(expect.objectContaining({Ids: 'm1,m2,m3', ParentId: 'arch1', Recursive: true}));
+		expect(api.getItems).toHaveBeenCalledWith(expect.objectContaining({Ids: 'm1,m2,m3', ParentId: 'bin1'}));
+	});
+
+	test('asks nothing when the viewer can see no shelf', async () => {
+		const info = {Archive: {...INFO.Archive, LibraryId: null}, SoftDelete: {...INFO.SoftDelete, LibraryId: null}};
+		const api = fakeApi({info});
+		expect(await withoutShelfItems(api, items)).toEqual(items);
+		expect(api.getItems).not.toHaveBeenCalled();
+	});
+
+	test('keeps everything when the ask fails', async () => {
+		const api = fakeApi();
+		api.getItems.mockImplementation(() => Promise.reject(new Error('boom')));
+		expect(await withoutShelfItems(api, items)).toEqual(items);
 	});
 });
 

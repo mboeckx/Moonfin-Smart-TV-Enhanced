@@ -247,6 +247,7 @@ public class ArchiveService
                 .Select(id => id!.Value)
                 .ToArray();
             var restricted = _store.Read(s => s.RestrictedUsers.ToHashSet());
+            var hidden = _store.Read(s => s.HiddenFromLibraryList.ToDictionary(pair => pair.Key, pair => pair.Value.ToList()));
 
             foreach (var user in _userManager.GetUsers().ToList())
             {
@@ -302,6 +303,7 @@ public class ArchiveService
                 var userConfig = dto.Configuration;
                 if (userConfig is not null)
                 {
+                    var configChanged = false;
                     var latest = (userConfig.LatestItemsExcludes ?? Array.Empty<Guid>()).ToList();
                     var add = shelves
                         .Where(shelf => open.Contains(shelf.Id) && SettingsFor(shelf.Place).HideFromLatest && !latest.Contains(shelf.Id))
@@ -310,12 +312,52 @@ public class ArchiveService
                     if (add.Count > 0)
                     {
                         userConfig.LatestItemsExcludes = latest.Concat(add).ToArray();
+                        configChanged = true;
+                    }
+
+                    // Somebody who may see a shelf but shouldn't browse it gets it on their "hide from My
+                    // Media" list. The plugin only ever takes off what it put there itself.
+                    var excludes = (userConfig.MyMediaExcludes ?? Array.Empty<Guid>()).ToList();
+                    var hiddenByPlugin = hidden.TryGetValue(user.Id, out var list) ? list.ToHashSet() : new HashSet<Guid>();
+                    var shouldHide = shelves
+                        .Where(shelf => open.Contains(shelf.Id) && SettingsFor(shelf.Place).HiddenFromLibraryListUserIds.Contains(user.Id))
+                        .Select(shelf => shelf.Id)
+                        .ToHashSet();
+                    foreach (var id in shouldHide.Where(id => !excludes.Contains(id)))
+                    {
+                        excludes.Add(id);
+                        hiddenByPlugin.Add(id);
+                        configChanged = true;
+                    }
+
+                    foreach (var id in hiddenByPlugin.Where(id => !shouldHide.Contains(id)).ToList())
+                    {
+                        configChanged |= excludes.Remove(id);
+                        hiddenByPlugin.Remove(id);
+                    }
+
+                    if (hiddenByPlugin.Count > 0)
+                    {
+                        hidden[user.Id] = hiddenByPlugin.ToList();
+                    }
+                    else
+                    {
+                        hidden.Remove(user.Id);
+                    }
+
+                    if (configChanged)
+                    {
+                        userConfig.MyMediaExcludes = excludes.ToArray();
                         await _userManager.UpdateConfigurationAsync(user.Id, userConfig).ConfigureAwait(false);
                     }
                 }
             }
 
-            _store.Update(s => s.RestrictedUsers = restricted.ToList());
+            _store.Update(s =>
+            {
+                s.RestrictedUsers = restricted.ToList();
+                s.HiddenFromLibraryList = hidden;
+            });
         }
         finally
         {

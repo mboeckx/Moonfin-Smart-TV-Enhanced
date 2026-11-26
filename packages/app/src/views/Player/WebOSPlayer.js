@@ -2217,6 +2217,13 @@ const Player = ({item, resume, initialMediaSourceId, initialAudioIndex, initialS
 		// Until a stream that starts mid-title has loaded, the element still holds the last stream's time, and until a
 		// resume seek lands it reads the file's start, which would go to the server as the position.
 		if (pendingResumeTicksRef.current > 0) return;
+		// The element is the word on whether it plays. A paused flag left behind by some other path
+		// would keep the play button wrong and let the screensaver start over the film.
+		if (isPausedRef.current && videoRef.current && !videoRef.current.paused && !scrubHoldRef.current.active) {
+			isPausedRef.current = false;
+			setIsPaused(false);
+			healthMonitorRef.current?.setPaused(false);
+		}
 		if (videoRef.current && (videoRef.current.readyState > 0 || !streamOffsetRef.current)) {
 			const time = videoRef.current.currentTime + streamOffsetRef.current;
 			// Each update redraws the whole player, which is what makes an open picker or the episode
