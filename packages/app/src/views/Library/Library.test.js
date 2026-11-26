@@ -85,17 +85,19 @@ test('waits for what this device saved before the first fetch, and fetches with 
 	expect(mockApi.getItems.mock.calls[0][0]).toMatchObject({Filters: 'IsFavorite', Tags: '4K', SortBy: 'SortName', SortOrder: 'Ascending'});
 });
 
-test('a filter picked in Sort & Filter is saved for the library and the panel stays open', async () => {
+test('a filter picked under Filter is saved for the library and the panel stays open', async () => {
 	renderLibrary();
 	await settle();
 
-	fireEvent.click(document.querySelector('[data-spotlight-id="library-sort-btn"]'));
+	fireEvent.click(document.querySelector('[data-spotlight-id="library-filter-btn"]'));
+	// Filter holds the filters and none of the sorts.
+	expect(screen.queryByText('Date Added')).toBeNull();
 	fireEvent.click(document.querySelector('[data-spotlight-id="filter-section-favorites"]'));
 	fireEvent.click(document.querySelector('[data-spotlight-id="filter-favorites"]'));
 	await settle();
 
 	expect(saveToStorage).toHaveBeenCalledWith('library_filters_lib1', expect.objectContaining({favoritesOnly: true}));
-	expect(screen.getByText('Sort & Filter')).toBeTruthy();
+	expect(screen.getByText('Filter')).toBeTruthy();
 });
 
 test('another sort keeps the direction already picked', async () => {
@@ -104,16 +106,42 @@ test('another sort keeps the direction already picked', async () => {
 	await settle();
 
 	fireEvent.click(document.querySelector('[data-spotlight-id="library-sort-btn"]'));
-	// Every section starts closed, so the sorts are hidden until Sort By is opened.
-	expect(screen.queryByText('Date Added')).toBeNull();
-	fireEvent.click(document.querySelector('[data-spotlight-id="filter-section-sort"]'));
-	expect(screen.queryByText('Parental Rating')).toBeNull();
+	// Sort lists the sorts straight away, and nothing else.
+	expect(screen.getByText('Sort By')).toBeTruthy();
+	expect(document.querySelector('[data-spotlight-id="filter-section-favorites"]')).toBeNull();
+	expect(document.querySelector('[data-spotlight-id="filter-show-alphabet"]')).toBeNull();
 	fireEvent.click(screen.getByText('Date Added'));
 	await settle();
 
 	expect(saveToStorage).toHaveBeenCalledWith('library_sortKey_lib1', 'DateCreated');
 	expect(saveToStorage).toHaveBeenCalledWith('library_sortOrder_lib1', 'Descending');
 	expect(saveToStorage).not.toHaveBeenCalledWith('library_sortOrder_lib1', 'Ascending');
+});
+
+test('a letter narrows the list to titles starting with it, and picking it again shows them all', async () => {
+	const saved = mockSettings.settings;
+	try {
+		mockSettings.settings = {...saved, showAlphabeticalFilters: true};
+		renderLibrary();
+		await settle();
+
+		mockApi.getItems.mockClear();
+		fireEvent.click(document.querySelector('[data-letter="B"]'));
+		await settle();
+		expect(mockApi.getItems).toHaveBeenLastCalledWith(expect.objectContaining({NameStartsWith: 'B', StartIndex: 0}));
+
+		fireEvent.click(document.querySelector('[data-letter="#"]'));
+		await settle();
+		expect(mockApi.getItems).toHaveBeenLastCalledWith(expect.objectContaining({NameLessThan: 'A'}));
+
+		fireEvent.click(document.querySelector('[data-letter="#"]'));
+		await settle();
+		const last = mockApi.getItems.mock.calls[mockApi.getItems.mock.calls.length - 1][0];
+		expect(last.NameStartsWith).toBeUndefined();
+		expect(last.NameLessThan).toBeUndefined();
+	} finally {
+		mockSettings.settings = saved;
+	}
 });
 
 test('the count reads in lowercase and the Classic toolbar carries Group By for movies', async () => {
@@ -195,7 +223,6 @@ test('a scroll page for a list that has since been reloaded leaves the new list\
 	});
 
 	fireEvent.click(document.querySelector('[data-spotlight-id="library-sort-btn"]'));
-	fireEvent.click(document.querySelector('[data-spotlight-id="filter-section-sort"]'));
 	fireEvent.click(screen.getByText('Date Added'));
 	await settle();
 	await act(async () => staleScrollPage());

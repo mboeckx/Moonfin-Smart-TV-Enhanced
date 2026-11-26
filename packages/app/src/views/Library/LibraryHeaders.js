@@ -27,7 +27,7 @@ export const ARROW_DOWN_ICON = 'M20.02 12 18.61 10.59 12.98 16.17V3.98H11.02V16.
 export const EXPAND_MORE_ICON = 'M16.59 8.58 12 13.17 7.41 8.58 6 9.98 12 15.98 18 9.98 16.59 8.58Z';
 export const EXPAND_LESS_ICON = 'M12 8.02 6 14.02 7.41 15.42 12 10.83 16.59 15.42 18 14.02 12 8.02Z';
 export const CLEAR_FILTERS_ICON = 'M19.78 5.62C20.3 4.97 19.83 3.98 18.98 3.98H6.84L14.81 11.95L19.78 5.62ZM2.81 2.81 1.41 4.22 9.98 12.98V18.98C9.98 19.55 10.45 20.02 11.02 20.02H12.98C13.55 20.02 14.02 19.55 14.02 18.98V16.83L19.78 22.59L21.19 21.19L2.81 2.81Z';
-const SHOW_ICON = 'M9.98 18H14.02V15.98H9.98V18ZM3 6V8.02H21V6H3ZM6 12.98H18V11.02H6V12.98Z';
+export const SHOW_ICON = 'M9.98 18H14.02V15.98H9.98V18ZM3 6V8.02H21V6H3ZM6 12.98H18V11.02H6V12.98Z';
 const DISPLAY_ICON = 'M3 3V11.02H11.02V3H3ZM9 9H5.02V5.02H9V9ZM3 12.98V21H11.02V12.98H3ZM9 18.98H5.02V15H9V18.98ZM12.98 3V11.02H21V3H12.98ZM18.98 9H15V5.02H18.98V9ZM12.98 12.98V21H21V12.98H12.98ZM18.98 18.98H15V15H18.98V18.98Z';
 const CHEVRON_RIGHT_ICON = 'M9.98 6 8.58 7.41 13.17 12 8.58 16.59 9.98 18 15.98 12 9.98 6Z';
 
@@ -85,11 +85,11 @@ export const LibraryTitle = memo(({isFolderView, folderStack, rootName, displayN
 	)
 ));
 
-// A letter jumps the grid to the first item under it, so none of them stays picked.
-export const Letters = memo(({onSelect}) => LETTERS.map((letter, index) => (
+// A letter narrows the grid to the titles starting with it and stays lit while it does.
+export const Letters = memo(({onSelect, active}) => LETTERS.map((letter, index) => (
 	<SpottableButton
 		key={letter}
-		className={css.letterButton}
+		className={`${css.letterButton} ${active === letter ? css.letterActive : ''}`}
 		onClick={onSelect}
 		data-letter={letter}
 		spotlightId={index === 0 ? 'library-letter-hash' : undefined}
@@ -154,9 +154,9 @@ export const ModernBar = memo(({
 	</ToolbarContainer>
 ));
 
-export const ModernLetters = memo(({onSelect, settingsPreview}) => (
+export const ModernLetters = memo(({onSelect, active, settingsPreview}) => (
 	<ToolbarContainer className={css.letterRow} spotlightId={settingsPreview ? undefined : 'library-letters'} onKeyDown={handleLetterRowKeyDown}>
-		<Letters onSelect={onSelect} />
+		<Letters onSelect={onSelect} active={active} />
 	</ToolbarContainer>
 ));
 
@@ -175,7 +175,7 @@ const DockRow = ({path, label, value, onClick, spotlightId, children}) => (
 export const LibraryDock = memo(({
 	isFolderView, folderStack, rootName, displayName, shownCount, onBreadcrumb,
 	sortLabel, sortAscending, groupLabel, showLabel, displayLabel, searchQuery,
-	showLetters, onLetterSelect,
+	showLetters, onLetterSelect, activeLetter,
 	onSearchChange, onHome, onSort, onGroup, onShow, onShuffle, onSettings, settingsPreview
 }) => (
 	<ToolbarContainer className={css.dock} spotlightId={settingsPreview ? undefined : 'library-dock'} onKeyDown={handleDockKeyDown}>
@@ -206,7 +206,7 @@ export const LibraryDock = memo(({
 			<div className={css.dockLetters}>
 				<div className={css.dockCaption}>{$L('Jump to letter')}</div>
 				<div className={css.letterGrid}>
-					<Letters onSelect={onLetterSelect} />
+					<Letters onSelect={onLetterSelect} active={activeLetter} />
 				</div>
 			</div>
 		)}

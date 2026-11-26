@@ -38,8 +38,8 @@ import {KEYS} from '../../utils/keys';
 import useSortSettingsPanels from '../../hooks/useSortSettingsPanels';
 import {useUserDataList} from '../../hooks/useUserDataSync';
 import useItemMenuHold, {cardIndexOf} from '../../hooks/useItemMenuHold';
-import {FOCUS_SCALE, POSTER_HEIGHTS, POSTER_SIZE_OPTIONS, createGridKeyDown, createRowsLeftKeyDown, createToolbarKeyDown, focusOverhang, horizontalCellPad, libraryPosterSize, matchesStartLetter, stopPropagation} from '../../utils/gridChrome';
-import {ARROW_DOWN_ICON, ARROW_UP_ICON, CLEAR_FILTERS_ICON, EXPAND_LESS_ICON, EXPAND_MORE_ICON, GROUP_ICON, HOME_ICON, Icon, Letters, LibraryDock, LibraryTitle, ModernBar, ModernLetters, SEARCH_ICON, SETTINGS_ICON, SHUFFLE_ICON, SORT_ICON} from './LibraryHeaders';
+import {FOCUS_SCALE, POSTER_HEIGHTS, POSTER_SIZE_OPTIONS, createGridKeyDown, createRowsLeftKeyDown, createToolbarKeyDown, focusOverhang, horizontalCellPad, libraryPosterSize, stopPropagation} from '../../utils/gridChrome';
+import {ARROW_DOWN_ICON, ARROW_UP_ICON, CLEAR_FILTERS_ICON, EXPAND_LESS_ICON, EXPAND_MORE_ICON, GROUP_ICON, HOME_ICON, Icon, Letters, LibraryDock, LibraryTitle, ModernBar, ModernLetters, SEARCH_ICON, SETTINGS_ICON, SHOW_ICON, SHUFFLE_ICON, SORT_ICON} from './LibraryHeaders';
 import LibrarySkeleton from './LibrarySkeleton';
 import {registerThemeSheet} from '../../theme/themeOverrides';
 import * as connectionPool from '../../services/connectionPool';
@@ -139,8 +139,16 @@ const QUALITY_FILTERS = [
 const FACET_PAGE = 50;
 
 // Every section starts closed, so the panel opens on Show Alphabet.
-const SORT_SECTION = 'sort';
 const SORT_FOCUS_ID = 'filter-show-alphabet';
+const PANEL_SORT = 'sort';
+
+// The server side of the letter picker: titles starting with the letter, or for hash, everything
+// sorting before A.
+const letterParams = (letter) => {
+	if (!letter) return {};
+	return letter === '#' ? {NameLessThan: 'A'} : {NameStartsWith: letter};
+};
+const PANEL_FILTER = 'filter';
 const DISPLAY_FOCUS_ID = 'display-scroll-vertical';
 
 const FILTER_FIELDS = {
@@ -389,6 +397,9 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 	// The first page waits for what this device saved, rather than fetching with the defaults and
 	// again once the saved values land.
 	const storageReady = folderViewLoaded && sortKeyLoaded && sortOrderLoaded && filtersLoaded;
+	// Picking a letter narrows the grid to the titles starting with it, and picking it again
+	// shows them all. Hash collects everything that doesn't start with a letter.
+	const [letterFilter, setLetterFilter] = useState(() => (!settingsPreview && returnTo?.libraryId === libraryId && returnTo.letter) || null);
 	const [searchQuery, setSearchQuery] = useState(() => restoredBookGrid?.search || (!settingsPreview && returnTo?.libraryId === libraryId && returnTo.search) || '');
 	const showCardText = settings.libraryCardTitles !== false;
 	const showAlphabet = settings.showAlphabeticalFilters === true;
@@ -456,6 +467,8 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 	const sortAscending = savedSortOrder(sortOrder, sortKey) !== 'Descending';
 	const effectiveOrder = sortAscending ? 'Ascending' : 'Descending';
 	const showLetters = showAlphabet && !groupedActive && alphabetApplies({sortKey, music: isMusicLibrary, songs: isSongs});
+	// A letter only narrows the grid while the letters are there to see, or to take it off again.
+	const appliedLetter = showLetters ? letterFilter : null;
 
 	// The watched state can move while the grid is up, so it draws from the items
 	// with what's known now laid over them.
@@ -836,6 +849,7 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 				if (statusFilters.length > 0) params.Filters = statusFilters.join(',');
 				if (seriesStatusParam) params.SeriesStatus = seriesStatusParam;
 				Object.assign(params, extraParams);
+				Object.assign(params, letterParams(appliedLetter));
 
 				// Playlists are not children of the music library, so they are fetched without
 				// a parent. Artists and album artists are different lists behind different
@@ -852,7 +866,8 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 					Fields: 'PrimaryImageAspectRatio,SortName,ProductionYear,ImageTags,UserData',
 					ImageTypeLimit: 1,
 					EnableImageTypes: 'Primary,Backdrop,Thumb',
-					...(statusFilters.length > 0 ? {Filters: statusFilters.join(',')} : {})
+					...(statusFilters.length > 0 ? {Filters: statusFilters.join(',')} : {}),
+					...letterParams(appliedLetter)
 				};
 
 				const ownEndpoint = (isMusicLibrary && ['albumArtists', 'artists', 'genres'].includes(musicContentType)) || bookGridView?.genres;
@@ -923,7 +938,7 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 				}
 			}
 		}
-	}, [fetchMergedPage, isMerged, isPlaylistLibrary, effectiveApi, library, genreFilter, studioFilter, sortKey, sortAscending, effectiveOrder, favoritesOnly, filters, openedGenre, parentId, isFolderView, currentFolderId, currentFolderCollectionType, isMusicLibrary, musicContentType, bookGridView, getItemTypeForLibrary, getExcludeItemTypes, settings.groupItemsIntoCollections, isGenreMode, isStudioMode]);
+	}, [fetchMergedPage, isMerged, isPlaylistLibrary, effectiveApi, library, genreFilter, studioFilter, appliedLetter, sortKey, sortAscending, effectiveOrder, favoritesOnly, filters, openedGenre, parentId, isFolderView, currentFolderId, currentFolderCollectionType, isMusicLibrary, musicContentType, bookGridView, getItemTypeForLibrary, getExcludeItemTypes, settings.groupItemsIntoCollections, isGenreMode, isStudioMode]);
 
 	loadItemsRef.current = loadItems;
 
@@ -1016,7 +1031,7 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 			initialFocusDoneRef.current = false;
 			if (storageReady) loadItemsRef.current(0, false);
 		}
-	}, [library, sortKey, effectiveOrder, favoritesOnly, filters, openedGenre, parentId, musicContentType, bookGridView, isFolderView, currentFolderId, genreFilter, studioFilter, isBrowseHome, storageReady, settings.groupItemsIntoCollections]);
+	}, [library, sortKey, effectiveOrder, favoritesOnly, filters, appliedLetter, openedGenre, parentId, musicContentType, bookGridView, isFolderView, currentFolderId, genreFilter, studioFilter, isBrowseHome, storageReady, settings.groupItemsIntoCollections]);
 
 	// The values the library actually holds, read once per library so opening
 	// the filter panel does not wait on the network.
@@ -1172,14 +1187,14 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 				});
 				if (apiFetchIndexRef.current < totalCount) countPhotos();
 			} else {
-				returnTo = {libraryId, itemId: item.Id, index, folderStack};
+				returnTo = {libraryId, itemId: item.Id, index, folderStack, letter: letterFilter};
 				bookGridReturn = bookGridView ? {libraryId, view: bookGridView, genre: openedGenre, search: searchQuery} : null;
 				musicScreenReturn = musicScreen ? {libraryId, screen: musicScreen} : null;
 				bookScreenReturn = bookScreen ? {libraryId, screen: bookScreen} : null;
 				onSelectItem?.(item);
 			}
 		}
-	}, [isFolderView, onSelectItem, onViewPhoto, libraryId, bookGridView, folderStack, openedGenre, searchQuery, handleOpenBookGrid, musicScreen, bookScreen, totalCount, countPhotos]);
+	}, [isFolderView, onSelectItem, onViewPhoto, libraryId, bookGridView, folderStack, openedGenre, searchQuery, letterFilter, handleOpenBookGrid, musicScreen, bookScreen, totalCount, countPhotos]);
 
 	const {getScrollTo: getGridScrollTo, quickReturn, scrollTo: scrollGridTo} = useQuickReturnGrid('library-grid');
 
@@ -1321,6 +1336,8 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 
 	// Where focus lands as the panel opens. Show opens it on the played status it names.
 	const [sortFocusId, setSortFocusId] = useState(SORT_FOCUS_ID);
+	// The panel holds either the sort order alone or the filters, depending on which button opened it.
+	const [panelKind, setPanelKind] = useState(PANEL_SORT);
 
 	// There is one back slot, and the music or book browse screen claims it while it's up. Nothing
 	// here would be true there anyway, since it only shows with no grid, panel or folder stack.
@@ -1367,9 +1384,12 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 			loadItems(apiFetchIndexRef.current, true);
 			return undefined;
 		}
+		// A title that has gone, archived or deleted, leaves its spot to the one after it.
+		const spot = back && index < 0 && Number.isFinite(back.index) ? Math.min(back.index, items.length - 1) : -1;
 		const id = setTimeout(() => {
 			returnTo = null;
 			if (index >= 0) scrollGridTo({index, focus: true});
+			else if (spot >= 0) scrollGridTo({index: spot, focus: true});
 			else if (!landedRef.current) Spotlight.focus('library-home-btn');
 			else Spotlight.focus(showGroupRows ? 'library-group-row-0' : 'library-grid');
 			landedRef.current = true;
@@ -1387,8 +1407,17 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 
 	const handleOpenSort = useCallback(() => {
 		openerRef.current = 'library-sort-btn';
+		setPanelKind(PANEL_SORT);
+		setSortFocusId(`sort-option-${Math.max(0, sortKeys.indexOf(sortKey))}`);
 		handleToggleSortPanel();
-	}, [handleToggleSortPanel]);
+	}, [handleToggleSortPanel, sortKeys, sortKey]);
+
+	const handleOpenFilter = useCallback(() => {
+		openerRef.current = libraryStyle === 'classic' ? 'library-filter-btn' : 'library-show-btn';
+		setPanelKind(PANEL_FILTER);
+		setSortFocusId(SORT_FOCUS_ID);
+		handleToggleSortPanel();
+	}, [handleToggleSortPanel, libraryStyle]);
 
 	const handleOpenDisplay = useCallback(() => {
 		openerRef.current = 'library-settings-btn';
@@ -1423,25 +1452,18 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 
 	// A letter jumps to the first item under it, pulling in pages until one turns up or the
 	// library runs out.
-	const [jumpLetter, setJumpLetter] = useState(null);
 	const handleLetterSelect = useCallback((ev) => {
 		const letter = ev.currentTarget?.dataset?.letter;
-		if (letter) setJumpLetter(letter);
+		if (letter) setLetterFilter((current) => (current === letter ? null : letter));
 	}, []);
-
+	// Another library starts with every title. Coming back to this one keeps the letter, which
+	// the item opened from it noted.
+	const letterLibraryRef = useRef(library?.Id);
 	useEffect(() => {
-		if (!jumpLetter || isLoading) return undefined;
-		const index = items.findIndex((item) => matchesStartLetter(item, jumpLetter));
-		if (index < 0 && apiFetchIndexRef.current < totalCount) {
-			if (!loadingMoreRef.current) loadItems(apiFetchIndexRef.current, true);
-			return undefined;
-		}
-		setJumpLetter(null);
-		// The grid lays out the pages that just landed before it can scroll to them. Clearing the
-		// letter runs this again, so the wait can't be canceled from here.
-		if (index >= 0) setTimeout(() => scrollGridTo({index, focus: true}), 100);
-		return undefined;
-	}, [jumpLetter, items, isLoading, totalCount, loadItems, scrollGridTo]);
+		if (letterLibraryRef.current === library?.Id) return;
+		letterLibraryRef.current = library?.Id;
+		setLetterFilter(null);
+	}, [library?.Id]);
 
 	// The panel stays open on every pick. Choosing the sort already in use turns it around, and
 	// another sort keeps the direction already picked.
@@ -1540,6 +1562,7 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 
 	const handleOpenPlayedFilter = useCallback(() => {
 		openerRef.current = 'library-show-btn';
+		setPanelKind(PANEL_FILTER);
 		setExpandedSection('played');
 		setSortFocusId(`filter-played-${filters.playedFilter}`);
 		handleToggleSortPanel();
@@ -1784,13 +1807,13 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 		sortLabel,
 		sortAscending,
 		groupLabel: groupByLabel(groupBy),
-		showLabel: playedLabel(filters.playedFilter, isBookLibrary),
+		showLabel: isMusicLibrary ? null : playedLabel(filters.playedFilter, isBookLibrary),
 		searchQuery,
 		onSearchChange: handleSearchChange,
 		onHome,
 		onSort: handleOpenSort,
 		onGroup: canGroup ? handleOpenGroupBy : null,
-		onShow: isMusicLibrary ? null : handleOpenPlayedFilter,
+		onShow: isMusicLibrary ? handleOpenFilter : handleOpenPlayedFilter,
 		onShuffle: isSongs ? handleShuffle : null,
 		onSettings: isMusicLibrary ? null : handleOpenDisplay,
 		settingsPreview
@@ -2060,6 +2083,7 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 					displayLabel={displayLabel}
 					showLetters={showLetters}
 					onLetterSelect={handleLetterSelect}
+					activeLetter={letterFilter}
 				/>
 			)}
 			<div className={isDocked ? `${css.content} ${css.contentDocked}` : css.content}>
@@ -2124,6 +2148,9 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 						<SpottableButton className={css.toolbarBtn} onClick={handleOpenSort} spotlightId="library-sort-btn">
 							<Icon path={SORT_ICON} className={css.toolbarIcon} />
 						</SpottableButton>
+						<SpottableButton className={css.toolbarBtn} onClick={handleOpenFilter} spotlightId="library-filter-btn">
+							<Icon path={SHOW_ICON} className={css.toolbarIcon} />
+						</SpottableButton>
 						{canGroup && (
 							<SpottableButton className={css.toolbarBtn} onClick={handleOpenGroupBy} spotlightId="library-group-btn">
 								<Icon path={GROUP_ICON} className={css.toolbarIcon} />
@@ -2141,13 +2168,13 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 						)}
 						{showLetters && (
 							<div className={css.letterNav}>
-								<Letters onSelect={handleLetterSelect} />
+								<Letters onSelect={handleLetterSelect} active={letterFilter} />
 							</div>
 						)}
 					</ToolbarContainer>
 				)}
 				{libraryStyle === 'modern' && showLetters && (
-					<ModernLetters onSelect={handleLetterSelect} settingsPreview={settingsPreview} />
+					<ModernLetters onSelect={handleLetterSelect} active={letterFilter} settingsPreview={settingsPreview} />
 				)}
 
 				{groupTabs && (
@@ -2246,128 +2273,132 @@ const Library = ({library, genreFilter, studioFilter, onSelectItem, onViewPhoto,
 						spotlightId="sort-panel"
 						onClick={stopPropagation}
 					>
-						<h2 className={css.sortPanelTitle}>{$L('Sort & Filter')}</h2>
+						<h2 className={css.sortPanelTitle}>{panelKind === PANEL_SORT ? $L('Sort By') : $L('Filter')}</h2>
 
-						{renderCheckRow({
-							label: $L('Show Alphabet'),
-							checked: showAlphabet,
-							spotlightId: 'filter-show-alphabet',
-							onToggle: handleToggleAlphabet
-						})}
-						{canFolderView && renderCheckRow({
-							label: $L('Folder View'),
-							checked: isFolderView,
-							spotlightId: 'filter-folder-view',
-							onToggle: handleToggleFolderView
-						})}
-
-						{renderSection(SORT_SECTION, $L('Sort By'), sortLabel, () => (
-							sortKeys.map((key, index) => renderRadioRow({
-								key,
-								label: librarySortLabel(key, isMusicLibrary),
-								selected: sortKey === key,
-								value: key,
-								spotlightId: `sort-option-${index}`,
-								onClick: handleSortSelect,
-								trailing: sortKey === key && <Icon path={sortAscending ? ARROW_UP_ICON : ARROW_DOWN_ICON} className={css.sortArrow} />
-							}))
-						))}
-
-						{isMusicLibrary && renderSection('music', $L('Show'), chosenLabel(MUSIC_CONTENT_TYPES, musicContentType), () => (
-							MUSIC_CONTENT_TYPES.map((ct) => renderRadioRow({
-								key: ct.key,
-								label: $L(ct.label),
-								selected: musicContentType === ct.key,
-								value: ct.key,
-								spotlightId: `music-content-${ct.key}`,
-								onClick: handleMusicContentSelect
-							}))
-						))}
-
-						{renderSection('favorites', $L('Filters'), filters.favoritesOnly ? $L('Favorites') : null, () => renderCheckRow({
-							label: $L('Favorites'),
-							checked: filters.favoritesOnly,
-							spotlightId: 'filter-favorites',
-							onToggle: handleToggleFavorites
+						{/* Sort keeps to the order of the list. Everything that narrows or reshapes it is under Filter. */}
+						{panelKind === PANEL_SORT && sortKeys.map((key, index) => renderRadioRow({
+							key,
+							label: librarySortLabel(key, isMusicLibrary),
+							selected: sortKey === key,
+							value: key,
+							spotlightId: `sort-option-${index}`,
+							onClick: handleSortSelect,
+							trailing: sortKey === key && <Icon path={sortAscending ? ARROW_UP_ICON : ARROW_DOWN_ICON} className={css.sortArrow} />
 						}))}
 
-						{!isMusicLibrary && renderSection('played', isBookLibrary ? $L('Reading Status') : $L('Played Status'), filters.playedFilter === 'all' ? null : playedLabel(filters.playedFilter, isBookLibrary), () => (
-							PLAYED_FILTERS.map((option) => renderRadioRow({
-								key: option.key,
-								label: playedLabel(option.key, isBookLibrary),
-								selected: filters.playedFilter === option.key,
-								value: option.key,
-								spotlightId: `filter-played-${option.key}`,
-								onClick: handlePlayedFilterSelect
-							}))
-						))}
-
-						{!onPlex && renderSection('liked', $L('My Rating'), chosenLabel(LIKED_FILTERS, filters.likedFilter), () => (
-							LIKED_FILTERS.map((option) => renderRadioRow({
-								key: option.key,
-								label: $L(option.label),
-								selected: filters.likedFilter === option.key,
-								value: option.key,
-								spotlightId: `filter-liked-${option.key}`,
-								onClick: handleLikedFilterSelect
-							}))
-						))}
-
-						{isSeriesLibrary && !onPlex && renderSection('series', $L('Series Status'), chosenLabel(SERIES_FILTERS, filters.seriesFilter), () => (
-							supported(SERIES_FILTERS).map((option) => renderRadioRow({
-								key: option.key,
-								label: $L(option.label),
-								selected: filters.seriesFilter === option.key,
-								value: option.key,
-								spotlightId: `filter-series-${option.key}`,
-								onClick: handleSeriesFilterSelect
-							}))
-						))}
-
-						{showVideoFilters && !onPlex && renderOptionSection('features', $L('Features'), supported(FEATURE_FILTERS), 'feature')}
-
-						{showVideoFilters && renderOptionSection('quality', $L('Quality'), supported(QUALITY_FILTERS), 'quality')}
-
-						{showVideoFilters && !onPlex && renderOptionSection('source', $L('Source'), VIDEO_SOURCE_FILTERS, 'source')}
-
-						{!genreFilter && !openedGenre && renderFacetSection('genres', $L('Genres'), facetValues?.genres)}
-						{renderFacetSection('ratings', $L('Parental Rating'), facetValues?.officialRatings)}
-						{renderFacetSection('tags', $L('Tags'), facetValues?.tags)}
-						{renderFacetSection('years', $L('Years'), facetValues?.years?.map(String))}
-						{renderFacetSection('audio', $L('Audio Language'), facetValues?.audioLanguages)}
-						{renderFacetSection('subtitles', $L('Subtitle Language'), facetValues?.subtitleLanguages)}
-
-						{hasActiveFilters(filters) && (
-							<div className={css.filterSection}>
-								<SpottableButton
-									className={`${css.sortOption} ${css.clearGroup}`}
-									onClick={handleClearFilters}
-									spotlightId="filter-clear"
-								>
-									<Icon path={CLEAR_FILTERS_ICON} className={css.clearGroupIcon} />
-									<span className={css.sortOptionLabel}>{$L('Clear Filters')}</span>
-								</SpottableButton>
-							</div>
-						)}
-
-						{isGenreMode && genreLibraries.length > 0 && renderSection('library', $L('Library'), genreLibraryName, () => (
+						{panelKind === PANEL_FILTER && (
 							<>
-								{renderRadioRow({
-									label: $L('All Libraries'),
-									selected: !parentId,
-									value: '',
-									spotlightId: 'filter-library-all',
-									onClick: handleGenreLibrarySelect
+
+								{renderCheckRow({
+									label: $L('Show Alphabet'),
+									checked: showAlphabet,
+									spotlightId: 'filter-show-alphabet',
+									onToggle: handleToggleAlphabet
 								})}
-								{genreLibraries.map((lib) => renderRadioRow({
-									key: lib.Id,
-									label: lib.Name,
-									selected: parentId === lib.Id,
-									value: lib.Id,
-									onClick: handleGenreLibrarySelect
+								{canFolderView && renderCheckRow({
+									label: $L('Folder View'),
+									checked: isFolderView,
+									spotlightId: 'filter-folder-view',
+									onToggle: handleToggleFolderView
+								})}
+
+								{isMusicLibrary && renderSection('music', $L('Show'), chosenLabel(MUSIC_CONTENT_TYPES, musicContentType), () => (
+									MUSIC_CONTENT_TYPES.map((ct) => renderRadioRow({
+										key: ct.key,
+										label: $L(ct.label),
+										selected: musicContentType === ct.key,
+										value: ct.key,
+										spotlightId: `music-content-${ct.key}`,
+										onClick: handleMusicContentSelect
+									}))
+								))}
+
+								{renderSection('favorites', $L('Filters'), filters.favoritesOnly ? $L('Favorites') : null, () => renderCheckRow({
+									label: $L('Favorites'),
+									checked: filters.favoritesOnly,
+									spotlightId: 'filter-favorites',
+									onToggle: handleToggleFavorites
 								}))}
+
+								{!isMusicLibrary && renderSection('played', isBookLibrary ? $L('Reading Status') : $L('Played Status'), filters.playedFilter === 'all' ? null : playedLabel(filters.playedFilter, isBookLibrary), () => (
+									PLAYED_FILTERS.map((option) => renderRadioRow({
+										key: option.key,
+										label: playedLabel(option.key, isBookLibrary),
+										selected: filters.playedFilter === option.key,
+										value: option.key,
+										spotlightId: `filter-played-${option.key}`,
+										onClick: handlePlayedFilterSelect
+									}))
+								))}
+
+								{!onPlex && renderSection('liked', $L('My Rating'), chosenLabel(LIKED_FILTERS, filters.likedFilter), () => (
+									LIKED_FILTERS.map((option) => renderRadioRow({
+										key: option.key,
+										label: $L(option.label),
+										selected: filters.likedFilter === option.key,
+										value: option.key,
+										spotlightId: `filter-liked-${option.key}`,
+										onClick: handleLikedFilterSelect
+									}))
+								))}
+
+								{isSeriesLibrary && !onPlex && renderSection('series', $L('Series Status'), chosenLabel(SERIES_FILTERS, filters.seriesFilter), () => (
+									supported(SERIES_FILTERS).map((option) => renderRadioRow({
+										key: option.key,
+										label: $L(option.label),
+										selected: filters.seriesFilter === option.key,
+										value: option.key,
+										spotlightId: `filter-series-${option.key}`,
+										onClick: handleSeriesFilterSelect
+									}))
+								))}
+
+								{showVideoFilters && !onPlex && renderOptionSection('features', $L('Features'), supported(FEATURE_FILTERS), 'feature')}
+
+								{showVideoFilters && renderOptionSection('quality', $L('Quality'), supported(QUALITY_FILTERS), 'quality')}
+
+								{showVideoFilters && !onPlex && renderOptionSection('source', $L('Source'), VIDEO_SOURCE_FILTERS, 'source')}
+
+								{!genreFilter && !openedGenre && renderFacetSection('genres', $L('Genres'), facetValues?.genres)}
+								{renderFacetSection('ratings', $L('Parental Rating'), facetValues?.officialRatings)}
+								{renderFacetSection('tags', $L('Tags'), facetValues?.tags)}
+								{renderFacetSection('years', $L('Years'), facetValues?.years?.map(String))}
+								{renderFacetSection('audio', $L('Audio Language'), facetValues?.audioLanguages)}
+								{renderFacetSection('subtitles', $L('Subtitle Language'), facetValues?.subtitleLanguages)}
+
+								{hasActiveFilters(filters) && (
+									<div className={css.filterSection}>
+										<SpottableButton
+											className={`${css.sortOption} ${css.clearGroup}`}
+											onClick={handleClearFilters}
+											spotlightId="filter-clear"
+										>
+											<Icon path={CLEAR_FILTERS_ICON} className={css.clearGroupIcon} />
+											<span className={css.sortOptionLabel}>{$L('Clear Filters')}</span>
+										</SpottableButton>
+									</div>
+								)}
+
+								{isGenreMode && genreLibraries.length > 0 && renderSection('library', $L('Library'), genreLibraryName, () => (
+									<>
+										{renderRadioRow({
+											label: $L('All Libraries'),
+											selected: !parentId,
+											value: '',
+											spotlightId: 'filter-library-all',
+											onClick: handleGenreLibrarySelect
+										})}
+										{genreLibraries.map((lib) => renderRadioRow({
+											key: lib.Id,
+											label: lib.Name,
+											selected: parentId === lib.Id,
+											value: lib.Id,
+											onClick: handleGenreLibrarySelect
+										}))}
+									</>
+								))}
 							</>
-						))}
+						)}
 					</PanelContainer>
 				</div>
 			)}

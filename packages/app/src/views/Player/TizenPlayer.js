@@ -894,6 +894,14 @@ const Player = ({item, resume, initialMediaSourceId, initialAudioIndex, initialS
 			},
 			oncurrentplaytime: () => {
 				if (pausedErrorRef.current) pausedErrorRef.current = null;
+				// The clock only runs while AVPlay plays. A paused flag left behind by some other path
+				// would keep the play button wrong and let the screensaver start over the film, so the
+				// state AVPlay reports wins.
+				if (isPausedRef.current && !scrubHoldRef.current.active && avplayGetState() === 'PLAYING') {
+					isPausedRef.current = false;
+					setIsPaused(false);
+					healthMonitorRef.current?.setPaused(false);
+				}
 				sourcePlayedRef.current = true;
 				reconnectRef.current?.playing();
 				liveRecoveryRef.current?.update({playing: true});

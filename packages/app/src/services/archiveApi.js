@@ -128,6 +128,34 @@ export const withoutArchivedForPerson = async (api, personId, items) => {
 	}
 };
 
+// The titles in `items` without those on a shelf, for lists built from anything but a library of
+// their own, such as the media bar. One ask per shelf the viewer can see says which of these titles
+// it holds. A title from another server isn't on this one's shelves, and a failed ask keeps the list.
+export const withoutShelfItems = async (api, items) => {
+	const list = Array.isArray(items) ? items : [];
+	if (!list.length || typeof api?.getItems !== 'function') return list;
+	const info = await readArchiveInfo(api);
+	const shelfIds = shelfLibraryIds(info);
+	if (!shelfIds.length) return list;
+
+	const ids = list.map((item) => item?.Id).filter(Boolean);
+	try {
+		const answers = await Promise.all(shelfIds.map((libraryId) => api.getItems({
+			Ids: ids.join(','),
+			ParentId: libraryId,
+			Recursive: true,
+			Limit: ids.length,
+			EnableImages: false,
+			EnableUserData: false,
+			EnableTotalRecordCount: false
+		})));
+		const shelved = new Set([].concat(...answers.map((answer) => answer?.Items || [])).map((item) => item.Id));
+		return shelved.size ? list.filter((item) => !shelved.has(item?.Id)) : list;
+	} catch (e) {
+		return list;
+	}
+};
+
 // Where a title is and where this viewer may move it. Null without the plugin, for anything the
 // plugin can't move, and for somebody with no shelf button at all.
 export const readArchiveStatus = async (api, item) => {
